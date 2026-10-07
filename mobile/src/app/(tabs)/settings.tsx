@@ -13,6 +13,7 @@ export default function Settings() {
   const { reconnect } = useLive();
   const [url, setUrl] = useState('');
   const [token, setToken] = useState('');
+  const [showToken, setShowToken] = useState(false);
   const [status, setStatus] = useState('');
   const [profile, setProfile] = useState<Profile | null>(null);
 
@@ -29,9 +30,16 @@ export default function Settings() {
   );
 
   async function connect() {
-    await saveConfig({ url, token });
+    const saved = await saveConfig({ url, token });
+    setUrl(saved.url);
+    let h;
     try {
-      const h = await api.health();
+      h = await api.health();
+    } catch {
+      setStatus(unreachable(saved.url));
+      return;
+    }
+    try {
       setProfile(await api.profile());
       setStatus(`Connected. Outbound calling: ${h.dialer === 'none' ? 'not set up' : h.dialer}.`);
       reconnect();
@@ -59,8 +67,23 @@ export default function Settings() {
     <ScrollView contentContainerStyle={{ padding: 16, gap: 12 }} keyboardShouldPersistTaps="handled">
       <Card>
         <Title>Your server</Title>
-        <Input value={url} onChangeText={setUrl} placeholder="https://opencall.example.com" autoCapitalize="none" />
-        <Input value={token} onChangeText={setToken} placeholder="API token" autoCapitalize="none" secureTextEntry />
+        <Input
+          value={url}
+          onChangeText={setUrl}
+          placeholder="http://192.168.1.7:8000"
+          autoCapitalize="none"
+          autoCorrect={false}
+          keyboardType="url"
+        />
+        <Input
+          value={token}
+          onChangeText={setToken}
+          placeholder="API token"
+          autoCapitalize="none"
+          autoCorrect={false}
+          secureTextEntry={!showToken}
+        />
+        <Row label="Show token" value={showToken} onChange={setShowToken} />
         <Button title="Connect" onPress={connect} />
         {status ? <Muted>{status}</Muted> : null}
       </Card>
@@ -91,6 +114,14 @@ export default function Settings() {
       ) : null}
     </ScrollView>
   );
+}
+
+// Why Connect couldn't reach the server, in the terms a home setup needs.
+function unreachable(url: string): string {
+  const lan = /^https:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(url);
+  return lan
+    ? `Couldn't reach ${url}. On home Wi-Fi the address starts with http://, not https://.`
+    : `Couldn't reach ${url}. Check the phone is on the same Wi-Fi as the computer and the address is your computer's, like http://192.168.1.7:8000.`;
 }
 
 function Row({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {

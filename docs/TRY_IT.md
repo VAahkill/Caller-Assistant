@@ -343,7 +343,9 @@ can take up to 24 hours after leaving the account program.
 1. Open **OpenCall** and go to the **Settings** tab.
 2. **Server address:** `http://YOUR-ADDRESS:8000` (your address from step 5.1,
    with `http://` before it and `:8000` after it).
-3. **API token:** the password from step 3.2.
+3. **API token:** the password from step 3.2. It's 32 characters and the box hides
+   them, so paste it rather than typing it: send it to your phone in a message to
+   yourself, copy it there and paste it here. Turn on **Show token** to check it.
 4. Tap **Connect**. It should say **Connected**. Allow notifications when asked.
 5. Fill in your name and your assistant's name.
 6. Tap **Voices** and press ▶ to hear each one, including Telugu and Tamil. Tap a
@@ -396,7 +398,8 @@ let Docker use the computer's Bluetooth or USB modem.
 | `docker compose up` fails with `read-only file system` | Docker ran out of disk space. Free space on C: (Recycle Bin, Disk Cleanup) or move Docker's data to another drive (step 2.6), run `wsl --shutdown`, reopen Docker Desktop, run `docker builder prune -af`, then `docker compose up -d --build` again. |
 | Docker Desktop shows `dockerd configuration error` or `/usr/local/bin/dockerd: no such file or directory` | Docker's internal system is damaged, often after the disk filled up. Click **Reset dockerd configuration**; if that doesn't help, **Quit**, run `wsl --shutdown` and reopen it; if it still fails, use **Troubleshoot** (bug icon), **Reset to factory defaults**, then set the disk image location again (step 2.6) before rebuilding. |
 | The health page opens on the computer but not on the phone | Check the phone is on the same Wi-Fi (not mobile data or a guest network), you used your own address from `ipconfig` (not the example), `:8000` is there, and you ran step 5.2. In Windows Settings, Network & internet, Wi-Fi, set your network to **Private**. |
-| The app says `Server said: 401` | The token in the app doesn't match `OPENCALL_API_TOKEN` in `.env`. If you changed `.env` after starting, run `docker compose up -d`. |
+| The app says `Server said: bad token` or `The server didn't accept the token` | The app reached the server but the token doesn't match. Paste it into the app again instead of typing it (step 7). To see the token the server is using, run `docker compose exec opencall printenv OPENCALL_API_TOKEN`. If that isn't the one in `.env` (for example it says `change-me`), save `.env` and run `docker compose up -d`. |
+| The app says `Couldn't reach` | Check the address starts with `http://` (not `https://`), uses your own address from step 5.1 and ends in `:8000`, and that the health page from step 5.3 opens on the phone. |
 | No sound in the practice call | Turn up the phone's media volume. |
 | Replies take very long | Use Groq (step 4.4), or put `OPENCALL_WHISPER_MODEL=small` in `.env` and run `docker compose up -d`. |
 | Anything else | Run `docker compose logs --tail 100 opencall` and send the output in the project thread. |

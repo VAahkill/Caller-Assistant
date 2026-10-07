@@ -18,9 +18,12 @@ export async function loadConfig(): Promise<ServerConfig | null> {
   return config;
 }
 
-export async function saveConfig(next: ServerConfig): Promise<void> {
-  config = { url: next.url.replace(/\/+$/, ''), token: next.token.trim() };
+export async function saveConfig(next: ServerConfig): Promise<ServerConfig> {
+  let url = next.url.trim().replace(/\/+$/, '');
+  if (url && !/^https?:\/\//i.test(url)) url = `http://${url}`;
+  config = { url, token: next.token.trim() };
   await SecureStore.setItemAsync('server', JSON.stringify(config));
+  return config;
 }
 
 export function wsUrl(path: string): string | null {
@@ -39,6 +42,9 @@ async function request<T>(method: string, path: string, body?: unknown, form?: F
     headers,
     body: form ?? (body !== undefined ? JSON.stringify(body) : undefined),
   });
+  if (res.status === 401) {
+    throw new Error("The server didn't accept the token. In Settings, paste the OPENCALL_API_TOKEN value from the .env file on the computer.");
+  }
   if (!res.ok) {
     let detail = `${res.status}`;
     try {
