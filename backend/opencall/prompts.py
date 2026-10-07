@@ -41,7 +41,6 @@ CONTROL TAGS (write them exactly; they are silent and never spoken)
 - [MESSAGE: <the caller's name if given, and their message, in English>] once you have
   taken a message for {user}. Confirm it back to the caller briefly first.
 - [CATEGORY: spam|delivery|business|personal] once you know what kind of call it is.
-- [SEND_LOCATION] if a delivery partner would be helped by a map link by SMS.
 - [END_CALL] after you've said goodbye, or right away for spam after a polite no.
 """
 
@@ -96,7 +95,7 @@ WHAT TO DO
 def delivery_context(profile: Profile) -> str:
     loc = profile.location.describe() or "(The user hasn't pinned a location yet. HOLD to ask.)"
     return (
-        "This caller is a delivery partner. Delivery details you may share with them:\n"
+        "This caller is a delivery partner. Delivery details you may share with them (read them out; you cannot send texts):\n"
         f"{loc}\n"
         "Guide them from where they are now. Ask where they are if needed, then give the next"
         " one or two steps at a time in their language."

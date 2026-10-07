@@ -1,8 +1,11 @@
-# OpenCall on one machine: the assistant server and a local LLM.
+# OpenCall on one machine: the assistant server and a local LLM. Everything here
+# is free and runs on your own computer.
 #   cp .env.example .env   (then edit it)
 #   docker compose up -d
 #   docker compose exec ollama ollama pull llama3.1:8b
-# Add Asterisk with: docker compose --profile asterisk up -d  (see docs/TELEPHONY.md)
+# The Bluetooth phone link needs the host's Bluetooth stack, so for that route
+# run the server directly on the host instead (see docs/TELEPHONY.md).
+# GSM modem route: docker compose --profile asterisk up -d
 services:
   opencall:
     build:
@@ -35,12 +38,16 @@ services:
 
   asterisk:
     profiles: [asterisk]
-    # Any Asterisk 20+ image with res_audiosocket, app_audiosocket, res_ari and
-    # func_curl works. Build your own or swap in your distro's package.
-    image: ${ASTERISK_IMAGE:-andrius/asterisk:latest}
+    # Needs Asterisk 20+ with res_audiosocket, app_audiosocket, res_ari,
+    # func_curl and the chan_quectel module built in; set ASTERISK_IMAGE to
+    # your build (or install Asterisk from your distro instead of Docker).
+    image: ${ASTERISK_IMAGE:-opencall-asterisk:local}
     network_mode: host
+    devices:
+      - /dev/ttyUSB1
+      - /dev/ttyUSB2
     volumes:
-      - ./deploy/asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./deploy/asterisk/quectel.conf:/etc/asterisk/quectel.conf:ro
       - ./deploy/asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./deploy/asterisk/ari.conf:/etc/asterisk/ari.conf:ro
       - ./deploy/asterisk/http.conf:/etc/asterisk/http.conf:ro

@@ -33,7 +33,7 @@ and stopping instantly when they talk over the agent).
   Android's `InCallService` for audio is not something we could verify.
 
 **Taken into OpenCall:** the feature set (delivery guidance, spam screening,
-outbound bookings, per-call summaries), and the forwarding-based call path.
+outbound bookings, per-call summaries).
 
 ## Bland AI (outbound at scale)
 
@@ -86,9 +86,11 @@ cellular calls. That does not work on a normal phone:
 - `InCallService` lets a default dialer show and control calls, not stream their
   audio ([Android docs](https://developer.android.com/reference/android/telecom/package-summary)).
 
-So OpenCall receives calls the way commercial assistants do: the carrier forwards
-unanswered, busy or unreachable calls to a SIP/VoIP number, which reaches the
-assistant server. See [TELEPHONY.md](TELEPHONY.md).
+Commercial assistants solve this with carrier forwarding to a paid cloud number.
+OpenCall avoids any paid line: the server either pairs with your phone as a
+Bluetooth hands-free device (like a car kit, which phones do allow to answer calls
+and carry call audio), or uses a USB GSM modem with a spare SIM that your number
+forwards to. See [TELEPHONY.md](TELEPHONY.md).
 
 ## What OpenCall adds
 
@@ -101,4 +103,5 @@ assistant server. See [TELEPHONY.md](TELEPHONY.md).
 - **Live supervision.** Real-time transcript, hold-and-ask with a reply box right in
   the notification, and type-to-say at any time.
 - **Callbacks.** Reply to a message and the assistant calls the person back with it.
-- **Self-hosted and free to run** apart from the phone number itself.
+- **Completely free to run.** Local models, local hosting, free OpenStreetMap maps,
+  and phone routes that need no VoIP provider or subscription.

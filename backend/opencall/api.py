@@ -16,10 +16,11 @@ from pydantic import BaseModel
 from .audio import to_wav
 from .config import Settings
 from .engine import Engine
-from .maps import reverse_geocode
+from .maps import coords_from_link, reverse_geocode
 from .models import Contact, Instruction, KnowledgeNote, Location, MessageStatus, Profile, TaskKind, new_id
 from .owner_chat import handle_owner_message
 from .telephony.asterisk import AsteriskGateway
+from .telephony.bluetooth import BluetoothGateway
 from .telephony.queue_bridge import QueueBridge
 from .telephony.twilio import TwilioGateway, valid_signature
 
@@ -72,19 +73,24 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     engine = engine or Engine(settings)
     asterisk = AsteriskGateway(engine)
     twilio = TwilioGateway(engine)
+    bluetooth = BluetoothGateway(engine) if settings.bluetooth_enabled else None
     if engine.dialer.name == "none":
-        if settings.asterisk_ari_url:
+        if bluetooth:
+            engine.dialer = bluetooth
+        elif settings.asterisk_ari_url:
             engine.dialer = asterisk
         elif settings.twilio_account_sid:
             engine.dialer = twilio
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        if start_gateways:
+        if start_gateways and settings.asterisk_enabled:
             await asterisk.start()
+        if start_gateways and bluetooth:
+            await bluetooth.start()
         yield
         await engine.shutdown()
-        if start_gateways:
+        if start_gateways and settings.asterisk_enabled:
             await asterisk.stop()
 
     app = FastAPI(title="OpenCall Receptionist", version="0.1.0", lifespan=lifespan)
@@ -127,6 +133,14 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
         store.profile.location = loc
         store.save_profile()
         return loc
+
+    @app.post("/location/from-link", dependencies=A)
+    async def location_from_link(body: TextIn):
+        """Read the pin out of a Google Maps link the user shared or pasted."""
+        found = await coords_from_link(body.text.strip())
+        if not found:
+            raise HTTPException(422, "Couldn't find a location in that link.")
+        return {"lat": found[0], "lng": found[1]}
 
     @app.post("/instructions", dependencies=A)
     async def add_instruction(body: TextIn) -> Instruction:

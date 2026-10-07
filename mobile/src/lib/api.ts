@@ -54,6 +54,7 @@ export const api = {
   profile: () => request<Profile>('GET', '/profile'),
   patchProfile: (p: Partial<Profile>) => request<Profile>('PATCH', '/profile', p),
   putLocation: (l: Location) => request<Location>('PUT', '/location', l),
+  locationFromLink: (url: string) => request<{ lat: number; lng: number }>('POST', '/location/from-link', { text: url }),
   addInstruction: (text: string) => request<Instruction>('POST', '/instructions', { text }),
   deleteInstruction: (id: string) => request('DELETE', `/instructions/${id}`),
   addNote: (text: string, share_with: KnowledgeNote['share_with']) =>

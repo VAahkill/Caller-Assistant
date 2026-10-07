@@ -30,12 +30,7 @@
         "ACCESS_FINE_LOCATION",
         "POST_NOTIFICATIONS",
         "VIBRATE"
-      ],
-      "config": {
-        "googleMaps": {
-          "apiKey": "YOUR_GOOGLE_MAPS_ANDROID_KEY"
-        }
-      }
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -61,7 +56,8 @@
         {
           "contactsPermission": "So the assistant knows which callers are your saved contacts."
         }
-      ]
+      ],
+      "@maplibre/maplibre-react-native"
     ],
     "scheme": "opencall",
     "experiments": {

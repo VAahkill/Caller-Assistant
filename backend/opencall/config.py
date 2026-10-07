@@ -42,18 +42,28 @@ class Settings(BaseSettings):
     default_voice: str = "kokoro:af_heart"
     clone_provider: str = "xtts"  # xtts | none
 
-    # Telephony: which bridges to enable. See docs/TELEPHONY.md.
+    # Telephony: which bridges to enable. See docs/TELEPHONY.md. All free:
+    # Bluetooth to your own phone, or Asterisk with a USB GSM modem.
+    bluetooth_enabled: bool = False
+    bluetooth_answer_delay_s: float = 6.0  # ring this long before answering
+    bluetooth_answer_delay_available_s: float = 15.0  # longer when you're around
+    bluetooth_source: str = ""  # PipeWire node names; found automatically if empty
+    bluetooth_sink: str = ""
+    asterisk_enabled: bool = True
     asterisk_audiosocket_port: int = 9092
     asterisk_ari_url: str = ""  # e.g. http://asterisk:8088/ari
     asterisk_ari_user: str = ""
     asterisk_ari_password: str = ""
-    asterisk_outbound_endpoint: str = "PJSIP/{number}@trunk"
+    # chan_quectel GSM modem; for a SIP trunk use e.g. "PJSIP/{number}@trunk"
+    asterisk_outbound_endpoint: str = "Quectel/quectel0/{number}"
     asterisk_outbound_context: str = "opencall-outbound"
+    # Optional paid extra, never required.
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_from_number: str = ""
 
-    # Push notifications through Expo's free push service.
+    # Push notifications through Expo's free push service (empty = off; the
+    # app still gets live events while it's open).
     expo_push_url: str = "https://exp.host/--/api/v2/push/send"
 
     hold_timeout_s: float = 45.0
