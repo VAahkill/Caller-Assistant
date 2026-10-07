@@ -12,6 +12,26 @@ const SCRIPT =
   "Thanks for calling, I can't come to the phone right now, but I'll make sure your message reaches me. " +
   'Have a lovely day, and talk to you soon.';
 
+const LANGUAGES: Record<string, string> = {
+  en: 'English', hi: 'Hindi', te: 'Telugu', ta: 'Tamil', kn: 'Kannada', ml: 'Malayalam',
+  bn: 'Bengali', mr: 'Marathi', gu: 'Gujarati', pa: 'Punjabi', ur: 'Urdu',
+};
+
+// What each voice says when you tap play, in its own language.
+const SAMPLES: Record<string, string> = {
+  en: "Hi! I'm answering calls for you today. How does this sound?",
+  hi: 'नमस्ते! यह आवाज़ आपको कैसी लगी?',
+  te: 'నమస్కారం! ఈ స్వరం మీకు నచ్చిందా?',
+  ta: 'வணக்கம்! இந்த குரல் உங்களுக்குப் பிடித்திருக்கிறதா?',
+  kn: 'ನಮಸ್ಕಾರ! ಈ ಧ್ವನಿ ನಿಮಗೆ ಇಷ್ಟವಾಯಿತೇ?',
+  ml: 'നമസ്കാരം! ഈ ശബ്ദം നിങ്ങൾക്ക് ഇഷ്ടമായോ?',
+  bn: 'নমস্কার! এই কণ্ঠস্বর আপনার পছন্দ হয়েছে?',
+  mr: 'नमस्कार! हा आवाज तुम्हाला आवडला का?',
+  gu: 'નમસ્તે! આ અવાજ તમને ગમ્યો?',
+  pa: 'ਸਤ ਸ੍ਰੀ ਅਕਾਲ! ਕੀ ਤੁਹਾਨੂੰ ਇਹ ਆਵਾਜ਼ ਪਸੰਦ ਆਈ?',
+  ur: 'السلام علیکم! کیا آپ کو یہ آواز پسند آئی؟',
+};
+
 /** Pick the voice your assistant answers with, or record your own (15 to 30 seconds). */
 export default function Voices() {
   const t = useTheme();
@@ -34,8 +54,9 @@ export default function Voices() {
     await api.patchProfile({ voice: id }).catch(() => {});
   }
 
-  function play(id: string) {
-    preview.replace(api.previewUrl(id, 'Hi! I\'m answering calls for you today. How does this sound?'));
+  function play(v: Voice) {
+    const lang = v.kind === 'clone' || !SAMPLES[v.languages[0]] ? 'en' : v.languages[0];
+    preview.replace(api.previewUrl(v.id, SAMPLES[lang], lang));
     preview.play();
   }
 
@@ -80,9 +101,13 @@ export default function Voices() {
                 <Text style={{ color: t.text, fontWeight: '600', fontSize: 16 }}>
                   {v.name}{current === v.id ? '  ✓' : ''}
                 </Text>
-                <Muted>{v.kind === 'clone' ? 'Your recording' : `Built-in · ${v.languages.join(', ')}`}</Muted>
+                <Muted>
+                  {v.kind === 'clone'
+                    ? 'Your recording'
+                    : `Built-in · ${v.languages.map((l) => LANGUAGES[l] ?? l).join(', ')}`}
+                </Muted>
               </View>
-              <Button title="▶" kind="secondary" onPress={() => play(v.id)} />
+              <Button title="▶" kind="secondary" onPress={() => play(v)} />
               {v.kind === 'clone' ? (
                 <Button title="Delete" kind="secondary" onPress={() => api.deleteVoice(v.id.split(':')[1]).then(load)} />
               ) : null}

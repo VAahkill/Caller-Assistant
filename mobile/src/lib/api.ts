@@ -96,9 +96,9 @@ export const api = {
     return request<Voice>('POST', '/voices', undefined, form);
   },
   deleteVoice: (name: string) => request('DELETE', `/voices/${name}`),
-  previewUrl: (voice: string, text: string) =>
+  previewUrl: (voice: string, text: string, lang = 'en') =>
     config
-      ? `${config.url}/assistant/speak?voice=${encodeURIComponent(voice)}&token=${encodeURIComponent(config.token)}&text=${encodeURIComponent(text)}`
+      ? `${config.url}/assistant/speak?voice=${encodeURIComponent(voice)}&lang=${lang}&token=${encodeURIComponent(config.token)}&text=${encodeURIComponent(text)}`
       : '',
 };
 

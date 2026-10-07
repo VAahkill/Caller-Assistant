@@ -37,7 +37,8 @@ class Engine:
         self.bus = EventBus(settings.expo_push_url, lambda: self.store.profile.push_tokens)
         self.llm = llm or build_llm(settings)
         self.stt = stt or build_stt(settings)
-        self.tts = tts or TTSRouter(settings.voices_dir, settings.tts_provider, settings.clone_provider)
+        self.tts = tts or TTSRouter(settings.voices_dir, settings.tts_provider, settings.clone_provider,
+                                    settings.indic_tts, settings.indic_parler_model)
         self.dialer: Dialer = dialer or NoDialer()
         self.tasks = TaskManager(self)
         self.sessions: dict[str, CallSession] = {}

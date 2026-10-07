@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import hmac
 import json
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -13,9 +15,10 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
-from .audio import to_wav
+from .audio import decode_audio, resample, to_wav
 from .config import Settings
 from .engine import Engine
+from .languages import guess_language
 from .maps import coords_from_link, reverse_geocode
 from .models import Contact, Instruction, KnowledgeNote, Location, MessageStatus, Profile, TaskKind, new_id
 from .owner_chat import handle_owner_message
@@ -23,6 +26,14 @@ from .telephony.asterisk import AsteriskGateway
 from .telephony.bluetooth import BluetoothGateway
 from .telephony.queue_bridge import QueueBridge
 from .telephony.twilio import TwilioGateway, valid_signature
+
+
+log = logging.getLogger("opencall.api")
+
+
+def _report_warm_up(task: asyncio.Task) -> None:
+    if not task.cancelled() and task.exception():
+        log.warning("Indian-language voices didn't load: %s", task.exception())
 
 
 class ProfilePatch(BaseModel):
@@ -84,6 +95,9 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        if start_gateways and settings.indic_preload:
+            warm = asyncio.create_task(asyncio.to_thread(engine.tts.warm_up, settings.indic_preload.split(",")))
+            warm.add_done_callback(_report_warm_up)
         if start_gateways and settings.asterisk_enabled:
             await asterisk.start()
         if start_gateways and bluetooth:
@@ -262,8 +276,6 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     @app.post("/assistant/voice", dependencies=A)
     async def owner_voice(audio: UploadFile = File(...), shared: str = Form("")):
         """Push-to-talk: a WAV clip in, the assistant's reply as text and speech out."""
-        from .audio import decode_audio, resample
-
         try:
             pcm, rate = decode_audio(await audio.read())
         except ValueError as e:
@@ -329,9 +341,12 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
     # ------------------------------------------------------------ simulator (no phone needed)
     @app.websocket("/ws/simulate")
-    async def simulate(ws: WebSocket, token: str = Query(""), number: str = Query("+919800000000")):
-        """Pretend to be a caller: send 16 kHz PCM16 audio frames or
-        {"text": "..."} messages; receive the assistant's audio as binary."""
+    async def simulate(ws: WebSocket, token: str = Query(""), number: str = Query("+919800000000"),
+                       wav: bool = Query(False)):
+        """Pretend to be a caller: send 16 kHz PCM16 audio frames, {"text": "..."}
+        or {"audio_b64": "<a recording in any format ffmpeg reads>"}; receive the
+        assistant's audio as binary. With ``wav=1`` (the app's practice call) each
+        sentence arrives at once as a WAV file instead of as real-time frames."""
         if not ws_ok(token):
             await ws.close(code=4401)
             return
@@ -343,12 +358,37 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
             return
 
         class SimBridge(QueueBridge):
+            def __init__(self, call_id: str, number: str):
+                super().__init__(call_id, number)
+                self.paced = not wav  # the app plays whole sentences, so don't pace them out
+                self._pending = bytearray()
+                self._timer: asyncio.TimerHandle | None = None
+                self._flushes: set[asyncio.Task] = set()
+
             async def send_audio(self, frame: bytes) -> None:
-                with contextlib.suppress(Exception):
-                    await ws.send_bytes(frame)
+                if not wav:
+                    with contextlib.suppress(Exception):
+                        await ws.send_bytes(frame)
+                    return
+                self._pending += frame
+                if self._timer:
+                    self._timer.cancel()
+                self._timer = asyncio.get_running_loop().call_later(0.15, self._schedule_flush)
+
+            def _schedule_flush(self) -> None:
+                task = asyncio.create_task(self.flush())
+                self._flushes.add(task)
+                task.add_done_callback(self._flushes.discard)
+
+            async def flush(self) -> None:
+                pcm, self._pending = bytes(self._pending), bytearray()
+                if pcm:
+                    with contextlib.suppress(Exception):
+                        await ws.send_bytes(to_wav(pcm))
 
         bridge = SimBridge(new_id(), number)
         call = asyncio.create_task(engine.handle_call(bridge))
+        await ws.send_json({"event": "started", "call_id": bridge.call_id})
 
         async def read_client():
             while True:
@@ -361,9 +401,19 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
                     data = json.loads(msg["text"])
                     if data.get("hangup"):
                         return
+                    if data.get("audio_b64"):
+                        try:
+                            pcm, rate = await asyncio.to_thread(decode_audio, base64.b64decode(data["audio_b64"]))
+                        except ValueError as e:
+                            await ws.send_json({"event": "error", "detail": str(e)})
+                            continue
+                        # Trailing silence lets the turn detector hear that they've finished.
+                        bridge.feed(resample(pcm, rate, 16000) + b"\x00\x00" * 16000)
+                        continue
                     session = engine.sessions.get(bridge.call_id)
                     if session and data.get("text"):
-                        asyncio.create_task(session.handle_text(data["text"], data.get("lang", "en")))
+                        lang = data.get("lang") or guess_language(data["text"])
+                        asyncio.create_task(session.handle_text(data["text"], lang))
 
         reader = asyncio.create_task(read_client())
         hung_up = asyncio.create_task(bridge.hung_up.wait())
@@ -374,6 +424,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
                 t.cancel()
             await bridge.hangup()
             await call
+            if wav:
+                await bridge.flush()
             with contextlib.suppress(Exception):
                 await ws.close()
 

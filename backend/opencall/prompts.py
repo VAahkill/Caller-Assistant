@@ -20,6 +20,9 @@ HOW YOU SOUND
 - If you didn't catch something, ask them to repeat it, like a person would.
 - Reply in the language the caller is speaking ({speakable}). If they speak a language
   you can't speak aloud, switch politely to simple Hindi or English.
+- Write every language in its own script (Telugu in Telugu letters, Tamil in Tamil
+  letters), including English words you borrow, never in English letters. Keep
+  numbers as digits.
 """
 
 SECURITY = """\

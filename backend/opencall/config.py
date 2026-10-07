@@ -33,6 +33,8 @@ class Settings(BaseSettings):
     stt_provider: str = "faster_whisper"  # faster_whisper | none
     whisper_model: str = "large-v3-turbo"
     whisper_device: str = "auto"
+    # Languages your callers speak, e.g. "en,hi,te". Empty means any language.
+    caller_languages: str = ""
 
     vad_provider: str = "energy"  # energy | silero
     end_of_turn_silence_ms: int = 650
@@ -41,6 +43,11 @@ class Settings(BaseSettings):
     tts_provider: str = "kokoro"  # kokoro | silent
     default_voice: str = "kokoro:af_heart"
     clone_provider: str = "xtts"  # xtts | none
+    # Voices for Telugu, Tamil and other Indian languages Kokoro can't speak:
+    # mms (fast on a CPU) | parler (more natural, wants a GPU) | none
+    indic_tts: str = "mms"
+    indic_parler_model: str = "ai4bharat/indic-parler-tts"
+    indic_preload: str = "te,ta"  # loaded at startup so the first call isn't slow
 
     # Telephony: which bridges to enable. See docs/TELEPHONY.md. All free:
     # Bluetooth to your own phone, or Asterisk with a USB GSM modem.

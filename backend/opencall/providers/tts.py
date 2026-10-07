@@ -1,7 +1,11 @@
 """Text to speech, with built-in voices and user-recorded voice clones.
 
-Voice ids look like ``kokoro:af_heart`` (built-in Kokoro voice) or
-``clone:<name>`` (a voice the user recorded in the app, spoken with XTTS-v2).
+Voice ids look like ``kokoro:af_heart`` (built-in Kokoro voice),
+``clone:<name>`` (a voice the user recorded in the app, spoken with XTTS-v2),
+``mms:te`` or ``parler:Lalitha`` (Indian-language voices, see ``indic.py``).
+
+Whatever voice is chosen, a caller speaking Telugu, Tamil or another language
+Kokoro and XTTS can't speak is answered with the Indian-language engine.
 """
 
 from __future__ import annotations
@@ -15,6 +19,8 @@ from pathlib import Path
 import numpy as np
 
 from ..audio import RATE, decode_audio, float_to_pcm16, resample, to_wav
+from ..languages import guess_language
+from .indic import INDIC_LANGS, PARLER_SPEAKERS, make_indic_engine
 
 # Kokoro-82M voices worth offering. The full list is in the Kokoro repo.
 KOKORO_VOICES = {
@@ -84,12 +90,14 @@ class XTTSEngine:
 
 
 class TTSRouter:
-    def __init__(self, voices_dir: Path, provider: str = "kokoro", clone_provider: str = "xtts"):
+    def __init__(self, voices_dir: Path, provider: str = "kokoro", clone_provider: str = "xtts",
+                 indic: str = "mms", parler_model: str = "ai4bharat/indic-parler-tts"):
         self.voices_dir = voices_dir
         voices_dir.mkdir(parents=True, exist_ok=True)
         self.provider = provider
         self.kokoro = KokoroEngine() if provider == "kokoro" else None
         self.xtts = XTTSEngine() if clone_provider == "xtts" else None
+        self.indic = make_indic_engine(indic, parler_model)
 
     # ----- voice library -------------------------------------------------
     def list_voices(self) -> list[VoiceInfo]:
@@ -97,6 +105,14 @@ class TTSRouter:
             VoiceInfo(f"kokoro:{vid}", name, "builtin", [lang], gender)
             for vid, (name, lang, gender) in KOKORO_VOICES.items()
         ]
+        if self.indic is not None and self.indic.kind == "parler":
+            voices += [
+                VoiceInfo(f"parler:{speaker}", f"{speaker} ({INDIC_LANGS[lang][0]})", "builtin", [lang], gender)
+                for lang, speakers in PARLER_SPEAKERS.items()
+                for speaker, gender in speakers
+            ]
+        elif self.indic is not None:
+            voices += [VoiceInfo(f"mms:{lang}", name, "builtin", [lang]) for lang, (name, _) in INDIC_LANGS.items()]
         for meta in sorted(self.voices_dir.glob("*.json")):
             info = json.loads(meta.read_text())
             voices.append(VoiceInfo(f"clone:{meta.stem}", info.get("label", meta.stem), "clone", sorted(_XTTS_LANGS)))
@@ -118,9 +134,18 @@ class TTSRouter:
             (self.voices_dir / f"{name}.{ext}").unlink(missing_ok=True)
 
     def supported_languages(self, voice: str) -> set[str]:
-        if voice.startswith("clone:"):
-            return set(_XTTS_LANGS)
-        return {"en", "hi"} | set(_KOKORO_LANG) - {"en-gb"}
+        langs = set(_XTTS_LANGS) if voice.startswith("clone:") else {"en", "hi"} | set(_KOKORO_LANG) - {"en-gb"}
+        if self.indic is not None:
+            langs |= set(INDIC_LANGS)
+        return langs
+
+    def warm_up(self, langs: list[str]) -> None:
+        """Download and load the Indian-language voices ahead of the first call."""
+        if self.indic is None or self.provider == "silent":
+            return
+        for lang in langs:
+            if lang in INDIC_LANGS:
+                self.indic.warm_up(lang)
 
     # ----- synthesis -----------------------------------------------------
     def _synth_sync(self, text: str, voice: str, lang: str) -> bytes:
@@ -128,12 +153,20 @@ class TTSRouter:
             # A short burst of silence; lets tests run the audio path quickly.
             return b"\x00\x00" * (RATE // 10)
         kind, _, name = voice.partition(":")
+        gender = _gender(voice)
+        if lang in INDIC_LANGS and guess_language(text) == "en":
+            lang = "en"  # the reply came out in English letters, which these voices can't read
+        if lang in INDIC_LANGS and self.indic is not None:
+            return self.indic.synth(text, lang, gender, name if kind == "parler" else "")
         if kind == "clone" and self.xtts is not None:
             ref = self.voices_dir / f"{_SAFE_NAME.sub('_', name)}.wav"
             if ref.exists():
                 return self.xtts.synth(text, ref, lang if lang in _XTTS_LANGS else "en")
         assert self.kokoro is not None
-        kvoice = name if kind == "kokoro" and name in KOKORO_VOICES else "af_heart"
+        if kind == "kokoro" and name in KOKORO_VOICES:
+            kvoice = name
+        else:
+            kvoice = "am_michael" if gender == "male" else "af_heart"
         kvoice = _voice_for_language(kvoice, lang)
         return self.kokoro.synth(text, kvoice, lang if lang in _KOKORO_LANG else "en")
 
@@ -151,3 +184,15 @@ def _voice_for_language(voice: str, lang: str) -> str:
         if l == lang and g == gender:
             return vid
     return voice
+
+
+def _gender(voice: str) -> str:
+    kind, _, name = voice.partition(":")
+    if kind == "kokoro":
+        return KOKORO_VOICES.get(name, ("", "", ""))[2]
+    if kind == "parler":
+        for speakers in PARLER_SPEAKERS.values():
+            for speaker, gender in speakers:
+                if speaker == name:
+                    return gender
+    return ""

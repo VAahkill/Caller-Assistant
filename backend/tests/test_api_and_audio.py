@@ -1,3 +1,4 @@
+import base64
 import io
 import wave
 
@@ -61,6 +62,7 @@ def test_simulator_websocket(settings, engine, llm):
     llm.responder = lambda m: "Sure, I'll tell Rahul you called. [MESSAGE: Ankit called] Bye! [END_CALL]"
     c = client(settings, engine)
     with c.websocket_connect("/ws/simulate?token=test-token&number=9876543210") as ws:
+        assert ws.receive_json()["event"] == "started"
         ws.send_json({"text": "Hi, this is Ankit, tell Rahul I called"})
         got_audio = False
         try:
@@ -71,6 +73,39 @@ def test_simulator_websocket(settings, engine, llm):
             pass
     assert got_audio
     assert engine.store.messages.list()[0].text == "Ankit called"
+
+
+def test_practice_call_from_the_app(settings, engine, llm):
+    """The app's practice call: a spoken clip in, whole WAV sentences out."""
+    from opencall.audio import read_wav, to_wav
+    from opencall.providers.stt import Transcription
+
+    engine.stt.next = [Transcription("హలో, స్విగ్గీ ఆర్డర్", "te")]
+    llm.responder = lambda m: "సరే, ఒక్క నిమిషం. [END_CALL]"
+    tone = (np.sin(np.linspace(0, 2000, 8000)) * 8000).astype(np.int16).tobytes()  # half a second
+    c = client(settings, engine)
+    with c.websocket_connect("/ws/simulate?token=test-token&number=9876543210&wav=1") as ws:
+        call_id = ws.receive_json()["call_id"]
+        ws.send_json({"audio_b64": base64.b64encode(to_wav(tone, 16000)).decode()})
+        clips = []
+        try:
+            while True:  # the greeting and the reply; the call ends after it
+                clips.append(ws.receive_bytes())
+        except Exception:
+            pass
+    assert clips and all(c[:4] == b"RIFF" and read_wav(c)[1] == 16000 for c in clips)
+    record = engine.store.calls.get(call_id)
+    assert record.language == "te"
+    assert [l.text for l in record.transcript if l.speaker == "caller"] == ["హలో, స్విగ్గీ ఆర్డర్"]
+
+
+def test_typed_text_language_is_guessed_from_its_script():
+    from opencall.languages import guess_language
+
+    assert guess_language("మీ ఆర్డర్ వచ్చింది") == "te"
+    assert guess_language("உங்கள் ஆர்டர்") == "ta"
+    assert guess_language("आपका ऑर्डर") == "hi"
+    assert guess_language("Your order, 302") == "en"
 
 
 def test_mulaw_roundtrip_and_resample():

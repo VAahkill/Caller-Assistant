@@ -95,6 +95,14 @@ export default function Home() {
         </Card>
       ))}
 
+      {calls.length === 0 && questions.length === 0 ? (
+        <Card>
+          <Body style={{ fontWeight: '600' }}>Hear how your assistant answers</Body>
+          <Muted>Play a caller and talk to it. No phone line needed.</Muted>
+          <Button title="Try a practice call" kind="secondary" onPress={() => router.push('/practice')} />
+        </Card>
+      ) : null}
+
       <Card>
         <Title>New messages</Title>
         {messages.length === 0 ? <Muted>No new messages.</Muted> : null}

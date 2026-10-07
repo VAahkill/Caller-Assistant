@@ -37,5 +37,6 @@ def build_llm(s: Settings) -> LLM:
 
 def build_stt(s: Settings) -> STT:
     if s.stt_provider == "faster_whisper":
-        return FasterWhisperSTT(s.whisper_model, s.whisper_device)
+        languages = [code.strip() for code in s.caller_languages.split(",") if code.strip()]
+        return FasterWhisperSTT(s.whisper_model, s.whisper_device, languages)
     return NullSTT()

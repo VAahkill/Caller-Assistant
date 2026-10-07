@@ -21,7 +21,7 @@ Built from a study of hiRobin, Bland AI, Retell AI and Vapi: see
 | **Hold and ask** | When a caller asks something it doesn't know, it puts them on hold, notifies you with a reply box, and relays your answer naturally. No answer? It takes a message. |
 | **Messages and callbacks** | Messages come with a summary, transcript and recording. Reply, and the assistant can call them back to pass it on. |
 | **Calls for you** | Share or paste a number, say what you need. It calls, asks, books if you said so, and asks you mid-call when they offer an alternative. |
-| **Voices** | Built-in natural voices (Kokoro, including Hindi), or record 15 to 30 seconds to clone your own (XTTS-v2). |
+| **Voices** | Built-in natural voices (Kokoro, including Hindi), Telugu, Tamil and seven more Indian languages (MMS), or record 15 to 30 seconds to clone your own (XTTS-v2). |
 | **Map pin** | Pin your door on a free OpenStreetMap map, or paste a Google Maps link. No Maps API key or billing account. |
 | **Your rules** | Add instructions ("tell couriers to leave parcels with the guard") and facts callers may know, by typing or by talking to the assistant. |
 
@@ -32,7 +32,7 @@ Built from a study of hiRobin, Bland AI, Retell AI and Vapi: see
 | Phone line | Bluetooth link to your own phone, or a USB GSM modem with a spare SIM | Free / one-time modem |
 | Speech to text | Faster-Whisper, on your computer | Free |
 | AI brain | Ollama (Llama 3.1) on your computer; Groq free tier if your PC is slow | Free |
-| Voices | Kokoro and XTTS-v2 voice cloning, on your computer | Free |
+| Voices | Kokoro, MMS Indian-language voices and XTTS-v2 voice cloning, on your computer | Free |
 | Maps | OpenStreetMap (OpenFreeMap tiles, Nominatim) | Free, no key |
 | Notifications | Expo push service | Free |
 | Reaching your server | Home Wi-Fi, Tailscale free plan, or a trycloudflare.com tunnel | Free |
@@ -60,6 +60,9 @@ free ways around that are a Bluetooth hands-free link (like a car kit) or a USB 
 modem. See [docs/TELEPHONY.md](docs/TELEPHONY.md).
 
 ## Quick start
+
+**New here?** [docs/TRY_IT.md](docs/TRY_IT.md) walks through running the server,
+installing the Android app and making a practice call, step by step.
 
 ```bash
 cp .env.example .env              # set OPENCALL_API_TOKEN and pick a phone route
@@ -96,9 +99,13 @@ cd mobile && npx tsc --noEmit
 
 ## Limitations
 
-- Kokoro speaks English, Hindi and a few other languages; XTTS adds more. Telugu,
-  Tamil and other Indian languages are understood (Whisper) but spoken replies fall
-  back to Hindi or English until an Indic TTS provider is added.
+- Telugu, Tamil, Kannada, Malayalam, Bengali, Marathi, Gujarati, Punjabi and Urdu
+  are spoken with Meta's MMS voices: clear, but flatter than the English and Hindi
+  voices, and licensed for non-commercial use only. AI4Bharat's Indic Parler-TTS
+  (`OPENCALL_INDIC_TTS=parler`) sounds more natural but needs an NVIDIA GPU. Cloned
+  voices can't speak these languages yet, so those callers hear a built-in voice.
+- Whisper sometimes mistakes Telugu for Tamil or Hindi. List the languages your
+  callers speak in `OPENCALL_CALLER_LANGUAGES` to keep it on track.
 - End-of-turn detection is silence-based; a semantic turn-taking model is a planned
   upgrade.
 - The Bluetooth route and GSM modem route are written against oFono/PipeWire and

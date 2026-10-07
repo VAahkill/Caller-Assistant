@@ -182,9 +182,10 @@ class Conversation:
 
     def opening_line(self) -> str:
         p = self.profile
+        user = p.user_name[:1].upper() + p.user_name[1:]  # starts a sentence below
         return (
             f"Hi, this is {p.assistant_name}, {p.user_name}'s assistant. "
-            f"{p.user_name} can't take the call right now. How can I help?"
+            f"{user} can't take the call right now. How can I help?"
         )
 
     async def respond(self, text: str, language: str = "en") -> AsyncIterator[Action]:

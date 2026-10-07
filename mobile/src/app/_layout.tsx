@@ -36,6 +36,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="call/[id]" options={{ title: 'Live call' }} />
+        <Stack.Screen name="practice" options={{ title: 'Practice call' }} />
         <Stack.Screen name="location" options={{ title: 'Delivery location' }} />
         <Stack.Screen name="voices" options={{ title: 'Voices' }} />
         <Stack.Screen name="instructions" options={{ title: 'Instructions & notes' }} />

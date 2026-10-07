@@ -57,7 +57,15 @@
           "contactsPermission": "So the assistant knows which callers are your saved contacts."
         }
       ],
-      "@maplibre/maplibre-react-native"
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ],
     "scheme": "opencall",
     "experiments": {

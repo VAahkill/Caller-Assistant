@@ -11,7 +11,7 @@ services:
     build:
       context: ./backend
       args:
-        EXTRAS: stt,vad,tts,clone
+        EXTRAS: stt,vad,tts,indic,clone
     env_file: .env
     environment:
       OPENCALL_LLM_BASE_URL: ${OPENCALL_LLM_BASE_URL:-http://ollama:11434/v1}

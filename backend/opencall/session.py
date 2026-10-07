@@ -192,8 +192,9 @@ class CallSession:
             self._playing.set()
             await self.bridge.send_audio(frame)
             self.recorder.add_assistant(frame)
-            next_at = max(next_at + FRAME_MS / 1000, time.monotonic() - 0.2)
-            await asyncio.sleep(max(0, next_at - time.monotonic()))
+            if getattr(self.bridge, "paced", True):
+                next_at = max(next_at + FRAME_MS / 1000, time.monotonic() - 0.2)
+                await asyncio.sleep(max(0, next_at - time.monotonic()))
             if self._play_q.empty():
                 self._playing.clear()
                 next_at = time.monotonic()

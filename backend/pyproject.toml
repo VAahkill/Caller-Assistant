@@ -19,9 +19,14 @@ dependencies = [
 stt = ["faster-whisper>=1.0"]
 vad = ["silero-vad>=5.1"]
 tts = ["kokoro>=0.9", "soundfile>=0.12"]
+# Telugu, Tamil and other Indian-language voices (Meta MMS, runs on a CPU).
+indic = ["transformers>=4.40", "torch>=2.1", "num2words>=0.5.13"]
+# Optional: AI4Bharat Indic Parler-TTS, more natural but needs a GPU and a free
+# Hugging Face token. Pins its own transformers version, so install it on its own.
+indic-parler = ["parler-tts>=0.2.3", "num2words>=0.5.13"]
 clone = ["coqui-tts>=0.24"]
 bluetooth = ["dbus-next>=0.2.3"]
-all = ["opencall[stt,vad,tts,clone,bluetooth]"]
+all = ["opencall[stt,vad,tts,indic,clone,bluetooth]"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.scripts]
