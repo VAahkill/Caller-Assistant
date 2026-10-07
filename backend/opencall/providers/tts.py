@@ -14,7 +14,7 @@ from pathlib import Path
 
 import numpy as np
 
-from ..audio import RATE, float_to_pcm16, read_wav, resample
+from ..audio import RATE, decode_audio, float_to_pcm16, resample, to_wav
 
 # Kokoro-82M voices worth offering. The full list is in the Kokoro repo.
 KOKORO_VOICES = {
@@ -102,13 +102,13 @@ class TTSRouter:
             voices.append(VoiceInfo(f"clone:{meta.stem}", info.get("label", meta.stem), "clone", sorted(_XTTS_LANGS)))
         return voices
 
-    def add_clone(self, label: str, wav_bytes: bytes) -> VoiceInfo:
-        pcm, rate = read_wav(wav_bytes)
+    def add_clone(self, label: str, audio_bytes: bytes) -> VoiceInfo:
+        pcm, rate = decode_audio(audio_bytes)
         seconds = len(pcm) / 2 / rate
         if seconds < 6:
             raise ValueError("Please record at least 6 seconds (15 to 30 is best).")
         name = _SAFE_NAME.sub("_", label.strip().lower())[:40] or "voice"
-        (self.voices_dir / f"{name}.wav").write_bytes(wav_bytes)
+        (self.voices_dir / f"{name}.wav").write_bytes(to_wav(pcm, rate))
         (self.voices_dir / f"{name}.json").write_text(json.dumps({"label": label, "seconds": round(seconds, 1)}))
         return VoiceInfo(f"clone:{name}", label, "clone", sorted(_XTTS_LANGS))
 

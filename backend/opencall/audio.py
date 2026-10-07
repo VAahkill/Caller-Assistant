@@ -89,6 +89,27 @@ def read_wav(data: bytes) -> tuple[bytes, int]:
     return raw, rate
 
 
+def decode_audio(data: bytes) -> tuple[bytes, int]:
+    """Mono PCM16 and rate from WAV, or from any format ffmpeg reads (the app
+    records AAC/M4A, which is what phones produce natively)."""
+    if data[:4] == b"RIFF":
+        return read_wav(data)
+    import shutil
+    import subprocess
+
+    if not shutil.which("ffmpeg"):
+        raise ValueError("Install ffmpeg on the server to accept phone recordings (m4a).")
+    proc = subprocess.run(
+        ["ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"],
+        input=data,
+        capture_output=True,
+        timeout=60,
+    )
+    if proc.returncode != 0:
+        raise ValueError("Could not read that audio file.")
+    return proc.stdout, RATE
+
+
 class StereoRecorder:
     """Keeps caller (left) and assistant (right) audio for the call recording."""
 

@@ -248,18 +248,22 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     @app.post("/assistant/voice", dependencies=A)
     async def owner_voice(audio: UploadFile = File(...), shared: str = Form("")):
         """Push-to-talk: a WAV clip in, the assistant's reply as text and speech out."""
-        from .audio import read_wav, resample
+        from .audio import decode_audio, resample
 
-        pcm, rate = read_wav(await audio.read())
+        try:
+            pcm, rate = decode_audio(await audio.read())
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
         said = await engine.stt.transcribe(resample(pcm, rate, 16000))
         if not said.text:
             raise HTTPException(422, "I couldn't hear anything.")
         reply = await handle_owner_message(engine, said.text, shared)
         return {"heard": said.text, "reply": reply.text, "actions": reply.actions}
 
-    @app.post("/assistant/speak", dependencies=A)
-    async def speak(body: TextIn, voice: str | None = None, lang: str = "en"):
-        pcm = await engine.tts.synthesize(body.text, voice or store.profile.voice, lang)
+    @app.get("/assistant/speak", dependencies=A)
+    async def speak(text: str, voice: str | None = None, lang: str = "en"):
+        """Voice preview; a GET so the app's audio player can stream it by URL."""
+        pcm = await engine.tts.synthesize(text[:300], voice or store.profile.voice, lang)
         return Response(to_wav(pcm), media_type="audio/wav")
 
     # ------------------------------------------------------------ voices

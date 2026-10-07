@@ -1,0 +1,51 @@
+# OpenCall on one machine: the assistant server and a local LLM.
+#   cp .env.example .env   (then edit it)
+#   docker compose up -d
+#   docker compose exec ollama ollama pull llama3.1:8b
+# Add Asterisk with: docker compose --profile asterisk up -d  (see docs/TELEPHONY.md)
+services:
+  opencall:
+    build:
+      context: ./backend
+      args:
+        EXTRAS: stt,vad,tts,clone
+    env_file: .env
+    environment:
+      OPENCALL_LLM_BASE_URL: ${OPENCALL_LLM_BASE_URL:-http://ollama:11434/v1}
+    volumes:
+      - opencall-data:/data
+    ports:
+      - "8000:8000"
+      - "9092:9092"
+    depends_on: [ollama]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"  # reach Asterisk ARI on the host
+    restart: unless-stopped
+    # Uncomment on a machine with an NVIDIA GPU for faster speech models.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama:/root/.ollama
+    restart: unless-stopped
+
+  asterisk:
+    profiles: [asterisk]
+    # Any Asterisk 20+ image with res_audiosocket, app_audiosocket, res_ari and
+    # func_curl works. Build your own or swap in your distro's package.
+    image: ${ASTERISK_IMAGE:-andrius/asterisk:latest}
+    network_mode: host
+    volumes:
+      - ./deploy/asterisk/pjsip.conf:/etc/asterisk/pjsip.conf:ro
+      - ./deploy/asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
+      - ./deploy/asterisk/ari.conf:/etc/asterisk/ari.conf:ro
+      - ./deploy/asterisk/http.conf:/etc/asterisk/http.conf:ro
+    restart: unless-stopped
+
+volumes:
+  opencall-data:
+  ollama:

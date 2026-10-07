@@ -72,6 +72,8 @@ class EventBus:
                 "priority": "high",
                 "sound": "default",
                 "channelId": "calls-urgent" if priority == "max" else "calls",
+                # Matches the app's "hold" category, which adds an inline reply box.
+                **({"categoryId": "hold"} if event in ("hold_question", "task_needs_decision") else {}),
             }
             for t in tokens
         ]
