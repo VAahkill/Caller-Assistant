@@ -301,6 +301,7 @@ let Docker use the computer's Bluetooth or USB modem.
 | `docker : The term 'docker' is not recognized` | Docker Desktop isn't installed yet, or PowerShell was open before you installed it. Close PowerShell and open a new one. |
 | `error during connect` or `cannot find the file specified` mentioning `docker_engine` | Docker Desktop isn't running. Open it and wait for "Engine running". |
 | `docker compose up` stops with a download error | Run the same command again; it carries on where it stopped. |
+| `docker compose up` fails with `read-only file system` | Docker ran out of disk space. Check `Get-PSDrive C` shows at least 25 GB free (empty the Recycle Bin or run Disk Cleanup if not), run `wsl --shutdown`, reopen Docker Desktop, run `docker builder prune -af`, then `docker compose up -d --build` again. |
 | The health page opens on the computer but not on the phone | Check the phone is on the same Wi-Fi (not mobile data or a guest network), the address and `:8000` are right, and you ran step 5.2. In Windows Settings, Network & internet, Wi-Fi, set your network to **Private**. |
 | The app says `Server said: 401` | The token in the app doesn't match `OPENCALL_API_TOKEN` in `.env`. If you changed `.env` after starting, run `docker compose up -d`. |
 | No sound in the practice call | Turn up the phone's media volume. |
