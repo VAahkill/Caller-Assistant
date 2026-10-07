@@ -93,8 +93,19 @@ says `Docker Desktop is unable to start`:
   Answer `N` if it offers to restart, then restart Windows from the Start menu.
   Restarting only Docker Desktop isn't enough. A normal (not administrator)
   PowerShell answers these commands with `requires elevation`.
-- **"Virtualization is disabled"**: turn on "Intel VT-x" or "AMD-V / SVM" in your
-  computer's BIOS settings.
+- **Still the same error after the restart, or "No virtualization available"**:
+  open Task Manager (**Ctrl+Shift+Esc**), **Performance**, **CPU**, and look at
+  **Virtualization** below the graph.
+  - **Disabled**: it's switched off in the BIOS. Open Settings, System, Recovery,
+    click **Restart now** next to Advanced startup, then choose Troubleshoot,
+    Advanced options, **UEFI Firmware Settings**, Restart. Set **Intel
+    Virtualization Technology** (VT-x), or **SVM Mode** on AMD, to **Enabled**
+    (usually under Advanced or CPU Configuration), then save and exit (usually F10).
+  - **Enabled**: press the Windows key, open **Turn Windows features on or off**,
+    tick **Virtual Machine Platform** and **Windows Subsystem for Linux**, click
+    OK and restart.
+
+  Then click **Recheck and retry** in Docker Desktop.
 
 5. **On a 16 GB computer, give Docker more memory.** Windows lets Docker use half
    your memory, which is tight for the local AI. Run these two lines once:
