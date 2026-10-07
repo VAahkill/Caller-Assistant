@@ -33,7 +33,7 @@ log = logging.getLogger("opencall.api")
 
 def _report_warm_up(task: asyncio.Task) -> None:
     if not task.cancelled() and task.exception():
-        log.warning("Indian-language voices didn't load: %s", task.exception())
+        log.warning("Speech models didn't load: %s", task.exception())
 
 
 class ProfilePatch(BaseModel):
@@ -95,8 +95,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        if start_gateways and settings.indic_preload:
-            warm = asyncio.create_task(asyncio.to_thread(engine.tts.warm_up, settings.indic_preload.split(",")))
+        if start_gateways:
+            warm = asyncio.create_task(asyncio.to_thread(engine.warm_up))
             warm.add_done_callback(_report_warm_up)
         if start_gateways and settings.asterisk_enabled:
             await asterisk.start()

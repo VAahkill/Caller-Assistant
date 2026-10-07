@@ -108,3 +108,21 @@ def test_speech_is_kept_to_the_callers_languages():
     stt._model = FakeWhisper()
     result = stt._run(b"\x00\x00" * 1600, None)
     assert result.language == "te" and stt._model.languages == [None, "te"]
+
+
+def test_voices_are_loaded_before_the_first_call(tmp_path):
+    r = router(tmp_path)
+    r.warm_up("kokoro:am_adam", ["te", "ta", "fr"])
+    assert r.kokoro.calls == [("Hello.", "am_adam", "en")]
+    assert r.indic.calls == [("warm", "te"), ("warm", "ta")]
+    r = router(tmp_path)
+    r.warm_up("mms:te", [])
+    assert r.kokoro.calls == [("Hello.", "af_heart", "en")]
+
+
+def test_speech_recognition_is_loaded_before_the_first_call(engine, tmp_path):
+    loaded = []
+    engine.stt.warm_up = lambda: loaded.append("stt")
+    engine.tts = router(tmp_path)
+    engine.warm_up()
+    assert loaded == ["stt"] and engine.tts.kokoro.calls

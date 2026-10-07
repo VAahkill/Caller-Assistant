@@ -61,8 +61,8 @@ modem. See [docs/TELEPHONY.md](docs/TELEPHONY.md).
 
 ## Quick start
 
-**New here?** [docs/TRY_IT.md](docs/TRY_IT.md) walks through running the server,
-installing the Android app and making a practice call, step by step.
+**New here?** [docs/TRY_IT.md](docs/TRY_IT.md) walks through running the server on
+Windows, installing the Android app and making a practice call, step by step.
 
 ```bash
 cp .env.example .env              # set OPENCALL_API_TOKEN and pick a phone route
@@ -74,8 +74,12 @@ For the Bluetooth route, run the server directly on the host instead of Docker; 
 steps are in [docs/TELEPHONY.md](docs/TELEPHONY.md).
 
 Hardware: an NVIDIA GPU with 8 GB+ or an Apple Silicon Mac with 16 GB runs the whole
-stack locally. On a CPU-only machine use `OPENCALL_WHISPER_MODEL=small`, and Groq's
-free tier (free key, no card) for the LLM if replies are slow.
+stack locally. A CPU-only computer with 16 GB works too; if replies are slow there,
+use Groq's free tier (free key, no card) for the LLM, or
+`OPENCALL_WHISPER_MODEL=small` (faster, but worse at Indian languages). The Docker
+image uses PyTorch's CPU build to keep the download small; with an NVIDIA GPU, put
+`OPENCALL_TORCH_INDEX=https://pypi.org/simple` in `.env` and uncomment the GPU lines
+in `docker-compose.yml` before building.
 
 App:
 

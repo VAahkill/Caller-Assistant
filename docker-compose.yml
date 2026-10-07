@@ -12,6 +12,7 @@ services:
       context: ./backend
       args:
         EXTRAS: stt,vad,tts,indic,clone
+        TORCH_INDEX: ${OPENCALL_TORCH_INDEX:-https://download.pytorch.org/whl/cpu}
     env_file: .env
     environment:
       OPENCALL_LLM_BASE_URL: ${OPENCALL_LLM_BASE_URL:-http://ollama:11434/v1}
@@ -24,7 +25,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"  # reach Asterisk ARI on the host
     restart: unless-stopped
-    # Uncomment on a machine with an NVIDIA GPU for faster speech models.
+    # Uncomment on a machine with an NVIDIA GPU for faster speech models, and put
+    # OPENCALL_TORCH_INDEX=https://pypi.org/simple in .env before building, which
+    # installs PyTorch with GPU support.
     # deploy:
     #   resources:
     #     reservations:

@@ -43,6 +43,14 @@ class Engine:
         self.tasks = TaskManager(self)
         self.sessions: dict[str, CallSession] = {}
 
+    def warm_up(self) -> None:
+        """Download and load the speech models now, so the first call doesn't wait for them."""
+        load_stt = getattr(self.stt, "warm_up", None)
+        if load_stt is not None:
+            load_stt()
+        self.tts.warm_up(self.store.profile.voice, [lang.strip() for lang in self.settings.indic_preload.split(",")])
+        log.info("Speech models loaded, ready for calls.")
+
     def make_vad(self):
         return make_vad(self.settings.vad_provider)
 

@@ -12,6 +12,8 @@ def main() -> None:
     from .config import Settings
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    # One line per model file download otherwise; keep the log readable.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     settings = Settings()
     if settings.api_token == "change-me":
         logging.warning("OPENCALL_API_TOKEN is the default. Set a long random value before exposing the server.")

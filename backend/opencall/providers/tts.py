@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,14 +56,16 @@ class VoiceInfo:
 class KokoroEngine:
     def __init__(self) -> None:
         self._pipelines: dict[str, object] = {}
+        self._lock = threading.Lock()
 
     def _pipeline(self, lang: str):
         code = _KOKORO_LANG.get(lang, "a")
-        if code not in self._pipelines:
-            from kokoro import KPipeline
+        with self._lock:
+            if code not in self._pipelines:
+                from kokoro import KPipeline
 
-            self._pipelines[code] = KPipeline(lang_code=code)
-        return self._pipelines[code]
+                self._pipelines[code] = KPipeline(lang_code=code)
+            return self._pipelines[code]
 
     def synth(self, text: str, voice: str, lang: str) -> bytes:
         pipeline = self._pipeline(lang)
@@ -139,13 +142,17 @@ class TTSRouter:
             langs |= set(INDIC_LANGS)
         return langs
 
-    def warm_up(self, langs: list[str]) -> None:
-        """Download and load the Indian-language voices ahead of the first call."""
-        if self.indic is None or self.provider == "silent":
+    def warm_up(self, voice: str, langs: list[str]) -> None:
+        """Download and load the voices ahead of the first call."""
+        if self.provider == "silent":
             return
-        for lang in langs:
-            if lang in INDIC_LANGS:
-                self.indic.warm_up(lang)
+        if self.kokoro is not None:
+            kind, _, name = voice.partition(":")
+            self.kokoro.synth("Hello.", name if kind == "kokoro" else "af_heart", "en")
+        if self.indic is not None:
+            for lang in langs:
+                if lang in INDIC_LANGS:
+                    self.indic.warm_up(lang)
 
     # ----- synthesis -----------------------------------------------------
     def _synth_sync(self, text: str, voice: str, lang: str) -> bytes:

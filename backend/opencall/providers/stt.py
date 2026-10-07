@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -32,8 +33,16 @@ class FasterWhisperSTT:
         # languages your callers actually speak avoids that.
         self.languages = languages or []
         self._model = None
+        self._lock = threading.Lock()
+
+    def warm_up(self) -> None:
+        self._load()
 
     def _load(self):
+        with self._lock:
+            return self._load_locked()
+
+    def _load_locked(self):
         if self._model is None:
             from faster_whisper import WhisperModel  # heavy import, done once
 
