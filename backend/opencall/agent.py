@@ -150,14 +150,16 @@ class Conversation:
     outbound: bool = False
     category: str = "unknown"
     history: list[Message] = field(default_factory=list)
+    can_text: bool = False  # whether this phone line can send the caller an SMS
     _location_shared: bool = False
     _turns: int = 0
 
     @classmethod
-    def inbound(cls, profile: Profile, llm: LLM, number: str, contact_name: str, speakable: list[str]) -> "Conversation":
-        prompt = prompts.inbound_system_prompt(profile, number, contact_name, speakable)
+    def inbound(cls, profile: Profile, llm: LLM, number: str, contact_name: str, speakable: list[str],
+                can_text: bool = False) -> "Conversation":
+        prompt = prompts.inbound_system_prompt(profile, number, contact_name, speakable, can_text and bool(number))
         return cls(profile, llm, prompt, caller_number=number, is_contact=bool(contact_name),
-                   category="contact" if contact_name else "unknown")
+                   category="contact" if contact_name else "unknown", can_text=can_text and bool(number))
 
     @classmethod
     def for_task(cls, profile: Profile, llm: LLM, task: Task, speakable: list[str]) -> "Conversation":
@@ -235,7 +237,7 @@ class Conversation:
         self.category = "delivery"
         if not self._location_shared:
             self._location_shared = True
-            self.history.append({"role": "system", "content": prompts.delivery_context(self.profile)})
+            self.history.append({"role": "system", "content": prompts.delivery_context(self.profile, self.can_text)})
 
     async def _generate(self) -> AsyncIterator[Action]:
         parser = TagStreamParser()

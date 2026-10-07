@@ -70,7 +70,8 @@ class Engine:
             number = normalize_number(bridge.number, profile.home_country_code)
             rec = CallRecord(id=bridge.call_id, number=number, contact_name=contact.name if contact else "",
                              category="contact" if contact else "unknown")
-            conv = Conversation.inbound(profile, self.llm, number, rec.contact_name, self._speakable())
+            conv = Conversation.inbound(profile, self.llm, number, rec.contact_name, self._speakable(),
+                                        can_text=getattr(bridge, "can_sms", False))
         session = CallSession(self, bridge, rec, conv)
         self.sessions[rec.id] = session
         if task:

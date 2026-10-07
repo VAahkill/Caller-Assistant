@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from ..audio import resample
+from .ami import ami_command, sms_command
 from .queue_bridge import QueueBridge
 
 if TYPE_CHECKING:
@@ -37,9 +38,15 @@ KIND_HANGUP, KIND_UUID, KIND_DTMF, KIND_AUDIO, KIND_ERROR = 0x00, 0x01, 0x03, 0x
 
 
 class AudioSocketBridge(QueueBridge):
-    def __init__(self, call_id: str, number: str, direction: str, writer: asyncio.StreamWriter):
+    def __init__(self, call_id: str, number: str, direction: str, writer: asyncio.StreamWriter,
+                 gateway: "AsteriskGateway | None" = None):
         super().__init__(call_id, number, direction)
         self.writer = writer
+        self.gateway = gateway
+        self.can_sms = bool(gateway and gateway.sms_enabled and number)
+
+    async def send_sms(self, text: str) -> bool:
+        return await self.gateway.send_sms(self.number, text) if self.gateway else False
 
     async def send_audio(self, frame: bytes) -> None:
         pcm8k = resample(frame, 16000, 8000)
@@ -71,6 +78,15 @@ class AsteriskGateway:
         # uuid -> (number, direction, call_id); filled by the screen webhook or dial().
         self.expected: dict[str, tuple[str, str, str]] = {}
         self._server: asyncio.base_events.Server | None = None
+
+    @property
+    def sms_enabled(self) -> bool:
+        return bool(self.engine.settings.asterisk_ami_user)
+
+    async def send_sms(self, number: str, text: str) -> bool:
+        s = self.engine.settings
+        return await ami_command(s.asterisk_ami_host, s.asterisk_ami_port, s.asterisk_ami_user,
+                                 s.asterisk_ami_password, sms_command(s.asterisk_sms_command, number, text))
 
     # --------------------------------------------------- inbound screening
     async def screen(self, call_uuid: str, number: str) -> str:
@@ -120,7 +136,7 @@ class AsteriskGateway:
                 return
             call_uuid = str(uuid.UUID(bytes=payload))
             number, direction, call_id = self.expected.pop(call_uuid, ("", "inbound", uuid.UUID(call_uuid).hex[:12]))
-            bridge = AudioSocketBridge(call_id, number, direction, writer)
+            bridge = AudioSocketBridge(call_id, number, direction, writer, self)
             pump = asyncio.create_task(self._pump(reader, bridge))
             await self.engine.handle_call(bridge)
             pump.cancel()

@@ -48,6 +48,7 @@ services:
       - /dev/ttyUSB2
     volumes:
       - ./deploy/asterisk/quectel.conf:/etc/asterisk/quectel.conf:ro
+      - ./deploy/asterisk/manager.conf:/etc/asterisk/manager.conf:ro
       - ./deploy/asterisk/extensions.conf:/etc/asterisk/extensions.conf:ro
       - ./deploy/asterisk/ari.conf:/etc/asterisk/ari.conf:ro
       - ./deploy/asterisk/http.conf:/etc/asterisk/http.conf:ro

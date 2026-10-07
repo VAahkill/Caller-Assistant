@@ -15,7 +15,7 @@ Built from a study of hiRobin, Bland AI, Retell AI and Vapi: see
 | | |
 |---|---|
 | **Screens calls** | Blocks international numbers, telemarketing series and blocked contacts before answering; politely ends loan, insurance and sales pitches. Saved contacts always get through. |
-| **Delivery partners** | Detects a delivery call, then gives step-by-step directions from your map pin and landmarks, in the caller's language (Whisper detects it). Your address is never told to anyone else. |
+| **Delivery partners** | Detects a delivery call, then gives step-by-step directions from your map pin and landmarks, in the caller's language (Whisper detects it). Can also text them a map link (GSM modem, or Android over Bluetooth). Your address is never told to anyone else. |
 | **Zero-trust security** | Requests for OTPs, PINs, passwords, CVVs or balances are refused in code before the AI sees them, and you get an alert. Everything the assistant says is scrubbed for code-like numbers. |
 | **Live transcript** | Every call streams to the app as a chat. Type anything and the assistant says it. |
 | **Hold and ask** | When a caller asks something it doesn't know, it puts them on hold, notifies you with a reply box, and relays your answer naturally. No answer? It takes a message. |
@@ -103,8 +103,8 @@ cd mobile && npx tsc --noEmit
   upgrade.
 - The Bluetooth route and GSM modem route are written against oFono/PipeWire and
   chan_quectel but haven't been tried on real hardware yet.
-- Texting a map link to a delivery partner isn't available on the free routes; the
-  assistant reads out the directions instead.
+- Map-link texts reach the number the delivery partner called from. Many delivery apps
+  mask that number, so the assistant always reads the directions out as well.
 - Sharing straight from another app's share sheet isn't wired yet; the app picks up a
   copied number from the clipboard instead, and accepts `opencall://tasks?number=…&goal=…`.
 

@@ -12,6 +12,7 @@ Neither needs a VoIP provider, a paid phone number or a subscription.
 | Recurring cost | Nothing | Only the SIM's validity recharge |
 | Works when you're away from home | No, the phone must be in Bluetooth range | Yes, via call forwarding |
 | Outbound "call for me" | Yes, from your own number | Yes, from the modem's SIM |
+| Text a map link to delivery partners | Yes on Android (Bluetooth message access); not on iPhone | Yes, from the modem's SIM |
 | Phones | Android and iPhone | Any |
 
 The phone layer is swappable. The engine only sees a `CallBridge`
@@ -30,7 +31,7 @@ Caller ─▶ your phone ──Bluetooth hands-free──▶ home PC (BlueZ + oF
 Setup on a Linux machine with Bluetooth (Debian/Ubuntu/Raspberry Pi OS):
 
 ```bash
-sudo apt install bluez ofono pipewire wireplumber pipewire-audio-client-libraries
+sudo apt install bluez bluez-obexd ofono pipewire wireplumber pipewire-audio-client-libraries
 # Let PipeWire use oFono for hands-free calls:
 mkdir -p ~/.config/wireplumber/wireplumber.conf.d
 cat > ~/.config/wireplumber/wireplumber.conf.d/50-opencall-hfp.conf <<'EOF'
@@ -58,6 +59,11 @@ How it behaves:
   answering.
 - If you answer on the phone yourself, your phone may still send the audio to the
   "headset". Tap the audio button on the call screen to switch it back to the phone.
+- Delivery partners can be texted a map link through your phone, using Bluetooth's
+  message access profile. On Android, allow "Message access" for the computer in the
+  phone's Bluetooth device settings. iPhones don't allow sending texts this way, so
+  there the assistant reads the directions out. Turn it off with
+  `OPENCALL_BLUETOOTH_SMS=false`.
 - Keep the phone within about 10 m of the server. On iPhone, keep the server
   connected in Settings → Bluetooth.
 
@@ -89,6 +95,10 @@ Caller ─▶ your mobile ──(carrier forwards if unanswered)──▶ spare 
    outgoing call, which is free on unlimited plans. Check your plan.
 5. "Call for me" tasks go out through the modem SIM, so they cost what a normal call
    from that SIM costs (free on an unlimited plan).
+6. To text delivery partners a map link from the modem SIM, copy
+   `deploy/asterisk/manager.conf` too and set the `OPENCALL_ASTERISK_AMI_*` values in
+   `.env`. OpenCall sends the text with chan_quectel's `quectel sms` command. Most
+   prepaid plans include free SMS.
 
 If you already have a SIP line, Asterisk can use it instead of the modem: set
 `OPENCALL_ASTERISK_OUTBOUND_ENDPOINT=PJSIP/{number}@<your trunk>` and point the

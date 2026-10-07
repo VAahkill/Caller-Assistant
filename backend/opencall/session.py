@@ -157,9 +157,7 @@ class CallSession:
             elif isinstance(action, SecurityAlert):
                 await self._security_alert(action)
             elif isinstance(action, SendLocation):
-                link = self.engine.store.profile.location.maps_link()
-                if link and await self.bridge.send_sms(f"Location for {self.engine.store.profile.user_name}: {link}"):
-                    await self._line("system", "Sent the map link by SMS.", kind="note")
+                await self._send_location()
             elif isinstance(action, Outcome):
                 await self.engine.tasks.on_outcome(self, action)
             elif isinstance(action, EndCall):
@@ -214,6 +212,24 @@ class CallSession:
             await self.bridge.hangup()
 
         asyncio.create_task(_later())
+
+    async def _send_location(self) -> None:
+        loc = self.engine.store.profile.location
+        link = loc.maps_link()
+        if not link:
+            return
+        text = f"Delivery location for {self.engine.store.profile.user_name}: {link}"
+        if loc.landmarks:
+            text += f"\n{loc.landmarks}"
+        if loc.floor_unit:
+            text += f"\n{loc.floor_unit}"
+        try:
+            sent = await self.bridge.send_sms(text[:450])
+        except Exception:
+            log.exception("SMS failed")
+            sent = False
+        note = "Texted the map link to the caller." if sent else "Couldn't text the map link; directions were read out."
+        await self._line("system", note, kind="note")
 
     # ------------------------------------------------------------ security
     async def _security_alert(self, alert: SecurityAlert) -> None:

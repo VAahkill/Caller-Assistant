@@ -14,6 +14,7 @@ class QueueBridge:
         self.call_id = call_id
         self.number = number
         self.direction = direction
+        self.can_sms = False
         self.inbound: asyncio.Queue[bytes | None] = asyncio.Queue()
         self.sent: list[bytes] = []
         self.sms: list[str] = []

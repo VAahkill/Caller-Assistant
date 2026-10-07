@@ -43,6 +43,21 @@ class Ofono(Protocol):
 
     async def dial(self, number: str) -> str: ...
 
+    async def send_sms(self, number: str, text: str) -> bool: ...
+
+
+def build_bmessage(number: str, text: str) -> str:
+    """An SMS in the Bluetooth MAP bMessage format."""
+    body = "BEGIN:MSG\r\n" + text.replace("\r\n", "\n").replace("\n", "\r\n") + "\r\nEND:MSG\r\n"
+    return (
+        "BEGIN:BMSG\r\nVERSION:1.0\r\nSTATUS:UNREAD\r\nTYPE:SMS_GSM\r\nFOLDER:telecom/msg/outbox\r\n"
+        "BEGIN:BENV\r\nBEGIN:VCARD\r\nVERSION:2.1\r\n"
+        f"TEL:{number}\r\nEND:VCARD\r\n"
+        "BEGIN:BBODY\r\nCHARSET:UTF-8\r\n"
+        f"LENGTH:{len(body.encode())}\r\n{body}"
+        "END:BBODY\r\nEND:BENV\r\nEND:BMSG\r\n"
+    )
+
 
 class DBusOfono:
     """oFono over the system D-Bus, using dbus-next (pure Python)."""
@@ -104,6 +119,45 @@ class DBusOfono:
         vcm = await self._iface(self.modem_path, "org.ofono.VoiceCallManager")
         return await vcm.call_dial(number, "default")
 
+    async def send_sms(self, number: str, text: str) -> bool:
+        """Sends an SMS through the phone with the Bluetooth Message Access
+        Profile (BlueZ obexd on the session bus). Android supports this once you
+        allow "message access" for the paired computer; iPhones generally don't."""
+        import os
+        import tempfile
+
+        from dbus_next import Variant
+        from dbus_next.aio import MessageBus
+
+        m = re.search(r"dev_([0-9A-Fa-f]{2}(?:_[0-9A-Fa-f]{2}){5})", self.modem_path or "")
+        if not m:
+            return False
+        address = m.group(1).replace("_", ":")
+        bus = await MessageBus().connect()  # obexd lives on the user's session bus
+        path = ""
+        tmp = tempfile.NamedTemporaryFile("w", suffix=".bmsg", delete=False, newline="")
+        try:
+            tmp.write(build_bmessage(number, text))
+            tmp.close()
+            intro = await bus.introspect("org.bluez.obex", "/org/bluez/obex")
+            client = bus.get_proxy_object("org.bluez.obex", "/org/bluez/obex", intro).get_interface("org.bluez.obex.Client1")
+            path = await client.call_create_session(address, {"Target": Variant("s", "map")})
+            intro = await bus.introspect("org.bluez.obex", path)
+            mas = bus.get_proxy_object("org.bluez.obex", path, intro).get_interface("org.bluez.obex.MessageAccess1")
+            await mas.call_set_folder("telecom/msg")
+            await mas.call_push_message(tmp.name, "outbox", {"Charset": Variant("s", "utf8")})
+            await asyncio.sleep(2)  # let the transfer finish before closing the session
+            return True
+        except Exception as e:
+            log.warning("Bluetooth SMS failed: %s", e)
+            return False
+        finally:
+            if path:
+                with contextlib.suppress(Exception):
+                    await client.call_remove_session(path)
+            os.unlink(tmp.name)
+            bus.disconnect()
+
 
 def _val(v: Any) -> Any:
     return getattr(v, "value", v)
@@ -132,6 +186,10 @@ class HFPBridge(QueueBridge):
         self._rec: asyncio.subprocess.Process | None = None
         self._play: asyncio.subprocess.Process | None = None
         self._reader: asyncio.Task | None = None
+        self.can_sms = gateway.engine.settings.bluetooth_sms and bool(number)
+
+    async def send_sms(self, text: str) -> bool:
+        return await self.gateway.ofono.send_sms(self.number, text)
 
     async def open_audio(self, source: str, sink: str) -> None:
         fmt = ["--rate", "16000", "--channels", "1", "--format", "s16"]

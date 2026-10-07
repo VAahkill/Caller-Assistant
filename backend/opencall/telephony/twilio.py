@@ -52,6 +52,7 @@ class TwilioBridge(QueueBridge):
         self.gateway = gateway
         self.stream_sid = stream_sid
         self.call_sid = call_sid
+        self.can_sms = bool(number)
 
     async def send_audio(self, frame: bytes) -> None:
         payload = base64.b64encode(mulaw_encode(resample(frame, 16000, 8000))).decode()

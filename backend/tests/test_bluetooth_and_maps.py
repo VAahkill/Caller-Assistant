@@ -6,7 +6,7 @@ from opencall.telephony.bluetooth import BluetoothGateway
 
 class FakeOfono:
     def __init__(self):
-        self.answered, self.hung_up, self.dialled = [], [], []
+        self.answered, self.hung_up, self.dialled, self.texts = [], [], [], []
 
     async def start(self, on_added, on_removed, on_state):
         self.on_added, self.on_removed, self.on_state = on_added, on_removed, on_state
@@ -17,6 +17,10 @@ class FakeOfono:
 
     async def hangup(self, path):
         self.hung_up.append(path)
+
+    async def send_sms(self, number, text):
+        self.texts.append((number, text))
+        return True
 
     async def dial(self, number):
         self.dialled.append(number)
@@ -48,6 +52,9 @@ async def test_answers_after_ringing_and_ends_with_the_phone(engine):
     assert await wait_for(lambda: engine.sessions)
     assert ofono.answered == ["/hfp/dev/voicecall01"]
     call_id = next(iter(engine.sessions))
+    bridge = engine.sessions[call_id].bridge
+    assert bridge.can_sms and await bridge.send_sms("map link")
+    assert ofono.texts == [("+919876543210", "map link")]
     await ofono.on_removed("/hfp/dev/voicecall01")  # caller hung up
     assert await wait_for(lambda: not engine.sessions)
     assert engine.store.calls.get(call_id).status == "ended"

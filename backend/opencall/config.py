@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     bluetooth_answer_delay_available_s: float = 15.0  # longer when you're around
     bluetooth_source: str = ""  # PipeWire node names; found automatically if empty
     bluetooth_sink: str = ""
+    bluetooth_sms: bool = True  # text map links through the phone (Bluetooth MAP, Android)
     asterisk_enabled: bool = True
     asterisk_audiosocket_port: int = 9092
     asterisk_ari_url: str = ""  # e.g. http://asterisk:8088/ari
@@ -57,6 +58,12 @@ class Settings(BaseSettings):
     # chan_quectel GSM modem; for a SIP trunk use e.g. "PJSIP/{number}@trunk"
     asterisk_outbound_endpoint: str = "Quectel/quectel0/{number}"
     asterisk_outbound_context: str = "opencall-outbound"
+    # Texting a map link to delivery partners through the GSM modem, via AMI.
+    asterisk_ami_host: str = "127.0.0.1"
+    asterisk_ami_port: int = 5038
+    asterisk_ami_user: str = ""
+    asterisk_ami_password: str = ""
+    asterisk_sms_command: str = 'quectel sms quectel0 {number} "{text}"'
     # Optional paid extra, never required.
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""

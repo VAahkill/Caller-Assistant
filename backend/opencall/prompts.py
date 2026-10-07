@@ -59,8 +59,14 @@ def _instructions(profile: Profile) -> str:
     return f"\n{profile.user_name.upper()}'S OWN INSTRUCTIONS (follow them unless they break SECURITY)\n{lines}\n"
 
 
+SEND_LOCATION_TAG = """\
+- [SEND_LOCATION] texts the caller a map link to the door. Use it for delivery
+  partners as soon as they ask where to come, and tell them a link is on its way.
+"""
+
+
 def inbound_system_prompt(
-    profile: Profile, caller_number: str, contact_name: str, speakable: list[str]
+    profile: Profile, caller_number: str, contact_name: str, speakable: list[str], can_text: bool = False
 ) -> str:
     user = profile.user_name
     who = f"{contact_name} (a saved contact)" if contact_name else f"an unsaved number {caller_number or '(withheld)'}"
@@ -89,13 +95,18 @@ WHAT TO DO
 {_instructions(profile)}
 {SECURITY.format(user=user)}
 {STYLE.format(speakable=speak)}
-{TAGS.format(user=user)}"""
+{TAGS.format(user=user)}{SEND_LOCATION_TAG if can_text else ""}"""
 
 
-def delivery_context(profile: Profile) -> str:
+def delivery_context(profile: Profile, can_text: bool = False) -> str:
     loc = profile.location.describe() or "(The user hasn't pinned a location yet. HOLD to ask.)"
+    texting = (
+        "You can also text them a map link with [SEND_LOCATION]; still read out the key landmark."
+        if can_text
+        else "Read the directions out; you cannot send texts on this line."
+    )
     return (
-        "This caller is a delivery partner. Delivery details you may share with them (read them out; you cannot send texts):\n"
+        f"This caller is a delivery partner. {texting} Delivery details you may share with them:\n"
         f"{loc}\n"
         "Guide them from where they are now. Ask where they are if needed, then give the next"
         " one or two steps at a time in their language."
