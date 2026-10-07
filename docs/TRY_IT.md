@@ -255,6 +255,22 @@ going on.
 4. If Play Protect warns about an unknown app, tap **More details**, then
    **Install anyway**. It isn't on the Play Store yet, which is why Android asks.
 
+If the phone says **App blocked by Advanced Protection**, Android's Advanced
+Protection is on. It has two separate switches, one on your Google account and one
+on the phone, and both must be off:
+
+1. In Settings, search for `Advanced Protection` (or open Settings, Google, All
+   services, Advanced Protection) and turn off **Device protection**. Restart if
+   asked.
+2. Make sure no Google account signed in on the phone is still enrolled in the
+   Advanced Protection Program (check each at <https://myaccount.google.com>,
+   Security).
+3. In Settings, Apps, Google Play Store, tap **Force stop**, then **Storage usage**,
+   **Clear cache**. Restart the phone and tap the APK again.
+
+"Scan apps with Play Protect" stays greyed out until this clears, which Google says
+can take up to 24 hours after leaving the account program.
+
 ---
 
 ## Step 7. Connect the app to the assistant
