@@ -222,8 +222,10 @@ browser. It should show `{"ok":true, ...}`.
 ipconfig
 ```
 
-Under **Wireless LAN adapter Wi-Fi**, note the **IPv4 Address**, for example
-`192.168.1.10`. (Mac: System Settings, Wi-Fi, Details. Linux: `hostname -I`.)
+Under **Wireless LAN adapter Wi-Fi**, note the **IPv4 Address**, such as
+`192.168.1.7`. This is **your address**: everywhere below that says
+`YOUR-ADDRESS`, type these numbers instead. (Mac: System Settings, Wi-Fi, Details.
+Linux: `hostname -I`.)
 
 **5.2 Open port 8000 in Windows Firewall.** Open PowerShell **as administrator**
 and run:
@@ -233,7 +235,8 @@ New-NetFirewallRule -DisplayName "OpenCall" -Direction Inbound -Protocol TCP -Lo
 ```
 
 **5.3 Test it from the phone.** In the phone's browser, open
-`http://192.168.1.10:8000/health` (with your address). You should see the same
+`http://YOUR-ADDRESS:8000/health`, for example `http://192.168.1.7:8000/health`.
+You should see the same
 `{"ok":true, ...}`. If it doesn't load, see "Something's not working" below before
 going on.
 
@@ -257,8 +260,8 @@ going on.
 ## Step 7. Connect the app to the assistant
 
 1. Open **OpenCall** and go to the **Settings** tab.
-2. **Server address:** `http://192.168.1.10:8000` (your address from step 5.1,
-   with `http://` and `:8000`).
+2. **Server address:** `http://YOUR-ADDRESS:8000` (your address from step 5.1,
+   with `http://` before it and `:8000` after it).
 3. **API token:** the password from step 3.2.
 4. Tap **Connect**. It should say **Connected**. Allow notifications when asked.
 5. Fill in your name and your assistant's name.
@@ -311,7 +314,7 @@ let Docker use the computer's Bluetooth or USB modem.
 | `docker compose up` stops with a download error | Run the same command again; it carries on where it stopped. |
 | `docker compose up` fails with `read-only file system` | Docker ran out of disk space. Free space on C: (Recycle Bin, Disk Cleanup) or move Docker's data to another drive (step 2.6), run `wsl --shutdown`, reopen Docker Desktop, run `docker builder prune -af`, then `docker compose up -d --build` again. |
 | Docker Desktop shows `dockerd configuration error` or `/usr/local/bin/dockerd: no such file or directory` | Docker's internal system is damaged, often after the disk filled up. Click **Reset dockerd configuration**; if that doesn't help, **Quit**, run `wsl --shutdown` and reopen it; if it still fails, use **Troubleshoot** (bug icon), **Reset to factory defaults**, then set the disk image location again (step 2.6) before rebuilding. |
-| The health page opens on the computer but not on the phone | Check the phone is on the same Wi-Fi (not mobile data or a guest network), the address and `:8000` are right, and you ran step 5.2. In Windows Settings, Network & internet, Wi-Fi, set your network to **Private**. |
+| The health page opens on the computer but not on the phone | Check the phone is on the same Wi-Fi (not mobile data or a guest network), you used your own address from `ipconfig` (not the example), `:8000` is there, and you ran step 5.2. In Windows Settings, Network & internet, Wi-Fi, set your network to **Private**. |
 | The app says `Server said: 401` | The token in the app doesn't match `OPENCALL_API_TOKEN` in `.env`. If you changed `.env` after starting, run `docker compose up -d`. |
 | No sound in the practice call | Turn up the phone's media volume. |
 | Replies take very long | Use Groq (step 4.4), or put `OPENCALL_WHISPER_MODEL=small` in `.env` and run `docker compose up -d`. |
