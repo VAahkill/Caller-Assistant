@@ -1,0 +1,69 @@
+"""Server settings, read from environment variables prefixed with OPENCALL_.
+
+Everything the *user* edits from the app (name, location, instructions, voice)
+lives in the data store instead, so it can change without a restart.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="OPENCALL_", env_file=".env", extra="ignore")
+
+    host: str = "0.0.0.0"
+    port: int = 8000
+    data_dir: Path = Path("./data")
+    # Shared secret the mobile app sends as a Bearer token. Required when the
+    # server is reachable from the internet (e.g. through a Cloudflare Tunnel).
+    api_token: str = "change-me"
+    public_url: str = "http://localhost:8000"
+
+    # LLM: any OpenAI-compatible chat endpoint. Defaults to a local Ollama.
+    # Groq free tier: base_url=https://api.groq.com/openai/v1, model=llama-3.1-8b-instant
+    llm_provider: str = "openai_compat"  # openai_compat | scripted
+    llm_base_url: str = "http://localhost:11434/v1"
+    llm_api_key: str = "ollama"
+    llm_model: str = "llama3.1:8b"
+    llm_temperature: float = 0.4
+
+    stt_provider: str = "faster_whisper"  # faster_whisper | none
+    whisper_model: str = "large-v3-turbo"
+    whisper_device: str = "auto"
+
+    vad_provider: str = "energy"  # energy | silero
+    end_of_turn_silence_ms: int = 650
+    barge_in_ms: int = 300
+
+    tts_provider: str = "kokoro"  # kokoro | silent
+    default_voice: str = "kokoro:af_heart"
+    clone_provider: str = "xtts"  # xtts | none
+
+    # Telephony: which bridges to enable. See docs/TELEPHONY.md.
+    asterisk_audiosocket_port: int = 9092
+    asterisk_ari_url: str = ""  # e.g. http://asterisk:8088/ari
+    asterisk_ari_user: str = ""
+    asterisk_ari_password: str = ""
+    asterisk_outbound_endpoint: str = "PJSIP/{number}@trunk"
+    asterisk_outbound_context: str = "opencall-outbound"
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_from_number: str = ""
+
+    # Push notifications through Expo's free push service.
+    expo_push_url: str = "https://exp.host/--/api/v2/push/send"
+
+    hold_timeout_s: float = 45.0
+    hold_reminder_s: float = 15.0
+    max_call_minutes: float = 15.0
+
+    @property
+    def recordings_dir(self) -> Path:
+        return self.data_dir / "recordings"
+
+    @property
+    def voices_dir(self) -> Path:
+        return self.data_dir / "voices"
