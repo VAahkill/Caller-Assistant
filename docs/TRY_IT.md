@@ -256,8 +256,69 @@ going on.
    **Install anyway**. It isn't on the Play Store yet, which is why Android asks.
 
 If the phone says **App blocked by Advanced Protection**, Android's Advanced
-Protection is on. It has two separate switches, one on your Google account and one
-on the phone, and both must be off:
+Protection is on. It only blocks installing by tapping an APK on the phone, so
+install it from your computer over the USB cable instead (6.1). That's free and
+Advanced Protection can stay on. If that fails, turn protection off just for the
+install (6.2).
+
+**6.1 Install from your computer over USB.**
+
+1. Get **OpenCall.apk** onto the computer: open the project thread in the Claude app
+   or at claude.ai on the computer and download it into your **Downloads** folder.
+2. Download Google's free Android tools and copy the app next to them. Paste these
+   into PowerShell one line at a time:
+
+   ```powershell
+   cd $HOME
+   $ProgressPreference = 'SilentlyContinue'
+   Invoke-WebRequest https://dl.google.com/android/repository/platform-tools-latest-windows.zip -OutFile platform-tools.zip -UseBasicParsing
+   Expand-Archive platform-tools.zip -DestinationPath . -Force
+   cd platform-tools
+   Copy-Item $HOME\Downloads\OpenCall.apk .
+   ```
+
+3. On the phone, turn on USB debugging:
+   1. Settings, **About device**, **Version**, then tap **Build number** seven times
+      and enter your PIN. It says you're now a developer.
+   2. In Settings, search for `USB debugging` (it's inside **Developer options**)
+      and turn it on.
+4. **Unlock the phone**, then plug it into the computer with the USB cable. Advanced
+   Protection treats a cable plugged into a locked phone as charge-only; if the phone
+   says to unlock and reconnect, unplug and plug in again while it's unlocked.
+5. In PowerShell run:
+
+   ```powershell
+   .\adb devices
+   ```
+
+   The phone asks **Allow USB debugging?** Tick **Always allow from this computer**
+   and tap **Allow**. Run `.\adb devices` again: you should see one line ending in
+   `device`.
+6. Install the app:
+
+   ```powershell
+   .\adb install OpenCall.apk
+   ```
+
+   Wait for `Success`. If the phone shows a Play Protect message, choose **Install**
+   (or **Scan app**), not Cancel. OpenCall is now in your app list.
+7. You can turn **USB debugging** off again. To install a newer OpenCall later, copy
+   the new APK into the `platform-tools` folder, turn USB debugging on, and run
+   `.\adb install -r OpenCall.apk` (the `-r` keeps your settings).
+
+If something goes wrong in 6.1:
+
+| What you see | What to do |
+|---|---|
+| `adb devices` shows nothing | Try another cable (some only charge) and another USB port. Swipe down on the phone, tap the USB notification and pick **File transfer**. |
+| The line ends in `unauthorized` | Unlock the phone and tap **Allow** on the message. If it never appears, turn USB debugging off and on, then unplug and plug in again. |
+| `INSTALL_FAILED_VERIFICATION_FAILURE` | Run `.\adb push OpenCall.apk /data/local/tmp/o.apk` and then `.\adb shell pm install -r /data/local/tmp/o.apk`. |
+| `INSTALL_FAILED_USER_RESTRICTED` | The phone refuses installs from the computer. Use 6.2. |
+| No cable works | In Developer options open **Wireless debugging** (phone and computer on the same Wi-Fi), turn it on and tap **Pair device with pairing code**. Run `.\adb pair` followed by the address and port it shows (like `192.168.1.5:37123`) and type the code. Then run `.\adb connect` with the address and port shown on the Wireless debugging screen itself, which is a different port, and then `.\adb install OpenCall.apk`. |
+
+**6.2 Or turn Device protection off for the install.** Advanced Protection has two
+separate switches, one on your Google account and one on the phone, and both must be
+off:
 
 1. In Settings, search for `Advanced Protection` (or open Settings, Google, All
    services, Advanced Protection) and turn off **Device protection**. Restart if
@@ -266,7 +327,11 @@ on the phone, and both must be off:
    Advanced Protection Program (check each at <https://myaccount.google.com>,
    Security).
 3. In Settings, Apps, Google Play Store, tap **Force stop**, then **Storage usage**,
-   **Clear cache**. Restart the phone and tap the APK again.
+   **Clear cache**. Restart the phone and tap the APK again. If it asks again to
+   allow installs from Files, allow it.
+4. Once OpenCall is installed, you can turn **Device protection** back on. While
+   it's on, Android won't install updates to OpenCall from an APK, so use 6.1 for
+   those, or switch it off again.
 
 "Scan apps with Play Protect" stays greyed out until this clears, which Google says
 can take up to 24 hours after leaving the account program.
