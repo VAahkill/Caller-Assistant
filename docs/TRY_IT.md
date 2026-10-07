@@ -41,8 +41,9 @@ git clone --branch claude/ai-reception-assistant-n4ffi3 --config core.autocrlf=f
 cd Caller-Assistant
 ```
 
-`core.autocrlf=false` keeps the files exactly as they are on GitHub, which the
-Linux containers in step 4 expect.
+The `git clone` line is one command, even if it wraps onto two lines on your
+screen. `core.autocrlf=false` keeps the files exactly as they are on GitHub, which
+the Linux containers in step 4 expect.
 
 **1.3 Check you have it.**
 
@@ -77,10 +78,23 @@ Python or the models yourself. It's free for personal use.
 
    Both should print version numbers, with a **Server** section in the first one.
 
-If Docker Desktop says WSL needs updating, open PowerShell **as administrator**
-(right-click the PowerShell icon, "Run as administrator"), run `wsl --update`, and
-restart the computer. If it says virtualization is disabled, turn on "Intel VT-x" or
-"AMD-V / SVM" in your computer's BIOS settings.
+If Docker Desktop shows an error instead of **Engine running**, or `docker version`
+says `Docker Desktop is unable to start`:
+
+- **"Virtual Machine Platform not enabled"** or **"WSL needs updating"**: open
+  PowerShell **as administrator** (Windows key, type `powershell`, right-click
+  **Windows PowerShell**, **Run as administrator**, **Yes**) and run:
+
+  ```powershell
+  Enable-WindowsOptionalFeature -Online -FeatureName VirtualMachinePlatform
+  wsl --update
+  ```
+
+  Answer `N` if it offers to restart, then restart Windows from the Start menu.
+  Restarting only Docker Desktop isn't enough. A normal (not administrator)
+  PowerShell answers these commands with `requires elevation`.
+- **"Virtualization is disabled"**: turn on "Intel VT-x" or "AMD-V / SVM" in your
+  computer's BIOS settings.
 
 5. **On a 16 GB computer, give Docker more memory.** Windows lets Docker use half
    your memory, which is tight for the local AI. Run these two lines once:
