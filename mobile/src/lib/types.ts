@@ -215,9 +215,16 @@ export interface Health {
 
 export type AssistantState = 'listening' | 'transcribing' | 'translating' | 'thinking' | 'speaking' | 'idle' | 'error';
 
+/** What the owner chat changed: task_created {task}, instruction_added {text},
+ *  note_added {text}, availability {available}, enabled {enabled}. Others are ignored. */
+export interface ChatAction {
+  type: string;
+  [field: string]: unknown;
+}
+
 export interface ChatReply {
   reply: string;
-  actions: { type: string }[];
+  actions: ChatAction[];
 }
 
 export interface VoiceChatReply extends ChatReply {
