@@ -144,9 +144,19 @@ class XTTSEngine:
     def _model(self):
         with self._lock:
             if self._tts is None:
-                import torch
-                from TTS.api import TTS
+                import transformers
 
+                if int(transformers.__version__.split(".")[0]) >= 5:
+                    # coqui-tts 0.27 imports, then fails at the first sentence.
+                    raise RuntimeError("Recorded voices need transformers 4 (pip install 'transformers>=4.57,<5'), "
+                                       f"not {transformers.__version__}. The Docker image has the right one.")
+                import torch
+
+                try:
+                    from TTS.api import TTS
+                except ImportError as e:
+                    raise RuntimeError("Recorded voices need the clone extra: pip install 'opencall[clone]' "
+                                       f"({e})") from e
                 self._tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(
                     "cuda" if torch.cuda.is_available() else "cpu"
                 )
@@ -156,15 +166,16 @@ class XTTSEngine:
         self._model()
 
     def make_latents(self, reference: Path, out: Path) -> None:
+        model = self._model()
         import torch
 
-        gpt_latent, speaker = self._model().get_conditioning_latents(audio_path=[str(reference)])
+        gpt_latent, speaker = model.get_conditioning_latents(audio_path=[str(reference)])
         torch.save({"gpt_cond_latent": gpt_latent, "speaker_embedding": speaker}, out)
 
     def synth(self, text: str, reference: Path, lang: str, latents: Path) -> bytes:
+        model = self._model()
         import torch
 
-        model = self._model()
         if not latents.exists():
             self.make_latents(reference, latents)
         saved = torch.load(latents, map_location=model.device, weights_only=True)

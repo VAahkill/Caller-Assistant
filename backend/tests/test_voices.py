@@ -146,6 +146,8 @@ def test_kokoro_shares_one_model_between_languages(monkeypatch):
             yield None, None, np.zeros(2400, dtype=np.float32)
 
     monkeypatch.setitem(sys.modules, "kokoro", types.SimpleNamespace(KModel=KModel, KPipeline=KPipeline))
+    no_gpu = types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: False))
+    monkeypatch.setitem(sys.modules, "torch", no_gpu)  # CI doesn't install PyTorch
     k = KokoroEngine()
     k.synth("Hello", "af_heart", "en")
     k.synth("नमस्ते", "hf_alpha", "hi")
@@ -179,6 +181,36 @@ def test_a_recorded_voice_that_cant_be_prepared_says_why(tmp_path):
     off = router(tmp_path / "off")
     v = off.add_clone("Dad", wav_bytes())
     assert off.prepare_clone(v.id).status == "failed" and "turned off" in off.get_voice(v.id).detail
+
+
+def test_recorded_voices_say_clearly_what_they_need(monkeypatch):
+    import sys
+    import types
+
+    from opencall.providers.tts import XTTSEngine
+
+    monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace(__version__="5.19.0"))
+    with pytest.raises(RuntimeError, match="transformers 4"):
+        XTTSEngine().warm_up()
+    monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace(__version__="4.57.6"))
+    monkeypatch.setitem(sys.modules, "torch", types.SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "TTS", None)  # coqui-tts not installed
+    monkeypatch.setitem(sys.modules, "TTS.api", None)
+    with pytest.raises(RuntimeError, match=r"opencall\[clone\]"):
+        XTTSEngine().warm_up()
+
+
+def test_a_voice_that_cant_load_its_model_is_marked_failed_with_the_reason(tmp_path, monkeypatch):
+    import sys
+    import types
+
+    from opencall.providers.tts import XTTSEngine
+
+    monkeypatch.setitem(sys.modules, "transformers", types.SimpleNamespace(__version__="5.19.0"))
+    r = router(tmp_path, xtts=XTTSEngine())
+    voice = r.add_clone("Mum", wav_bytes())
+    info = r.prepare_clone(voice.id)
+    assert info.status == "failed" and "transformers 4" in info.detail
 
 
 def test_too_short_a_recording_is_refused(tmp_path):
