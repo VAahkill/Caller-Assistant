@@ -148,7 +148,7 @@ describe('connect', () => {
     const server = await useMockServer({ checkToken: true });
     const r = await connect('192.168.1.7:8000/', MOCK_TOKEN);
     expect(r.ok).toBe(true);
-    expect(r.message).toBe('Connected. Outbound calling: bluetooth.');
+    expect(r.message).toBe('Connected. Outbound calling: Bluetooth phone.');
     expect(currentConfig()?.url).toBe(TEST_URL);
     server.state.health.dialer = 'none';
     expect((await connect(TEST_URL, MOCK_TOKEN)).message).toBe('Connected. Outbound calling: not set up.');

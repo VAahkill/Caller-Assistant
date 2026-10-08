@@ -7,6 +7,7 @@ import {
   normalizeProfile,
   normalizeVoice,
 } from './normalize';
+import { dialerName } from './format';
 import { storage } from './storage';
 import { getTransport, MOCK_MODE, type ResponseLike } from './transport';
 import type {
@@ -357,7 +358,7 @@ export async function connect(typedUrl: string, token: string): Promise<ConnectR
   }
   try {
     const profile = await api.profile();
-    const dialer = health.dialer === 'none' ? 'not set up' : health.dialer;
+    const dialer = health.dialer === 'none' ? 'not set up' : dialerName(health.dialer);
     return { ok: true, url, health, profile, message: `Connected. Outbound calling: ${dialer}.` };
   } catch (e) {
     return { ok: false, url, message: e instanceof Error ? e.message : String(e) };

@@ -1,4 +1,5 @@
 import { awayMessage, spokenTime, untilFor } from '../away';
+import { dialerName } from '../format';
 import { callerName, engineName, greetingLine } from '../labels';
 import { moveLanguage, toggleLanguage } from '../languages';
 import { directionsText, geocodeLine, locationChanged } from '../location';
@@ -166,5 +167,13 @@ describe('engine name', () => {
     expect(engineName('kokoro')).toBe('Kokoro');
     expect(engineName('mms')).toBe('MMS');
     expect(engineName('parler')).toBe('Parler');
+  });
+});
+
+describe('dialer name', () => {
+  test('says how outbound calls are placed', () => {
+    expect(dialerName('bluetooth')).toBe('Bluetooth phone');
+    expect(dialerName('none')).toBe('Not set up');
+    expect(dialerName('custom')).toBe('Custom');
   });
 });

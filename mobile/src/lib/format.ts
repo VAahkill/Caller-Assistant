@@ -56,3 +56,8 @@ export function cleanNumber(raw: string): string {
   if (!digits) return '';
   return trimmed.startsWith('+') ? `+${digits}` : trimmed.startsWith('00') ? `+${digits.slice(2)}` : digits;
 }
+
+const DIALERS: Record<string, string> = { none: 'Not set up', bluetooth: 'Bluetooth phone', asterisk: 'Asterisk (SIP)', twilio: 'Twilio' };
+
+/** How the server places outbound calls (/health "dialer"), in words. */
+export const dialerName = (d: string): string => DIALERS[d] ?? d.charAt(0).toUpperCase() + d.slice(1);

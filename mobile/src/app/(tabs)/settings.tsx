@@ -16,6 +16,7 @@ import { useResource } from '../../hooks/useResource';
 import { useServerConfig } from '../../hooks/useServerConfig';
 import { api } from '../../lib/api';
 import { useThemePreference, type ThemePreference } from '../../lib/design/theme';
+import { dialerName } from '../../lib/format';
 import { useLive } from '../../lib/live';
 import { sendTestNotification } from '../../lib/notifications';
 
@@ -64,7 +65,7 @@ export default function Settings() {
       {configured ? (
         <Section title="Connection">
           <ListRow icon="pulse-outline" title="Live updates" value={live.connected ? 'On' : 'Reconnecting'} />
-          <ListRow icon="call-outline" title="Outbound calling" value={h ? (h.dialer === 'none' ? 'Not set up' : h.dialer) : '…'} />
+          <ListRow icon="call-outline" title="Outbound calling" value={h ? dialerName(h.dialer) : '…'} />
           <ListRow
             icon="hardware-chip-outline"
             title="Speech and AI"
