@@ -32,7 +32,9 @@ __all__ = [
 def build_llm(s: Settings) -> LLM:
     if s.llm_provider == "scripted":
         return ScriptedLLM()
-    return OpenAICompatLLM(s.llm_base_url, s.llm_api_key, s.llm_model, s.llm_temperature)
+    return OpenAICompatLLM(s.llm_base_url, s.llm_api_key, s.llm_model, s.llm_temperature,
+                           connect_timeout=s.llm_connect_timeout_s, first_token_timeout=s.llm_first_token_timeout_s,
+                           idle_timeout=s.llm_idle_timeout_s)
 
 
 def build_stt(s: Settings) -> STT:

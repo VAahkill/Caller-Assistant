@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     llm_api_key: str = "ollama"
     llm_model: str = "llama3.1:8b"
     llm_temperature: float = 0.4
+    # A local model on a CPU can need minutes to load and read the prompt the first
+    # time; later replies start within seconds. The first word may take this long:
+    llm_first_token_timeout_s: float = 180.0
+    llm_connect_timeout_s: float = 5.0
+    llm_idle_timeout_s: float = 30.0  # max pause once the reply is streaming
 
     stt_provider: str = "faster_whisper"  # faster_whisper | none
     whisper_model: str = "large-v3-turbo"
