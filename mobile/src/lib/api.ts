@@ -11,20 +11,47 @@ export interface ServerConfig {
 
 let config: ServerConfig | null = null;
 
+const isServerUrl = (url: string) => /^https?:\/\/(\[[0-9a-f:.]+\]|[^\s/?#:\[\]]+)(:\d{1,5})?(\/\S*)?$/i.test(url);
+
+// Home addresses (an IP, a one-word name, .local, Tailscale) default to http://,
+// anything else, such as a tunnel, to https://.
+const isHomeHost = (host: string) => /^(\d{1,3}(\.\d{1,3}){3}|[^.]+|.+\.(local|lan|home\.arpa|ts\.net))$/i.test(host);
+
+// Turns what was typed into a base address like http://192.168.1.7:8000, or null
+// if it can't be one. A pasted health-check link works too.
+export function normalizeServerUrl(typed: string): string | null {
+  let url = typed.trim().replace(/\/+$/, '').replace(/\/health$/i, '');
+  if (!url) return null;
+  const scheme = /^https?(?=:\/\/)/i.exec(url);
+  url = scheme
+    ? scheme[0].toLowerCase() + url.slice(scheme[0].length)
+    : `${isHomeHost(url.split(/[/:]/)[0]) ? 'http' : 'https'}://${url}`;
+  return isServerUrl(url) ? url : null;
+}
+
 export async function loadConfig(): Promise<ServerConfig | null> {
   if (config) return config;
   const raw = await SecureStore.getItemAsync('server');
-  config = raw ? (JSON.parse(raw) as ServerConfig) : null;
+  const saved = raw ? (JSON.parse(raw) as ServerConfig) : null;
+  // Older versions could save an empty or malformed address; treat that as not set up.
+  config = saved && isServerUrl(saved.url) ? saved : null;
   return config;
 }
 
-export async function saveConfig(next: ServerConfig): Promise<ServerConfig> {
-  let url = next.url.trim().replace(/\/+$/, '');
-  if (url && !/^https?:\/\//i.test(url)) url = `http://${url}`;
-  config = { url, token: next.token.trim() };
+// `next.url` must come from normalizeServerUrl.
+export async function saveConfig(next: ServerConfig): Promise<void> {
+  config = { url: next.url, token: next.token.trim() };
   await SecureStore.setItemAsync('server', JSON.stringify(config));
-  return config;
 }
+
+// An error from a server that answered, as opposed to one that couldn't be reached.
+export interface HttpError extends Error {
+  status: number;
+}
+
+const httpError = (status: number, message: string): HttpError => Object.assign(new Error(message), { status });
+
+export const isHttpError = (e: unknown): e is HttpError => e instanceof Error && typeof (e as HttpError).status === 'number';
 
 export function wsUrl(path: string): string | null {
   if (!config) return null;
@@ -43,14 +70,14 @@ async function request<T>(method: string, path: string, body?: unknown, form?: F
     body: form ?? (body !== undefined ? JSON.stringify(body) : undefined),
   });
   if (res.status === 401) {
-    throw new Error("The server didn't accept the token. In Settings, paste the OPENCALL_API_TOKEN value from the .env file on the computer.");
+    throw httpError(401, "The server didn't accept the token. In Settings, paste the OPENCALL_API_TOKEN value from the .env file on the computer.");
   }
   if (!res.ok) {
     let detail = `${res.status}`;
     try {
       detail = (await res.json()).detail ?? detail;
     } catch {}
-    throw new Error(`Server said: ${detail}`);
+    throw httpError(res.status, `Server said: ${detail}`);
   }
   return (await res.json()) as T;
 }

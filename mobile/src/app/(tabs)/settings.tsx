@@ -4,7 +4,7 @@ import { useCallback, useState } from 'react';
 import { ScrollView, Switch, View } from 'react-native';
 
 import { Body, Button, Card, Input, Muted, Title } from '../../components/ui';
-import { api, loadConfig, saveConfig } from '../../lib/api';
+import { api, isHttpError, loadConfig, normalizeServerUrl, saveConfig } from '../../lib/api';
 import { useLive } from '../../lib/live';
 import { setupNotifications } from '../../lib/notifications';
 import type { Profile } from '../../lib/types';
@@ -30,13 +30,18 @@ export default function Settings() {
   );
 
   async function connect() {
-    const saved = await saveConfig({ url, token });
-    setUrl(saved.url);
+    const address = normalizeServerUrl(url);
+    if (!address) {
+      setStatus("That address doesn't look right. It should look like http://192.168.1.7:8000, with your computer's address.");
+      return;
+    }
+    setUrl(address);
+    await saveConfig({ url: address, token });
     let h;
     try {
       h = await api.health();
-    } catch {
-      setStatus(unreachable(saved.url));
+    } catch (e) {
+      setStatus(isHttpError(e) ? e.message : unreachable(address));
       return;
     }
     try {
@@ -121,7 +126,7 @@ function unreachable(url: string): string {
   const lan = /^https:\/\/(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/i.test(url);
   return lan
     ? `Couldn't reach ${url}. On home Wi-Fi the address starts with http://, not https://.`
-    : `Couldn't reach ${url}. Check the phone is on the same Wi-Fi as the computer and the address is your computer's, like http://192.168.1.7:8000.`;
+    : `Couldn't reach ${url}. At home, check the phone is on the same Wi-Fi as the computer and the address is your computer's, like http://192.168.1.7:8000.`;
 }
 
 function Row({ label, value, onChange }: { label: string; value: boolean; onChange: (v: boolean) => void }) {
