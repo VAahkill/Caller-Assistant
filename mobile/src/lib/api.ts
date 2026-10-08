@@ -86,15 +86,32 @@ export async function loadConfig(): Promise<ServerConfig | null> {
 /** The config already loaded, without waiting (null before loadConfig resolves). */
 export const currentConfig = (): ServerConfig | null => config;
 
+type ConfigListener = (next: ServerConfig | null) => void;
+const configListeners = new Set<ConfigListener>();
+
+/** Called after the server settings are saved or cleared. Returns an unsubscribe. */
+export function onConfigChange(listener: ConfigListener): () => void {
+  configListeners.add(listener);
+  return () => {
+    configListeners.delete(listener);
+  };
+}
+
+const announce = () => {
+  for (const l of configListeners) l(config);
+};
+
 // `next.url` must come from normalizeServerUrl.
 export async function saveConfig(next: ServerConfig): Promise<void> {
   config = { url: next.url, token: next.token.trim() };
   await storage.set(CONFIG_KEY, JSON.stringify(config));
+  announce();
 }
 
 export async function clearConfig(): Promise<void> {
   config = null;
   await storage.remove(CONFIG_KEY);
+  announce();
 }
 
 // An error from a server that answered, as opposed to one that couldn't be reached.

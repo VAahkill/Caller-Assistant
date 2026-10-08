@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { AccessibilityInfo, Animated, StyleSheet, View, type DimensionValue } from 'react-native';
 
 import { useTokens } from '../../lib/design/theme';
 
 export function Skeleton({ width = '100%', height = 14, radius }: { width?: DimensionValue; height?: number; radius?: number }) {
   const t = useTokens();
-  const pulse = useRef(new Animated.Value(0.55)).current;
+  const [pulse] = useState(() => new Animated.Value(0.55));
   useEffect(() => {
     let loop: Animated.CompositeAnimation | null = null;
     let alive = true;

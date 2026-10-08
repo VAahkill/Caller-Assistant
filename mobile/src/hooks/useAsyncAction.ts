@@ -38,7 +38,9 @@ export function useAsyncAction<A extends unknown[], R>(
   const mounted = useRef(true);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const latest = useRef({ fn, options });
-  latest.current = { fn, options };
+  useEffect(() => {
+    latest.current = { fn, options };
+  });
 
   useEffect(() => {
     mounted.current = true;

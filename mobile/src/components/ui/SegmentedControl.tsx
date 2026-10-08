@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, Pressable, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 
 import { useTokens } from '../../lib/design/theme';
@@ -24,7 +24,7 @@ export function SegmentedControl<T extends string>({ segments, value, onChange, 
   const c = t.color;
   const [width, setWidth] = useState(0);
   const index = Math.max(0, segments.findIndex((s) => s.value === value));
-  const x = useRef(new Animated.Value(index)).current;
+  const [x] = useState(() => new Animated.Value(index));
 
   useEffect(() => {
     Animated.spring(x, { toValue: index, useNativeDriver: true, damping: 20, stiffness: 260, mass: 1 }).start();

@@ -121,12 +121,13 @@ function ToastHost({
 }) {
   const t = useTokens();
   const insets = useSafeAreaInsets();
-  const anim = useRef(new Animated.Value(0)).current;
+  const [anim] = useState(() => new Animated.Value(0));
+  // Keeps showing the last toast while it animates out.
   const [shown, setShown] = useState<ToastItem | null>(item);
+  if (item && item !== shown) setShown(item);
 
   useEffect(() => {
     if (item) {
-      setShown(item);
       Animated.spring(anim, { toValue: 1, useNativeDriver: true, damping: 18, stiffness: 220, mass: 1 }).start();
     } else {
       Animated.timing(anim, { toValue: 0, duration: t.motion.exit, useNativeDriver: true }).start(({ finished }) => {

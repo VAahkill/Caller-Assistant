@@ -48,25 +48,32 @@ export function BottomSheet({
   const t = useTokens();
   const insets = useSafeAreaInsets();
   const { height } = useWindowDimensions();
-  const progress = useRef(new Animated.Value(0)).current;
-  const drag = useRef(new Animated.Value(0)).current;
+  const [progress] = useState(() => new Animated.Value(0));
+  const [drag] = useState(() => new Animated.Value(0));
   const [mounted, setMounted] = useState(visible);
+  // Mount as soon as the sheet opens (adjusting state while rendering, as React
+  // recommends over an effect); unmount only after the closing animation.
+  if (visible && !mounted) setMounted(true);
   const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  useEffect(() => {
+    closeRef.current = onClose;
+  });
 
   useEffect(() => {
     if (visible) {
-      setMounted(true);
       drag.setValue(0);
       Animated.spring(progress, { toValue: 1, useNativeDriver: true, damping: 20, stiffness: 240, mass: 1 }).start();
-    } else if (mounted) {
+    } else {
       Animated.timing(progress, { toValue: 0, duration: t.motion.exit, useNativeDriver: true }).start(({ finished }) => {
         if (finished) setMounted(false);
       });
     }
-  }, [visible, mounted, progress, drag, t.motion.exit]);
+  }, [visible, progress, drag, t.motion.exit]);
 
-  const pan = useRef(
+  // PanResponder runs these handlers only during a drag, never while rendering,
+  // so reading closeRef in them is safe; the rule cannot see that.
+  // eslint-disable-next-line react-hooks/refs
+  const [pan] = useState(() =>
     PanResponder.create({
       onMoveShouldSetPanResponder: (_, g) => g.dy > 6 && Math.abs(g.dy) > Math.abs(g.dx),
       onPanResponderMove: (_, g) => drag.setValue(Math.max(0, g.dy)),
@@ -75,7 +82,7 @@ export function BottomSheet({
         else Animated.spring(drag, { toValue: 0, useNativeDriver: true }).start();
       },
     }),
-  ).current;
+  );
 
   if (!mounted) return null;
 

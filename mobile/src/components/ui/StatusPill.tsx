@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, StyleSheet, View } from 'react-native';
 
 import { Icon, type IconName } from '../../lib/design';
@@ -22,7 +22,7 @@ export interface StatusPillProps {
 export function StatusPill({ label, tone = 'neutral', icon, dot, pulse, testID }: StatusPillProps) {
   const t = useTokens();
   const colors = tone === 'neutral' ? { bg: t.color.surface3, fg: t.color.text, accent: t.color.text2 } : cardColors(t, tone);
-  const blink = useRef(new Animated.Value(1)).current;
+  const [blink] = useState(() => new Animated.Value(1));
   useEffect(() => {
     if (!pulse) return;
     const loop = Animated.loop(

@@ -22,7 +22,7 @@ export class MockFile {
     return new TextEncoder().encode(`AUDIO(${this.name})`);
   }
   async base64(): Promise<string> {
-    return Buffer.from(await this.bytes()).toString('base64');
+    return btoa(String.fromCharCode(...(await this.bytes())));
   }
   upload(): Promise<never> {
     return Promise.reject(new Error('File.upload is native; tests go through the mock transport'));

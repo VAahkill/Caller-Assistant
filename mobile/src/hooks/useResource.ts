@@ -22,10 +22,13 @@ export interface Resource<T> {
 export function useResource<T>(fetcher: () => Promise<T>, key: unknown = 0, enabled = true): Resource<T> {
   const [data, setData] = useState<T | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(enabled);
+  // True until the first answer arrives; only shown while the resource is enabled.
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const latest = useRef(fetcher);
-  latest.current = fetcher;
+  useEffect(() => {
+    latest.current = fetcher;
+  });
   const seq = useRef(0);
 
   const load = useCallback(async () => {
@@ -44,11 +47,7 @@ export function useResource<T>(fetcher: () => Promise<T>, key: unknown = 0, enab
   }, []);
 
   useEffect(() => {
-    if (!enabled) {
-      setLoading(false);
-      return;
-    }
-    void load();
+    if (enabled) void load();
   }, [key, enabled, load]);
 
   useEffect(
@@ -69,5 +68,5 @@ export function useResource<T>(fetcher: () => Promise<T>, key: unknown = 0, enab
 
   const mutate = useCallback((update: (prev: T | undefined) => T | undefined) => setData((d) => update(d)), []);
 
-  return { data, error, loading: loading && data === undefined, refreshing, reload: load, refresh, mutate };
+  return { data, error, loading: enabled && loading && data === undefined, refreshing, reload: load, refresh, mutate };
 }

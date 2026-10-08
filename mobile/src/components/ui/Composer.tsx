@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Linking, PanResponder, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useKeyboardState } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -72,18 +72,23 @@ export function Composer({
   // Hold the mic: start on touch, send on release, slide left to cancel.
   // A quick tap locks recording on until Send or Cancel.
   const talkRef = useRef(talk);
-  talkRef.current = talk;
-  const pan = useRef(
+  useEffect(() => {
+    talkRef.current = talk;
+  });
+  // PanResponder runs these handlers only during a touch, never while rendering,
+  // so reading talkRef in them is safe; the rule cannot see that.
+  // eslint-disable-next-line react-hooks/refs
+  const [pan] = useState(() =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
-      onPanResponderGrant: () => {
-        pressStart.current = Date.now();
+      onPanResponderGrant: (e) => {
+        pressStart.current = e.nativeEvent.timestamp;
         setCancelling(false);
         void talkRef.current.start();
       },
       onPanResponderMove: (_, g) => setCancelling(g.dx < CANCEL_DX),
-      onPanResponderRelease: (_, g) => {
-        const quick = Date.now() - pressStart.current < 350;
+      onPanResponderRelease: (e, g) => {
+        const quick = e.nativeEvent.timestamp - pressStart.current < 350;
         if (quick && g.dx > CANCEL_DX) {
           setLocked(true);
           return;
@@ -96,7 +101,7 @@ export function Composer({
         void talkRef.current.stop(true);
       },
     }),
-  ).current;
+  );
 
   const send = async (value: string) => {
     const v = value.trim();

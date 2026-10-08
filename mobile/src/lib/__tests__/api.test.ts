@@ -9,6 +9,7 @@ import {
   loadConfig,
   normalizeServerUrl,
   NOT_SET_UP,
+  onConfigChange,
   saveConfig,
   unreachableMessage,
   wsUrl,
@@ -56,6 +57,16 @@ describe('config', () => {
     expect(currentConfig()).toEqual({ url: 'http://192.168.1.7:8000', token: 's3cret/+' });
     expect(wsUrl('/ws/events')).toBe('ws://192.168.1.7:8000/ws/events?token=s3cret%2F%2B');
     expect(wsUrl('/ws/simulate?wav=1')).toBe('ws://192.168.1.7:8000/ws/simulate?wav=1&token=s3cret%2F%2B');
+  });
+
+  test('saving or clearing the server tells every listener', async () => {
+    const seen: (string | null)[] = [];
+    const off = onConfigChange((c) => seen.push(c ? c.url : null));
+    await saveConfig({ url: TEST_URL, token: ' t ' });
+    await clearConfig();
+    off();
+    await saveConfig({ url: TEST_URL, token: 't' });
+    expect(seen).toEqual([TEST_URL, null]);
   });
 
   test('requests before setup explain what to do', async () => {
