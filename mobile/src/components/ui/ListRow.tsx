@@ -74,11 +74,12 @@ export function ListRow({
           </View>
         ) : null)}
       <View style={styles.text}>
-        <Text variant="body" weight="medium" color={destructive ? 'danger' : 'text'} numberOfLines={2}>
+        {/* Left-aligned even for a right-to-left subtitle such as Urdu, to line up with the title. */}
+        <Text variant="body" weight="medium" color={destructive ? 'danger' : 'text'} numberOfLines={2} align="left">
           {title}
         </Text>
         {subtitle ? (
-          <Text variant="footnote" color="text2" numberOfLines={3}>
+          <Text variant="footnote" color="text2" numberOfLines={3} align="left">
             {subtitle}
           </Text>
         ) : null}

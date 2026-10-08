@@ -3,6 +3,7 @@ import { AccessibilityInfo, Animated, Pressable, StyleSheet, View } from 'react-
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, type IconName } from '../../lib/design';
+import { TAB_BAR_BASE_HEIGHT } from '../../lib/design/navigation';
 import { useTokens } from '../../lib/design/theme';
 import { haptic } from '../../lib/haptics';
 import { Text } from './Text';
@@ -48,7 +49,7 @@ const ICON: Record<ToastTone, IconName> = {
 };
 
 // Height of the bottom tab bar the toast must clear (see (tabs)/_layout.tsx).
-export const TAB_BAR_HEIGHT = 64;
+export const TAB_BAR_HEIGHT = TAB_BAR_BASE_HEIGHT;
 
 /** Snackbar host. One toast at a time; a new one replaces the old.
  *  `bottomOffset` lifts it above the tab bar when one is showing. */

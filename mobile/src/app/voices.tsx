@@ -23,6 +23,7 @@ import { api, type MediaSource } from '../lib/api';
 import { Icon } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
 import { duration, timeAgo } from '../lib/format';
+import { engineName } from '../lib/labels';
 import { languageName } from '../lib/languages';
 import type { VoiceInfo } from '../lib/types';
 
@@ -51,9 +52,16 @@ export default function Voices() {
   // Fetch every demo as soon as the list arrives, so tapping play starts at once.
   useEffect(() => {
     const sources = (voices.data ?? []).filter((v) => v.status === 'ready').map((v) => api.voiceSample(v)).filter((s): s is MediaSource => !!s);
-    for (const s of sources) preload(s).catch((e: unknown) => console.warn('Voice demo preload failed', s.uri, e));
+    // Promise.resolve: the web build's versions return nothing instead of a promise.
+    for (const s of sources) {
+      Promise.resolve()
+        .then(() => preload(s))
+        .catch((e: unknown) => console.warn('Voice demo preload failed', s.uri, e));
+    }
     return () => {
-      clearAllPreloadedSources().catch((e: unknown) => console.warn('Clearing preloaded demos failed', e));
+      Promise.resolve()
+        .then(() => clearAllPreloadedSources())
+        .catch((e: unknown) => console.warn('Clearing preloaded demos failed', e));
     };
   }, [voices.data]);
 
@@ -229,7 +237,7 @@ function BuiltInRow({ voice: v, chosen, onChoose, demo }: { voice: VoiceInfo; ch
       <View style={styles.flex}>
         <Text variant="headline">{v.name}</Text>
         <Text variant="footnote" color="text2">
-          {[v.gender && v.gender.charAt(0).toUpperCase() + v.gender.slice(1), v.engine].filter(Boolean).join(' · ')}
+          {[v.gender && v.gender.charAt(0).toUpperCase() + v.gender.slice(1), v.engine && engineName(v.engine)].filter(Boolean).join(' · ')}
         </Text>
       </View>
       <IconButton

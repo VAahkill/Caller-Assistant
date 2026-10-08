@@ -6,6 +6,7 @@ import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { Transcript } from '../components/domain/Transcript';
 import { Banner } from '../components/ui/Banner';
 import { Button } from '../components/ui/Button';
+import { HeaderRight } from '../components/ui/HeaderRight';
 import { Card } from '../components/ui/Card';
 import { Chip } from '../components/ui/Chip';
 import { Composer } from '../components/ui/Composer';
@@ -174,12 +175,15 @@ export default function Practice() {
     <KeyboardAvoidingView behavior="padding" style={[styles.flex, { backgroundColor: t.color.bg }]}>
       <Stack.Screen
         options={{
-          headerRight: () =>
-            phase === 'ended' ? (
-              <Button title="Call again" size="sm" variant="tonal" icon="refresh" onPress={() => void start()} />
-            ) : (
-              <Button title="Hang up" size="sm" variant="destructive" icon="call" onPress={hangUp} />
-            ),
+          headerRight: () => (
+            <HeaderRight>
+              {phase === 'ended' ? (
+                <Button title="Call again" size="sm" variant="tonal" icon="refresh" onPress={() => void start()} />
+              ) : (
+                <Button title="Hang up" size="sm" variant="destructive" icon="call" onPress={hangUp} />
+              )}
+            </HeaderRight>
+          ),
         }}
       />
       <View style={[styles.bar, { borderBottomColor: t.color.border, paddingHorizontal: t.space.lg }]}>

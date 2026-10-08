@@ -2,11 +2,17 @@ import { router } from 'expo-router';
 import { useState } from 'react';
 import { Linking } from 'react-native';
 
-import { OnboardingFrame } from '../../components/domain/OnboardingFrame';
+import { OnboardingFrame, OnboardingPoints, type OnboardingPoint } from '../../components/domain/OnboardingFrame';
 import { Banner } from '../../components/ui/Banner';
 import { errorMessage, useAsyncAction } from '../../hooks/useAsyncAction';
 import { syncContacts } from '../../lib/contacts';
 import { stepHref } from '../../lib/onboarding';
+
+const POINTS: OnboardingPoint[] = [
+  { icon: 'person-circle-outline', title: 'Greeted by name', text: 'Your assistant knows who is calling and talks to them like you would.' },
+  { icon: 'shield-checkmark-outline', title: 'Never screened as spam', text: 'Saved numbers skip the spam checks and always reach you.' },
+  { icon: 'lock-closed-outline', title: 'Only to your server', text: 'Names and numbers only. Nothing else leaves your phone.' },
+];
 
 /** Sync contacts so saved people always get through and are greeted by name. */
 export default function ContactsStep() {
@@ -30,13 +36,14 @@ export default function ContactsStep() {
     <OnboardingFrame
       step="contacts"
       title="Let your contacts through"
-      subtitle="Your assistant greets saved contacts by name and never treats them as spam. Only names and numbers are sent, to your own server."
+      subtitle="Saved contacts always get through."
       primary={
         done != null
           ? { title: 'Continue', onPress: () => router.push(stepHref('voice') as never) }
           : { title: 'Sync contacts', icon: 'arrow-forward', loading: sync.busy, onPress: () => void sync.run() }
       }
     >
+      <OnboardingPoints points={POINTS} />
       {done != null ? <Banner tone="success" title={`Synced ${done} numbers.`} message="Sync again any time from Assistant, Who gets through." /> : null}
       {denied ? (
         <Banner

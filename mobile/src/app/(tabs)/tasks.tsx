@@ -90,7 +90,7 @@ export default function CallForMe() {
     <Screen topInset refreshing={tasks.refreshing} onRefresh={() => void tasks.refresh()} testID="tasks">
       <LargeHeader title="Call for me" subtitle="Your assistant calls a place, gets it done and tells you how it went." />
 
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.templates}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bleed} contentContainerStyle={styles.templates}>
         {TEMPLATES.map((tpl) => (
           <Chip
             key={tpl.label}
@@ -197,7 +197,9 @@ function TaskCard({ task, onPress }: { task: Task; onPress?: () => void }) {
 }
 
 const styles = StyleSheet.create({
-  templates: { gap: 8, paddingRight: 16 },
+  // Scrolls edge to edge, while the first chip lines up with the content.
+  bleed: { marginHorizontal: -16 },
+  templates: { gap: 8, paddingHorizontal: 16 },
   kinds: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   list: { gap: 12 },
   taskHead: { flexDirection: 'row', alignItems: 'center', gap: 12 },

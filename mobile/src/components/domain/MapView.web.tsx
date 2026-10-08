@@ -15,10 +15,12 @@ export function PinMap({ lat, lng, height = 280 }: PinMapProps) {
       style={[styles.wrap, { height, borderRadius: t.radius.lg, backgroundColor: t.color.surface2, borderColor: t.color.border }]}
       accessibilityLabel="Map"
     >
-      <View style={[styles.grid, { borderColor: t.color.border }]} />
       <Icon name="location" size={40} color={t.color.danger} />
       <Text variant="caption" color="text2" tabular>
         {pinned ? `${lat.toFixed(5)}, ${lng.toFixed(5)}` : 'No pin yet'}
+      </Text>
+      <Text variant="caption" color="text3">
+        The map shows in the Android app
       </Text>
     </View>
   );
@@ -26,5 +28,4 @@ export function PinMap({ lat, lng, height = 280 }: PinMapProps) {
 
 const styles = StyleSheet.create({
   wrap: { overflow: 'hidden', alignItems: 'center', justifyContent: 'center', gap: 4, borderWidth: StyleSheet.hairlineWidth },
-  grid: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, borderWidth: StyleSheet.hairlineWidth, opacity: 0.4, margin: 24, borderRadius: 12 },
 });

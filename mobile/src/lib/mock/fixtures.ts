@@ -1,6 +1,7 @@
 // Demo data in every API contract v2 shape, for mock mode, screenshots and
 // tests. Times are relative to `now` so "today" always looks like today.
 
+import { awayMessage, untilFor } from '../away';
 import type {
   CallRecord,
   CallerMessage,
@@ -75,6 +76,7 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
   const min = 60;
   const hour = 3600;
   const t0 = now - 4 * min;
+  const awayUntil = untilFor(120, now * 1000) ?? now + 2 * hour;
 
   const liveCall = call({
     id: LIVE_CALL_ID,
@@ -344,7 +346,7 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
     voices_by_language: { te: 'piper:te_IN-padmavathi-medium', hi: 'kokoro:hf_alpha' },
     blocked_numbers: ['+918800112233'],
     vip_numbers: [AMMA],
-    away: { preset: 'meeting', message: 'In a meeting until 3 PM', until: now + 2 * hour, set_at: now - hour },
+    away: { preset: 'meeting', message: awayMessage('In a meeting', awayUntil, now * 1000), until: awayUntil, set_at: now - hour },
     location: {
       lat: 17.4612,
       lng: 78.3672,

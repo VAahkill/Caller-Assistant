@@ -74,7 +74,7 @@ export function StatusHero({ assistantName, enabled, onToggle, toggling, away, o
         >
           <Icon name={away ? 'moon' : 'moon-outline'} size={15} color={c.onHero} />
           <Text variant="footnote" weight="medium" color={c.onHero} numberOfLines={1}>
-            {away ? `${away.message}${away.until ? ` · until ${clockTime(away.until)}` : ''}` : 'Set away'}
+            {away ? `${away.message}${away.until && !/\buntil\b/i.test(away.message) ? ` · until ${clockTime(away.until)}` : ''}` : 'Set away'}
           </Text>
         </Pressable>
         <View style={[styles.chip, { backgroundColor: c.onHeroOverlay }]} accessibilityLabel={ready.text}>

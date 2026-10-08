@@ -8,6 +8,7 @@ import { Transcript } from '../../components/domain/Transcript';
 import { AudioPlayer } from '../../components/ui/AudioPlayer';
 import { Avatar } from '../../components/ui/Avatar';
 import { Banner } from '../../components/ui/Banner';
+import { HeaderRight } from '../../components/ui/HeaderRight';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Composer } from '../../components/ui/Composer';
@@ -69,7 +70,18 @@ export default function CallScreen() {
 
   return (
     <KeyboardAvoidingView behavior="padding" style={[styles.flex, { backgroundColor: t.color.bg }]}>
-      <Stack.Screen options={{ title: call.contact_name || prettyNumber(call.number) || 'Unknown caller', headerRight: isLive ? () => <EndCallButton callId={id} who={who} /> : undefined }} />
+      <Stack.Screen
+        options={{
+          title: who,
+          headerRight: isLive
+            ? () => (
+                <HeaderRight>
+                  <EndCallButton callId={id} who={who} />
+                </HeaderRight>
+              )
+            : undefined,
+        }}
+      />
       <ScrollView
         ref={scroll}
         contentContainerStyle={{ padding: t.space.lg, gap: t.space.lg, paddingBottom: t.space.x3 }}

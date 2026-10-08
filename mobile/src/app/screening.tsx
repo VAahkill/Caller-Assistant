@@ -172,7 +172,7 @@ export default function Screening() {
                 key={`prefix-${prefix}`}
                 icon="funnel-outline"
                 number={prefix}
-                name="Every number starting with this"
+                note="Every number starting with this"
                 onRemove={() => removeFrom('blocked_prefixes', prefix, `Stopped blocking ${prefix}.`)}
                 removeLabel="Unblock"
                 raw
@@ -196,13 +196,17 @@ function NumberRow({
   icon,
   number,
   name,
+  note,
   onRemove,
   removeLabel = 'Remove',
   raw,
 }: {
   icon: 'star' | 'ban' | 'funnel-outline';
   number: string;
+  /** A saved contact's name: shown as the title, with the number under it. */
   name?: string;
+  /** A line under the number, e.g. what a blocked prefix means. */
+  note?: string;
   onRemove: () => void;
   removeLabel?: string;
   raw?: boolean;
@@ -213,7 +217,7 @@ function NumberRow({
       icon={icon}
       iconTone={icon === 'star' ? 'warning' : 'danger'}
       title={name || shown}
-      subtitle={name ? shown : undefined}
+      subtitle={name ? shown : note}
       trailing={<IconButton icon="close" label={`${removeLabel} ${shown}`} onPress={onRemove} />}
     />
   );

@@ -42,7 +42,8 @@ export function tabBarColors(t: Tokens) {
   };
 }
 
-export const TAB_BAR_BASE_HEIGHT = 64;
+// Icon (24) + gap + label (16) + padding; less clips the label's descenders.
+export const TAB_BAR_BASE_HEIGHT = 68;
 
 /** Bottom tab bar options shared by the tab layout and its test. */
 export function tabBarOptions(t: Tokens, bottomInset: number) {

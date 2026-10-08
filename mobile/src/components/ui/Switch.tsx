@@ -1,4 +1,4 @@
-import { ActivityIndicator, Switch as RNSwitch, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Platform, Switch as RNSwitch, StyleSheet, View } from 'react-native';
 
 import { useTokens } from '../../lib/design/theme';
 import { haptic } from '../../lib/haptics';
@@ -17,6 +17,9 @@ export interface SwitchProps {
 export function Switch({ value, onValueChange, disabled, busy, accessibilityLabel, testID }: SwitchProps) {
   const t = useTokens();
   const c = t.color;
+  const thumb = value ? (t.dark ? c.onPrimaryContainer : '#FFFFFF') : t.dark ? c.text2 : '#FFFFFF';
+  // The web build (screenshot checks only) colours the "on" state from these instead.
+  const webColors = Platform.OS === 'web' ? ({ activeThumbColor: thumb, activeTrackColor: c.primary } as object) : null;
   return (
     <View style={styles.wrap}>
       {busy ? <ActivityIndicator size="small" color={c.primary} style={styles.spinner} /> : null}
@@ -30,8 +33,9 @@ export function Switch({ value, onValueChange, disabled, busy, accessibilityLabe
           onValueChange(v);
         }}
         trackColor={{ false: c.borderStrong, true: c.primary }}
-        thumbColor={value ? (t.dark ? c.onPrimaryContainer : '#FFFFFF') : t.dark ? c.text2 : '#FFFFFF'}
+        thumbColor={thumb}
         ios_backgroundColor={c.borderStrong}
+        {...webColors}
       />
     </View>
   );

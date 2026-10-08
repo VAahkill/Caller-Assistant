@@ -90,9 +90,12 @@ export default function Languages() {
           {others.map((l) => (
             <ListRow
               key={l.code}
-              icon="add-circle-outline"
+              icon="add"
+              iconTone="primary"
               title={l.name}
               subtitle={l.native !== l.name ? l.native : undefined}
+              chevron={false}
+              accessibilityHint="Adds it to the languages callers speak"
               onPress={() => setCallers(toggleLanguage(chosen, l.code))}
             />
           ))}

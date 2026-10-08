@@ -174,7 +174,7 @@ const styles = StyleSheet.create({
   field: { flexDirection: 'row', alignItems: 'center', gap: 10, minHeight: 52, paddingHorizontal: 14, borderWidth: 1 },
   flex: { flex: 1 },
   search: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 12, minHeight: 44 },
-  searchInput: { flex: 1, fontSize: 16, minHeight: 44 },
+  searchInput: { flex: 1, fontSize: 16, minHeight: 44, outlineWidth: 0 },
   option: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 52, paddingVertical: 10, paddingHorizontal: 4 },
   none: { paddingVertical: 16, textAlign: 'center' },
 });

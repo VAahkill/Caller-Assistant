@@ -148,7 +148,7 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
             <Icon name="close-circle" size={20} color={c.text3} />
           </Pressable>
         ) : null}
-        {trailing}
+        {trailing ? <View style={styles.trailing}>{trailing}</View> : null}
       </View>
       {error || helper || (counter && maxLength) ? (
         <View style={styles.helperRow}>
@@ -181,7 +181,10 @@ const styles = StyleSheet.create({
   wrap: { gap: 6 },
   labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
   box: { flexDirection: 'row', paddingHorizontal: 14, gap: 10 },
-  input: { flex: 1, fontSize: 16, minHeight: 48, includeFontPadding: false },
+  // minWidth 0 lets the text shrink so a trailing button is never pushed out of the box.
+  // outlineWidth 0: the field draws its own focus border, so no browser focus ring in the web preview.
+  input: { flex: 1, minWidth: 0, fontSize: 16, minHeight: 48, includeFontPadding: false, outlineWidth: 0 },
+  trailing: { flexShrink: 0, alignSelf: 'center', marginRight: -6 },
   topIcon: { marginTop: 14 },
   adornment: { minHeight: 40, minWidth: 32, alignItems: 'center', justifyContent: 'center', alignSelf: 'center' },
   helperRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 8 },

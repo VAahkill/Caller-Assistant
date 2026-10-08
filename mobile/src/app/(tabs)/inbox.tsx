@@ -110,7 +110,7 @@ export default function Inbox() {
         </AsyncContent>
       ) : (
         <>
-          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.filters}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bleed} contentContainerStyle={styles.filters}>
             {FILTERS.map((f) => (
               <Chip
                 key={f.value}
@@ -150,5 +150,7 @@ export default function Inbox() {
 
 const styles = StyleSheet.create({
   list: { gap: 12 },
-  filters: { gap: 8, paddingRight: 16 },
+  // Scrolls edge to edge, while the first chip lines up with the content.
+  bleed: { marginHorizontal: -16 },
+  filters: { gap: 8, paddingHorizontal: 16 },
 });

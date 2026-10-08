@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Linking, PanResponder, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import { Linking, PanResponder, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useKeyboardState } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -32,6 +32,8 @@ export interface ComposerProps {
 }
 
 const CANCEL_DX = -80;
+// A browser textarea starts two rows tall; Android starts at one and grows.
+const WEB_ONE_ROW = Platform.OS === 'web' ? { rows: 1 } : null;
 
 /** Bottom bar for chats and live calls: text with send, or hold-to-talk. */
 export function Composer({
@@ -129,6 +131,7 @@ export function Composer({
           horizontal
           showsHorizontalScrollIndicator={false}
           keyboardShouldPersistTaps="handled"
+          style={styles.bleed}
           contentContainerStyle={styles.suggestions}
         >
           {suggestions.map((s) => (
@@ -177,6 +180,7 @@ export function Composer({
                 selectionColor={c.primary}
                 cursorColor={c.primary}
                 multiline
+                {...WEB_ONE_ROW}
                 editable={!disabled}
                 accessibilityLabel={placeholder}
                 onSubmitEditing={() => void send(text)}
@@ -233,11 +237,13 @@ export function Composer({
 
 const styles = StyleSheet.create({
   wrap: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 8, paddingHorizontal: 12, gap: 8 },
-  suggestions: { gap: 8, paddingRight: 12 },
+  // Chips scroll edge to edge instead of being cut off at the padding.
+  bleed: { marginHorizontal: -12 },
+  suggestions: { gap: 8, paddingHorizontal: 12 },
   hint: { paddingHorizontal: 4 },
   row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   inputBox: { flex: 1, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center' },
-  input: { fontSize: 16, maxHeight: 120, paddingVertical: 10, minHeight: 44 },
+  input: { fontSize: 16, maxHeight: 120, paddingVertical: 10, minHeight: 44, outlineWidth: 0 },
   mic: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   micHeld: { transform: [{ scale: 1.15 }] },
   lockedActions: { flexDirection: 'row', gap: 8 },

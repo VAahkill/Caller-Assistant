@@ -156,7 +156,9 @@ describe('Setup screens', () => {
 
   test('Away: a preset and length make the message; I am back clears it', async () => {
     await renderScreen(<Away />);
-    expect(await screen.findByText('In a meeting until 3 PM')).toBeTruthy();
+    expect(await screen.findByText(server.state.profile.away!.message)).toBeTruthy();
+    // The message already says "until ...", so the card doesn't repeat the end time.
+    expect(screen.queryByText(/^Ends at /)).toBeNull();
     await fireEvent.press(screen.getByRole('radio', { name: 'Driving' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Until I turn it off' }));
     expect(screen.getByLabelText('Away message').props.value).toBe('Driving');

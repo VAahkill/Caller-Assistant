@@ -1,5 +1,5 @@
 import { awayMessage, spokenTime, untilFor } from '../away';
-import { greetingLine } from '../labels';
+import { callerName, engineName, greetingLine } from '../labels';
 import { moveLanguage, toggleLanguage } from '../languages';
 import { directionsText, geocodeLine, locationChanged } from '../location';
 import { emptyLocation } from '../normalize';
@@ -150,5 +150,21 @@ describe('greeting', () => {
   test('matches the opening line the server speaks', () => {
     expect(greetingLine('arjun', 'Ava')).toBe("Hi, this is Ava, arjun's assistant. Arjun can't take the call right now. How can I help?");
     expect(greetingLine(' ', '')).toBe("Hi, this is the assistant, the owner's assistant. The owner can't take the call right now. How can I help?");
+  });
+});
+
+describe('caller name', () => {
+  test('a saved name wins, else the number is spaced for reading', () => {
+    expect(callerName({ contact_name: 'Amma', number: '+919848012345' })).toBe('Amma');
+    expect(callerName({ contact_name: '', number: '+919848012345' })).toBe('+91 98480 12345');
+    expect(callerName({ contact_name: '', number: '' })).toBe('Unknown caller');
+  });
+});
+
+describe('engine name', () => {
+  test('known engines get their proper names, others are capitalised', () => {
+    expect(engineName('kokoro')).toBe('Kokoro');
+    expect(engineName('mms')).toBe('MMS');
+    expect(engineName('parler')).toBe('Parler');
   });
 });

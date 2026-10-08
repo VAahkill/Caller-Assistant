@@ -103,7 +103,7 @@ export default function Settings() {
 
       <Section title="About" footer="Server logs: on the computer, run docker compose logs -f backend.">
         <ListRow icon="information-circle-outline" title="App version" value={appVersion} />
-        {h?.llm_model ? <ListRow icon="sparkles-outline" title="Language model" value={h.llm_model} /> : null}
+        {h?.llm_model ? <ListRow icon="sparkles-outline" title="Language model" subtitle={h.llm_model} /> : null}
         <ListRow icon="logo-github" title="Free and open source" subtitle="Runs on your own computer. No paid services." />
       </Section>
     </Screen>

@@ -2,6 +2,7 @@
 // same thing.
 
 import type { IconName } from './design';
+import { prettyNumber } from './format';
 import type { PillTone } from '../components/ui/StatusPill';
 import type { AppliesTo, CallRecord, CallSummary, ShareWith, Task } from './types';
 
@@ -15,8 +16,9 @@ export const CATEGORY: Record<string, { label: string; icon: IconName; tone: Pil
 
 export const categoryOf = (c: string) => CATEGORY[c] ?? { label: c.charAt(0).toUpperCase() + c.slice(1), icon: 'call-outline' as IconName, tone: 'neutral' as PillTone };
 
+/** The caller's saved name, else their number spaced for reading. */
 export function callerName(c: Pick<CallRecord, 'contact_name' | 'number'>): string {
-  return c.contact_name || c.number || 'Unknown caller';
+  return c.contact_name || (c.number ? prettyNumber(c.number) : '') || 'Unknown caller';
 }
 
 /** One line for a call in a list. */
@@ -68,3 +70,8 @@ export function greetingLine(userName: string, assistantName: string): string {
   const start = user.charAt(0).toUpperCase() + user.slice(1);
   return `Hi, this is ${assistant}, ${user}'s assistant. ${start} can't take the call right now. How can I help?`;
 }
+
+const ENGINE: Record<string, string> = { kokoro: 'Kokoro', piper: 'Piper', mms: 'MMS', xtts: 'XTTS', espeak: 'eSpeak' };
+
+/** A speech engine's proper name, e.g. "kokoro" -> "Kokoro". */
+export const engineName = (e: string) => ENGINE[e.toLowerCase()] ?? e.charAt(0).toUpperCase() + e.slice(1);

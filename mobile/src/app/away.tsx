@@ -93,9 +93,12 @@ export default function Away() {
               <Text variant="headline" color="onWarningContainer">
                 {active.message}
               </Text>
-              <Text variant="footnote" color="onWarningContainer">
-                {active.until ? `Ends at ${spokenTime(active.until)}` : 'Until you turn it off'}
-              </Text>
+              {/* The end time, unless the message already says it ("In a meeting until 3 PM"). */}
+              {active.until && active.message.includes(spokenTime(active.until)) ? null : (
+                <Text variant="footnote" color="onWarningContainer">
+                  {active.until ? `Ends at ${spokenTime(active.until)}` : 'Until you turn it off'}
+                </Text>
+              )}
             </View>
           </View>
           <Button title="I'm back" icon="sunny-outline" variant="filled" loading={clear.busy} onPress={() => void clear.run()} />

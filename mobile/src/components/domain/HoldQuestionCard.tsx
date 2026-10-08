@@ -1,9 +1,9 @@
 import { useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
 import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { api } from '../../lib/api';
-import { timeAgo } from '../../lib/format';
+import { prettyNumber, timeAgo } from '../../lib/format';
 import { languageName } from '../../lib/languages';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -52,12 +52,13 @@ export function HoldQuestionCard({
     if ((await answer.run(v)) !== undefined) setText('');
   };
   const translated = callerLanguage && callerLanguage !== ownerLanguage;
+  const shownWho = /^\+?[\d\s-]{5,}$/.test(who) ? prettyNumber(who) : who;
 
   return (
     <Card tone="warning" testID={testID}>
       <View style={styles.head}>
-        <Text variant="overline" color="onWarningContainer" style={styles.flex}>
-          {isTask ? `${who} needs a decision` : `${who} is on hold`}
+        <Text variant="footnote" weight="semibold" color="onWarningContainer" style={styles.flex}>
+          {isTask ? `${shownWho} needs a decision` : `${shownWho} is on hold`}
           {at ? ` · ${timeAgo(at)}` : ''}
         </Text>
         {onOpen ? <IconButton icon="open-outline" label="Open the call" size={32} onPress={onOpen} /> : null}
@@ -65,11 +66,11 @@ export function HoldQuestionCard({
       <Text variant="headline" color="onWarningContainer">
         {question}
       </Text>
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} keyboardShouldPersistTaps="handled" contentContainerStyle={styles.chips}>
+      <View style={styles.chips}>
         {QUICK_ANSWERS.map((q) => (
           <Chip key={q} label={q} kind="suggestion" disabled={answer.busy} onPress={() => void send(q)} />
         ))}
-      </ScrollView>
+      </View>
       <TextField
         label="Your answer"
         value={text}
@@ -88,5 +89,5 @@ export function HoldQuestionCard({
 const styles = StyleSheet.create({
   head: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   flex: { flex: 1 },
-  chips: { gap: 8 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
 });
