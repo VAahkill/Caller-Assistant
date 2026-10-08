@@ -211,3 +211,20 @@ describe('reduceCall, one call on its own (practice and the live screen)', () =>
     expect(v.record.holds[0].answered_at).toBe(at + 5);
   });
 });
+
+describe('alerts and refreshes the app asks for', () => {
+  const a = (id: string, at: number) => ({ id, callId: 'c', who: 'x', kind: 'otp', text: '', said: '', at });
+
+  test('a dismissed alert can be put back, in time order, once', () => {
+    const s = { ...initialLive, alerts: [a('new', 300), a('old', 100)] };
+    const restored = liveReducer(s, { type: 'restoreAlert', alert: a('mid', 200) });
+    expect(restored.alerts.map((x) => x.id)).toEqual(['new', 'mid', 'old']);
+    expect(liveReducer(restored, { type: 'restoreAlert', alert: a('mid', 200) })).toBe(restored);
+  });
+
+  test('invalidate reloads lists and the profile', () => {
+    const s = liveReducer(initialLive, { type: 'invalidate' });
+    expect(s.refreshKey).toBe(initialLive.refreshKey + 1);
+    expect(s.profileKey).toBe(initialLive.profileKey + 1);
+  });
+});

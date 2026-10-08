@@ -1,31 +1,47 @@
-import { router } from 'expo-router';
+import { router, type Href } from 'expo-router';
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
-import { CallRow } from '../../components/domain/CallRow';
 import { HoldQuestionCard } from '../../components/domain/HoldQuestionCard';
+import { LiveCallCard } from '../../components/domain/LiveCallCard';
+import { ReadinessSheet } from '../../components/domain/ReadinessSheet';
 import { StatusHero } from '../../components/domain/StatusHero';
-import { Banner, Button, EmptyState, IconButton, LargeHeader, Screen, Section, Skeleton, Text } from '../../components/ui';
+import { Avatar, Banner, Button, EmptyState, IconButton, LargeHeader, Screen, Section, Skeleton, Text, useToast } from '../../components/ui';
+import { errorMessage } from '../../hooks/useAsyncAction';
 import { useProfile } from '../../hooks/useProfile';
 import { useServerConfig } from '../../hooks/useServerConfig';
 import { useResource } from '../../hooks/useResource';
 import { api, awayActive } from '../../lib/api';
 import { Icon, type IconName } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
-import { greeting, isToday, timeAgo } from '../../lib/format';
-import { useLive } from '../../lib/live';
+import { greeting, isToday, prettyNumber, timeAgo } from '../../lib/format';
+import { useLive, type SecurityAlert } from '../../lib/live';
+import type { CallerMessage } from '../../lib/types';
 
-const QUICK_ACTIONS: { icon: IconName; label: string; href: string }[] = [
+const QUICK_ACTIONS: { icon: IconName; label: string; href: Href }[] = [
   { icon: 'mic-outline', label: 'Practice call', href: '/practice' },
   { icon: 'call-outline', label: 'Call for me', href: '/tasks' },
   { icon: 'moon-outline', label: 'Set away', href: '/away' },
   { icon: 'chatbubble-ellipses-outline', label: 'Ask assistant', href: '/chat' },
 ];
 
+const SECRET_WORDS: Record<string, string> = {
+  otp: 'OTP',
+  pin: 'PIN',
+  password: 'password',
+  card: 'card number',
+  account: 'account number',
+  balance: 'balance',
+  aadhaar: 'Aadhaar number',
+  pan: 'PAN',
+  cvv: 'CVV',
+};
+
 /** Today: the assistant's state, what needs the owner, live calls and the day so far. */
 export default function Today() {
   const t = useTokens();
   const live = useLive();
+  const toast = useToast();
   const server = useServerConfig();
   const configured = !!server.config;
   const profile = useProfile(configured);
@@ -33,6 +49,7 @@ export default function Today() {
   const messages = useResource(() => api.messages(), live.refreshKey, configured);
   const health = useResource(() => api.health(), live.connected, configured);
   const [toggling, setToggling] = useState(false);
+  const [readinessOpen, setReadinessOpen] = useState(false);
 
   const today = useMemo(() => (calls.data ?? []).filter((c) => isToday(c.started_at)), [calls.data]);
   const stats = useMemo(
@@ -44,8 +61,14 @@ export default function Today() {
     [today, messages.data],
   );
   const liveCalls = Object.values(live.calls);
-  const newMessages = (messages.data ?? []).filter((m) => m.status === 'new');
+  const latest = useMemo(() => {
+    const list = messages.data ?? [];
+    // New ones first, then the most recent of the rest.
+    return [...list.filter((m) => m.status === 'new'), ...list.filter((m) => m.status !== 'new')].slice(0, 3);
+  }, [messages.data]);
+  const unread = (messages.data ?? []).filter((m) => m.status === 'new').length;
   const p = profile.data;
+  const assistant = p?.assistant_name ?? 'Your assistant';
 
   if (server.loaded && !configured) {
     return (
@@ -67,8 +90,24 @@ export default function Today() {
 
   const toggle = async (enabled: boolean) => {
     setToggling(true);
-    await profile.patch({ enabled }, enabled ? 'Your assistant is answering calls.' : 'Calls will ring through as usual.');
+    await profile.patch({ enabled }, enabled ? `${assistant} is answering calls.` : 'Calls will ring through as usual.');
     setToggling(false);
+  };
+
+  const dismiss = (a: SecurityAlert) => {
+    live.dismissAlert(a.id);
+    toast.undo('Alert dismissed.', () => live.restoreAlert(a));
+  };
+
+  const openMessage = (m: CallerMessage) => {
+    if (m.status === 'new') {
+      messages.mutate((list) => list?.map((x) => (x.id === m.id ? { ...x, status: 'read' } : x)));
+      api.markRead(m.id).catch((e: unknown) => {
+        console.warn("Couldn't mark the message read", e);
+        toast.error(`Couldn't mark the message read: ${errorMessage(e)}`);
+      });
+    }
+    router.push(`/call/${m.call_id}`);
   };
 
   const needsYou = live.questions.length + live.alerts.length;
@@ -93,22 +132,23 @@ export default function Today() {
           connected={live.connected}
           health={health.data ?? null}
           liveCalls={liveCalls.length}
+          onReadinessPress={() => setReadinessOpen(true)}
         />
       ) : (
         <Skeleton height={148} radius={t.radius.xl} />
       )}
 
       {needsYou ? (
-        <Section title={`Needs you · ${needsYou}`} grouped={false}>
+        <Section title={`Needs you · ${needsYou}`} grouped={false} testID="needs-you">
           {live.alerts.map((a) => (
             <Banner
               key={a.id}
               tone="danger"
               icon="shield-checkmark"
-              title={`${a.who} asked for your ${a.kind || 'private details'}`}
-              message={`${a.text} Your assistant refused. ${timeAgo(a.at)}.`}
+              title={alertTitle(a, assistant)}
+              message={alertMessage(a, assistant)}
               action={{ label: 'View call', onPress: () => router.push(`/call/${a.callId}`) }}
-              onDismiss={() => live.dismissAlert(a.id)}
+              onDismiss={() => dismiss(a)}
             />
           ))}
           {live.questions.map((q) => (
@@ -122,6 +162,7 @@ export default function Today() {
               isTask={q.isTask}
               callerLanguage={live.calls[q.callId]?.language}
               ownerLanguage={p?.owner_language}
+              assistantName={assistant}
               onOpen={() => router.push(`/call/${q.callId}`)}
             />
           ))}
@@ -129,32 +170,43 @@ export default function Today() {
       ) : null}
 
       {liveCalls.length ? (
-        <Section title="Live now">
+        <Section title="Live now" grouped={false}>
           {liveCalls.map((v) => (
-            <CallRow key={v.record.id} call={v.record} live onPress={() => router.push(`/call/${v.record.id}`)} />
+            <LiveCallCard
+              key={v.record.id}
+              view={v}
+              assistantName={assistant}
+              ownerLanguage={p?.owner_language ?? 'en'}
+              onPress={() => router.push(`/call/${v.record.id}`)}
+              testID={`live-${v.record.id}`}
+            />
           ))}
         </Section>
       ) : null}
 
       <Section title="Today">
         <View style={styles.stats}>
-          <Stat icon="call-outline" value={stats.answered} label="Answered" loading={calls.loading} />
+          <Stat icon="call-outline" value={stats.answered} label="Answered" loading={calls.loading} href="/inbox?tab=calls&filter=all" />
           <View style={[styles.vrule, { backgroundColor: t.color.border }]} />
-          <Stat icon="chatbox-ellipses-outline" value={stats.messages} label="Messages" loading={messages.loading} />
+          <Stat icon="chatbox-ellipses-outline" value={stats.messages} label="Messages" loading={messages.loading} href="/inbox?tab=messages&filter=all" />
           <View style={[styles.vrule, { backgroundColor: t.color.border }]} />
-          <Stat icon="shield-outline" value={stats.blocked} label="Spam stopped" loading={calls.loading} />
+          <Stat icon="shield-outline" value={stats.blocked} label="Spam stopped" loading={calls.loading} href="/inbox?tab=calls&filter=spam" />
         </View>
       </Section>
+      {calls.error ? (
+        <Banner tone="danger" title="Couldn't load today's calls" message={calls.error} action={{ label: 'Retry', onPress: () => void calls.reload() }} />
+      ) : null}
 
       <View style={styles.quick}>
         {QUICK_ACTIONS.map((a) => (
-          <QuickAction key={a.href} {...a} />
+          <QuickAction key={a.label} {...a} />
         ))}
       </View>
 
       <Section
-        title={newMessages.length ? `New messages · ${newMessages.length}` : 'Messages'}
-        action={{ label: 'See all', onPress: () => router.push('/inbox') }}
+        title={unread ? `New messages · ${unread}` : 'Latest messages'}
+        action={{ label: 'See all', onPress: () => router.push('/inbox?tab=messages&filter=all') }}
+        testID="latest-messages"
       >
         {messages.loading ? (
           <View style={styles.pad}>
@@ -167,54 +219,97 @@ export default function Today() {
             </Text>
             <Button title="Retry" variant="ghost" size="sm" onPress={() => void messages.reload()} />
           </View>
-        ) : newMessages.length ? (
-          newMessages.slice(0, 3).map((m) => (
-            <Pressable
-              key={m.id}
-              onPress={() => router.push(`/call/${m.call_id}`)}
-              accessibilityRole="button"
-              style={({ pressed }) => [styles.message, { opacity: pressed ? 0.8 : 1, paddingHorizontal: t.space.lg }]}
-            >
-              <View style={[styles.newDot, { backgroundColor: t.color.primary }]} />
-              <View style={styles.flex}>
-                <Text variant="headline" numberOfLines={1}>
-                  {m.caller_name || m.number}
-                </Text>
-                <Text variant="subhead" color="text2" numberOfLines={2}>
-                  {m.text}
-                </Text>
-              </View>
-              <Text variant="footnote" color="text2">
-                {timeAgo(m.created_at)}
-              </Text>
-            </Pressable>
-          ))
+        ) : latest.length ? (
+          latest.map((m) => <MessageRow key={m.id} message={m} onPress={() => openMessage(m)} />)
         ) : (
-          <EmptyState compact icon="checkmark-done-outline" title="You're all caught up" message="Messages callers leave appear here." />
+          <EmptyState compact icon="checkmark-done-outline" title="No messages yet" message="Messages callers leave appear here." />
         )}
       </Section>
+
+      <ReadinessSheet
+        visible={readinessOpen}
+        onClose={() => setReadinessOpen(false)}
+        connected={live.connected}
+        health={health.data ?? null}
+        error={health.error}
+        refreshing={health.refreshing}
+        onRefresh={() => void health.refresh()}
+      />
     </Screen>
   );
 }
 
-function Stat({ icon, value, label, loading }: { icon: IconName; value: number; label: string; loading?: boolean }) {
+const displayWho = (who: string) => (/^\+?[\d\s-]{5,}$/.test(who) ? prettyNumber(who) : who);
+
+function alertTitle(a: SecurityAlert, assistant: string): string {
+  if (a.kind === 'blocked_output') return `${assistant} held back a code-like number`;
+  return `${displayWho(a.who)} asked for your ${SECRET_WORDS[a.kind] ?? (a.kind || 'private details')}`;
+}
+
+function alertMessage(a: SecurityAlert, assistant: string): string {
+  const when = timeAgo(a.at);
+  if (a.kind === 'blocked_output') return `On the call with ${displayWho(a.who)}. Nothing was said. ${when}.`;
+  return `${a.said ? `They said: "${a.said}". ` : ''}${assistant} refused and shared nothing. ${when}.`;
+}
+
+function MessageRow({ message: m, onPress }: { message: CallerMessage; onPress: () => void }) {
+  const t = useTokens();
+  const name = m.caller_name || prettyNumber(m.number);
+  const isNew = m.status === 'new';
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`${isNew ? 'New message' : 'Message'} from ${name}: ${m.text}`}
+      android_ripple={{ color: t.color.surface3 }}
+      style={({ pressed }) => [styles.message, { opacity: pressed ? 0.85 : 1, paddingHorizontal: t.space.lg }]}
+    >
+      <Avatar name={m.caller_name || m.number} size={40} />
+      <View style={styles.flex}>
+        <View style={styles.messageTop}>
+          <Text variant="headline" numberOfLines={1} style={styles.flex}>
+            {name}
+          </Text>
+          <Text variant="footnote" color={isNew ? 'primary' : 'text2'} weight={isNew ? 'semibold' : undefined}>
+            {timeAgo(m.created_at)}
+          </Text>
+        </View>
+        <View style={styles.messageTop}>
+          <Text variant="subhead" color={isNew ? 'text' : 'text2'} numberOfLines={2} style={styles.flex}>
+            {m.text}
+          </Text>
+          {isNew ? <View style={[styles.newDot, { backgroundColor: t.color.primary }]} accessibilityLabel="New" /> : null}
+          {m.status === 'replied' ? <Icon name="checkmark-done" size={16} color={t.color.success} /> : null}
+        </View>
+      </View>
+    </Pressable>
+  );
+}
+
+function Stat({ icon, value, label, loading, href }: { icon: IconName; value: number; label: string; loading?: boolean; href: Href }) {
   const t = useTokens();
   return (
-    <View style={styles.stat} accessible accessibilityLabel={`${label}: ${loading ? 'loading' : value}`}>
+    <Pressable
+      style={({ pressed }) => [styles.stat, { opacity: pressed ? 0.7 : 1 }]}
+      onPress={() => router.push(href)}
+      accessibilityRole="button"
+      accessibilityLabel={`${label}: ${loading ? 'loading' : value}`}
+      accessibilityHint="Opens them in the Inbox"
+    >
       <Icon name={icon} size={18} color={t.color.text2} />
       {loading ? <Skeleton width={28} height={24} /> : <Text variant="title1" tabular>{value}</Text>}
       <Text variant="caption" color="text2" numberOfLines={1}>
         {label}
       </Text>
-    </View>
+    </Pressable>
   );
 }
 
-function QuickAction({ icon, label, href }: { icon: IconName; label: string; href: string }) {
+function QuickAction({ icon, label, href }: { icon: IconName; label: string; href: Href }) {
   const t = useTokens();
   return (
     <Pressable
-      onPress={() => router.push(href as never)}
+      onPress={() => router.push(href)}
       accessibilityRole="button"
       accessibilityLabel={label}
       android_ripple={{ color: t.color.surface3 }}
@@ -235,12 +330,13 @@ function QuickAction({ icon, label, href }: { icon: IconName; label: string; hre
 
 const styles = StyleSheet.create({
   stats: { flexDirection: 'row', alignItems: 'stretch', paddingVertical: 16 },
-  stat: { flex: 1, alignItems: 'center', gap: 4 },
+  stat: { flex: 1, alignItems: 'center', gap: 4, minHeight: 48 },
   vrule: { width: StyleSheet.hairlineWidth, marginVertical: 4 },
   quick: { flexDirection: 'row', gap: 10 },
   action: { flex: 1, alignItems: 'center', gap: 8, paddingVertical: 14, paddingHorizontal: 6, borderWidth: StyleSheet.hairlineWidth, overflow: 'hidden' },
   actionIcon: { width: 40, height: 40, borderRadius: 20, alignItems: 'center', justifyContent: 'center' },
   message: { flexDirection: 'row', alignItems: 'center', gap: 12, paddingVertical: 12 },
+  messageTop: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   newDot: { width: 8, height: 8, borderRadius: 4 },
   flex: { flex: 1 },
   pad: { padding: 16, gap: 8 },

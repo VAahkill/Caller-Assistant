@@ -7,6 +7,7 @@ import { clockTime } from '../../lib/format';
 import type { Away, Health } from '../../lib/types';
 import { Switch } from '../ui/Switch';
 import { Text } from '../ui/Text';
+import { readinessText } from './ReadinessSheet';
 
 export interface StatusHeroProps {
   assistantName: string;
@@ -18,31 +19,15 @@ export interface StatusHeroProps {
   connected: boolean;
   health: Health | null;
   liveCalls: number;
-}
-
-const PARTS: [keyof NonNullable<Health['ready']>, string][] = [
-  ['stt', 'hearing'],
-  ['llm', 'thinking'],
-  ['tts', 'voice'],
-  ['mt', 'translation'],
-  ['lid', 'language detection'],
-];
-
-function readiness(connected: boolean, health: Health | null): { ok: boolean; text: string } {
-  if (!connected) return { ok: false, text: 'Reconnecting to your server' };
-  if (!health) return { ok: true, text: 'Connected to your server' };
-  if (!health.ready) return { ok: true, text: 'Connected' };
-  const missing = PARTS.filter(([k]) => !health.ready?.[k]).map(([, label]) => label);
-  return missing.length
-    ? { ok: false, text: `Getting ready: ${missing.join(', ')}` }
-    : { ok: true, text: 'Connected · everything ready' };
+  /** Opens the details of what the server has ready. */
+  onReadinessPress?: () => void;
 }
 
 /** Top of Today: is the assistant answering, is the owner away, is the server ready. */
-export function StatusHero({ assistantName, enabled, onToggle, toggling, away, onAwayPress, connected, health, liveCalls }: StatusHeroProps) {
+export function StatusHero({ assistantName, enabled, onToggle, toggling, away, onAwayPress, connected, health, liveCalls, onReadinessPress }: StatusHeroProps) {
   const t = useTokens();
   const c = t.color;
-  const ready = readiness(connected, health);
+  const ready = readinessText(connected, health);
   const title = !enabled ? 'Assistant is off' : liveCalls ? `${assistantName} is on ${liveCalls === 1 ? 'a call' : `${liveCalls} calls`}` : `${assistantName} is answering`;
   return (
     <LinearGradient
@@ -77,12 +62,19 @@ export function StatusHero({ assistantName, enabled, onToggle, toggling, away, o
             {away ? `${away.message}${away.until && !/\buntil\b/i.test(away.message) ? ` · until ${clockTime(away.until)}` : ''}` : 'Set away'}
           </Text>
         </Pressable>
-        <View style={[styles.chip, { backgroundColor: c.onHeroOverlay }]} accessibilityLabel={ready.text}>
+        <Pressable
+          onPress={onReadinessPress}
+          disabled={!onReadinessPress}
+          accessibilityRole="button"
+          accessibilityLabel={`${ready.text}. Details`}
+          style={({ pressed }) => [styles.chip, { backgroundColor: c.onHeroOverlay, opacity: pressed ? 0.8 : 1 }]}
+        >
           <View style={[styles.dot, { backgroundColor: ready.ok ? c.heroSuccess : c.heroWarning }]} />
-          <Text variant="footnote" weight="medium" color={c.onHero} numberOfLines={1}>
+          <Text variant="footnote" weight="medium" color={c.onHero} numberOfLines={1} style={styles.shrink}>
             {ready.text}
           </Text>
-        </View>
+          {onReadinessPress ? <Icon name="chevron-forward" size={14} color={c.onHero2} /> : null}
+        </Pressable>
       </View>
     </LinearGradient>
   );
@@ -96,4 +88,5 @@ const styles = StyleSheet.create({
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, paddingHorizontal: 12, borderRadius: 999, maxWidth: '100%' },
   dot: { width: 8, height: 8, borderRadius: 4 },
+  shrink: { flexShrink: 1 },
 });

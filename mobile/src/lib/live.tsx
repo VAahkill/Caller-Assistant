@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer,
 import { AppState, Platform, Vibration } from 'react-native';
 
 import { loadConfig, wsUrl } from './api';
-import { initialLive, liveReducer, parseEvent, type LiveData, type ServerEvent } from './events';
+import { initialLive, liveReducer, parseEvent, type LiveData, type SecurityAlert, type ServerEvent } from './events';
 import { notifyLocal, pushRegistered } from './notifications';
 import { getTransport, SOCKET_OPEN, type SocketLike } from './transport';
 
@@ -18,6 +18,9 @@ export interface LiveState extends LiveData {
   connected: boolean;
   reconnect: () => void;
   dismissAlert: (id: string) => void;
+  restoreAlert: (alert: SecurityAlert) => void;
+  /** Reload stored lists and the profile, after a change made outside the events (e.g. the owner chat). */
+  invalidate: () => void;
   /** Sends over the events socket; false when it isn't open (use the HTTP API then). */
   send: (action: OwnerAction) => boolean;
 }
@@ -136,10 +139,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const dismissAlert = useCallback((id: string) => dispatch({ type: 'dismissAlert', id }), []);
+  const restoreAlert = useCallback((alert: SecurityAlert) => dispatch({ type: 'restoreAlert', alert }), []);
+  const invalidate = useCallback(() => dispatch({ type: 'invalidate' }), []);
 
   const value = useMemo<LiveState>(
-    () => ({ ...data, connected, reconnect, dismissAlert, send }),
-    [data, connected, reconnect, dismissAlert, send],
+    () => ({ ...data, connected, reconnect, dismissAlert, restoreAlert, invalidate, send }),
+    [data, connected, reconnect, dismissAlert, restoreAlert, invalidate, send],
   );
   return <LiveContext.Provider value={value}>{children}</LiveContext.Provider>;
 }

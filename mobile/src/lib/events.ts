@@ -234,8 +234,11 @@ export interface SecurityAlert {
   id: string;
   callId: string;
   who: string;
+  /** otp, pin, password, card, balance, account, or blocked_output (the assistant was stopped from saying one). */
   kind: string;
   text: string;
+  /** What the caller said that triggered it. */
+  said: string;
   at: number;
 }
 
@@ -251,7 +254,14 @@ export interface LiveData {
 
 export const initialLive: LiveData = { calls: {}, questions: [], alerts: [], tasks: {}, refreshKey: 0, profileKey: 0 };
 
-export type LiveAction = { type: 'event'; event: ServerEvent; now?: number } | { type: 'dismissAlert'; id: string } | { type: 'reset' };
+export type LiveAction =
+  | { type: 'event'; event: ServerEvent; now?: number }
+  | { type: 'dismissAlert'; id: string }
+  /** Undo of a dismiss: puts the alert back where it was by time. */
+  | { type: 'restoreAlert'; alert: SecurityAlert }
+  /** Something changed on the server outside an event (e.g. via the owner chat): reload lists and the profile. */
+  | { type: 'invalidate' }
+  | { type: 'reset' };
 
 function withCall(state: LiveData, callId: string, ev: AnyEvent, now: number): LiveData {
   const view = state.calls[callId];
@@ -264,6 +274,11 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
   // A new connection: live calls come again as snapshots. Alerts stay until dismissed.
   if (action.type === 'reset') return { ...state, calls: {}, questions: [], refreshKey: state.refreshKey + 1 };
   if (action.type === 'dismissAlert') return { ...state, alerts: state.alerts.filter((a) => a.id !== action.id) };
+  if (action.type === 'invalidate') return { ...state, refreshKey: state.refreshKey + 1, profileKey: state.profileKey + 1 };
+  if (action.type === 'restoreAlert') {
+    if (state.alerts.some((a) => a.id === action.alert.id)) return state;
+    return { ...state, alerts: [...state.alerts, action.alert].sort((a, b) => b.at - a.at) };
+  }
   const ev = action.event;
   const now = action.now ?? Date.now() / 1000;
   switch (ev.event) {
@@ -336,6 +351,7 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
         who: ev.who,
         kind: ev.kind,
         text: ev.text,
+        said: ev.said,
         at: now,
       };
       return { ...withCall(state, ev.call_id, ev, now), alerts: [alert, ...state.alerts].slice(0, 20) };
