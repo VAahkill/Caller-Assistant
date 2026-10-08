@@ -138,6 +138,7 @@ export class MockEventsSocket extends MockSocketBase {
 
   protected opened() {
     if (!this.server) return;
+    this.server.liveSockets.add(this);
     for (const call of this.server.state.calls.filter((c) => !c.ended_at && c.status !== 'rejected')) {
       this.emit({ event: 'call_snapshot', call });
     }
@@ -162,9 +163,17 @@ export class MockEventsSocket extends MockSocketBase {
   push(ev: Json, after: number) {
     this.emit(ev, after);
   }
+
+  close(code = 1000, reason = '') {
+    this.server?.liveSockets.delete(this);
+    super.close(code, reason);
+  }
 }
 
-function ownerTurn(sock: { push: (ev: Json, after: number) => void }, call: CallRecord, msg: Json, step: number) {
+/** What the server does when the owner says something on a live call: the
+ *  assistant translates it, adds it to the transcript and says it. The REST
+ *  endpoints (/say, /say-audio, /answer) and the socket actions share it. */
+export function ownerTurn(sock: { push: (ev: Json, after: number) => void }, call: CallRecord, msg: Json, step: number) {
   const who = call.contact_name || call.number;
   const base = { call_id: call.id, who };
   const lang = call.language || 'en';

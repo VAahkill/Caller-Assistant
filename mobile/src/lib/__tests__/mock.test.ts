@@ -1,5 +1,5 @@
 import { createFixtures } from '../mock/fixtures';
-import { MockServer } from '../mock/server';
+import { MockServer, mockTransport } from '../mock/server';
 import { normalizeCall, normalizeHealth, normalizeProfile, normalizeVoice } from '../normalize';
 
 const fx = createFixtures(1_760_000_000);
@@ -87,5 +87,32 @@ describe('every API contract v2 endpoint is served by the mock', () => {
   ] as [string, string, unknown?][]).map(([method, path, body]) => ({ method, path, body })))('$method $path', ({ method, path, body }) => {
     const r = req(method, path, body);
     expect(r.status).toBe(200);
+  });
+});
+
+describe('owner actions over REST reach the live events socket', () => {
+  test('POST /calls/{id}/say adds a translated owner line and status events', async () => {
+    const t = mockTransport(new MockServer({ state: createFixtures() }));
+    const events: Record<string, unknown>[] = [];
+    const socket = t.openSocket('ws://x/ws/events?token=demo-token');
+    socket.onmessage = (m) => events.push(JSON.parse(String(m.data)));
+    await new Promise((r) => setTimeout(r, 5));
+    const before = t.server.state.calls.find((c) => c.id === 'call-live-swiggy')!.transcript.length;
+    const r = await t.fetch('http://x/calls/call-live-swiggy/say', { method: 'POST', body: JSON.stringify({ text: 'Bring it up', lang: 'en' }) });
+    expect(r.ok).toBe(true);
+    await new Promise((res) => setTimeout(res, 5));
+    const line = events.find((e) => e.event === 'transcript' && (e.line as { speaker: string }).speaker === 'user')?.line as Record<string, string>;
+    expect(line).toMatchObject({ speaker: 'user', lang: 'te', translation: 'Bring it up', translation_lang: 'en' });
+    expect(events.filter((e) => e.event === 'assistant_status').map((e) => e.state)).toEqual(['translating', 'speaking', 'listening']);
+    expect(t.server.state.calls.find((c) => c.id === 'call-live-swiggy')!.transcript.length).toBe(before + 1);
+    socket.close();
+    expect(t.server.liveSockets.size).toBe(0);
+  });
+
+  test('an empty say is refused and nothing is said', async () => {
+    const server = new MockServer({ state: createFixtures() });
+    const r = server.handle({ method: 'POST', path: '/calls/call-live-swiggy/say', query: new URLSearchParams(), body: { text: ' ' }, form: null }, null);
+    expect(r.status).toBe(422);
+    expect(server.state.calls.find((c) => c.id === 'call-live-swiggy')!.transcript.some((l) => l.speaker === 'user')).toBe(false);
   });
 });

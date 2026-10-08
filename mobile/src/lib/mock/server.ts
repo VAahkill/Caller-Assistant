@@ -10,9 +10,9 @@ import type {
   UploadRequest,
   UploadResultLike,
 } from '../transport';
-import type { Instruction, KnowledgeNote, Profile, Task, VoiceInfo } from '../types';
+import type { CallRecord, Instruction, KnowledgeNote, Profile, Task, VoiceInfo } from '../types';
 import { createFixtures, type MockState } from './fixtures';
-import { MockEventsSocket, MockSimulateSocket } from './socket';
+import { MockEventsSocket, MockSimulateSocket, ownerTurn } from './socket';
 
 export const MOCK_TOKEN = 'demo-token';
 
@@ -72,11 +72,19 @@ export class MockServer {
   log: MockRequest[] = [];
   readonly latencyMs: number;
   readonly checkToken: boolean;
+  /** Open /ws/events sockets: REST actions on a live call show up on them. */
+  readonly liveSockets = new Set<{ push: (ev: Record<string, unknown>, after: number) => void }>();
 
   constructor({ latencyMs = 0, state, checkToken = false }: MockOptions = {}) {
     this.state = state ?? createFixtures();
     this.latencyMs = latencyMs;
     this.checkToken = checkToken;
+  }
+
+  /** Plays the owner's words into the live call, on every open events socket. */
+  private ownerAction(call: CallRecord, msg: Record<string, unknown>) {
+    const all = { push: (ev: Record<string, unknown>, after: number) => this.liveSockets.forEach((sk) => sk.push(ev, after)) };
+    ownerTurn(all, call, msg, this.latencyMs ? 400 : 0);
   }
 
   handle(req: MockRequest, token: string | null): MockReply {
@@ -208,10 +216,16 @@ export class MockServer {
       case 'POST /calls/:id/end': {
         const c = s.calls.find((x) => x.id === id);
         if (!c || c.ended_at) return notFound('call is not live');
-        if (route.endsWith('/say-audio')) return ok({ ok: true, heard: 'Please leave it with security at Gate 2.' });
-        if (route.endsWith('/say') && !String(body.text ?? '').trim()) return unprocessable('Nothing was said: the text was empty.');
-        if (route.endsWith('/answer')) return ok({ ok: true, mode: body.hold_id ? 'hold_answer' : 'said' });
-        if (route.endsWith('/end')) c.ended_at = nowS();
+        if (route.endsWith('/end')) {
+          c.ended_at = nowS();
+          return ok({ ok: true });
+        }
+        const text = String(body.text ?? '').trim();
+        if (!route.endsWith('/say-audio') && !text) return unprocessable('Nothing was said: the text was empty.');
+        const action = route.endsWith('/say-audio') ? 'say_audio' : route.endsWith('/answer') ? 'answer' : 'say';
+        this.ownerAction(c, { action, text, hold_id: body.hold_id ?? null });
+        if (action === 'say_audio') return ok({ ok: true, heard: 'Please leave it with security at Gate 2.' });
+        if (action === 'answer') return ok({ ok: true, mode: body.hold_id ? 'hold_answer' : 'said' });
         return ok({ ok: true });
       }
       case 'GET /messages':
