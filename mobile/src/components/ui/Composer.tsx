@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Linking, PanResponder, Platform, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { useKeyboardState } from 'react-native-keyboard-controller';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useHoldToTalk, type Recording } from '../../hooks/useHoldToTalk';
-import { Icon, fonts } from '../../lib/design';
+import { Icon, fonts, type IconName } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
 import { duration } from '../../lib/format';
 import { Chip } from './Chip';
@@ -13,9 +13,9 @@ import { Text } from './Text';
 import { useToast } from './Toast';
 
 export interface ComposerProps {
-  onSend: (text: string) => void | Promise<void>;
+  onSend: (text: string) => unknown;
   /** Enables the mic: hold to talk, release to send; a short tap locks recording on. */
-  onVoice?: (r: Recording) => void | Promise<void>;
+  onVoice?: (r: Recording) => unknown;
   placeholder?: string;
   /** Line above the box, e.g. "Reply in English, they'll hear Telugu". */
   hint?: string;
@@ -28,6 +28,10 @@ export interface ComposerProps {
   disabledReason?: string;
   /** Pad for the gesture bar when the keyboard is closed (default true). */
   bottomInset?: boolean;
+  /** What a send goes to, shown above the box, e.g. the hold question being answered. */
+  context?: { icon: IconName; label: string; text: string };
+  /** Anything above the suggestions, e.g. a "speak as" switch. */
+  header?: ReactNode;
   testID?: string;
 }
 
@@ -46,6 +50,8 @@ export function Composer({
   disabled,
   disabledReason,
   bottomInset = true,
+  context,
+  header,
   testID,
 }: ComposerProps) {
   const t = useTokens();
@@ -126,6 +132,20 @@ export function Composer({
       testID={testID}
       style={[styles.wrap, { backgroundColor: c.surface, borderTopColor: c.border, paddingBottom: padBottom }]}
     >
+      {header}
+      {context ? (
+        <View style={[styles.context, { backgroundColor: c.surface2, borderLeftColor: c.warning, borderRadius: t.radius.sm }]} testID={testID ? `${testID}-context` : 'composer-context'}>
+          <Icon name={context.icon} size={16} color={c.text2} />
+          <View style={styles.flex}>
+            <Text variant="caption" weight="semibold" color="text2">
+              {context.label}
+            </Text>
+            <Text variant="footnote" numberOfLines={2}>
+              {context.text}
+            </Text>
+          </View>
+        </View>
+      ) : null}
       {suggestions?.length && !recording ? (
         <ScrollView
           horizontal
@@ -252,4 +272,6 @@ const styles = StyleSheet.create({
   meter: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden' },
   meterFill: { height: 4, borderRadius: 2 },
   disabled: { flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center', padding: 12 },
+  context: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 8, borderLeftWidth: 3 },
+  flex: { flex: 1 },
 });

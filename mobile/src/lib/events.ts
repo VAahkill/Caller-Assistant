@@ -347,7 +347,7 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
 
 export const ASSISTANT_STATE_LABEL: Record<AssistantState, string> = {
   listening: 'Listening',
-  transcribing: 'Hearing',
+  transcribing: 'Transcribing',
   translating: 'Translating',
   thinking: 'Thinking',
   speaking: 'Speaking',

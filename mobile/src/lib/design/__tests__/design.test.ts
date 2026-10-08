@@ -37,6 +37,10 @@ describe.each(schemes)('%s theme', (scheme) => {
     ['text', 'surface3'],
     ['text2', 'surface3'],
     ['onPrimary', 'primary'],
+    // The send button on a hold question card.
+    ['onPrimary', 'warning'],
+    // A failed answer on a hold question card.
+    ['danger', 'warningContainer'],
     ['onPrimaryContainer', 'primaryContainer'],
     ['primary', 'primaryContainer'],
     ['success', 'successContainer'],

@@ -4,7 +4,7 @@ import { Icon, type IconName } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
 import { haptic } from '../../lib/haptics';
 
-export type IconButtonVariant = 'plain' | 'tonal' | 'filled' | 'danger' | 'inverse';
+export type IconButtonVariant = 'plain' | 'tonal' | 'filled' | 'danger' | 'inverse' | 'warning';
 
 export interface IconButtonProps {
   icon: IconName;
@@ -52,6 +52,7 @@ export function IconButton({
     filled: { bg: c.primary, fg: c.onPrimary },
     danger: { bg: c.dangerContainer, fg: c.onDangerContainer },
     inverse: { bg: c.onHeroOverlay, fg: c.onHero },
+    warning: { bg: c.warning, fg: c.onPrimary },
   }[variant];
   const fg = color ?? (selected ? c.primary : palette.fg);
   const slop = Math.max(0, (t.hit - size) / 2);

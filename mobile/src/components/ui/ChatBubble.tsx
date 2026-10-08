@@ -56,7 +56,8 @@ export function ChatBubble({
       </View>
     );
   }
-  if (line.speaker === 'system' || line.kind === 'note') {
+  // The owner's own words are a bubble even when the server files them as a note.
+  if (line.speaker === 'system' || (line.kind === 'note' && line.speaker !== 'user')) {
     return (
       <Text testID={testID} variant="footnote" color="text2" align="center" style={styles.note}>
         {line.translation || line.text}
