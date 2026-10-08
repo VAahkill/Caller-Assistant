@@ -262,10 +262,13 @@ export class MockServer {
         s.tasks = [task, ...s.tasks];
         return ok(task);
       }
-      case 'POST /assistant/chat':
-        return ok({ reply: chatReply(String(body.text ?? ''), s), actions: [] });
+      case 'POST /assistant/chat': {
+        const text = String(body.text ?? '').trim();
+        if (!text) return unprocessable('Say something first.');
+        return ok(chatReply(text, s));
+      }
       case 'POST /assistant/voice':
-        return ok({ heard: 'Who called while I was in the meeting?', reply: chatReply('who called', s), actions: [] });
+        return ok({ heard: 'Who called while I was in the meeting?', ...chatReply('who called', s) });
       case 'GET /voices':
         return ok([...s.voices.filter((v) => v.kind === 'clone'), ...s.voices.filter((v) => v.kind !== 'clone')]);
       case 'PATCH /voices/:id': {
@@ -335,14 +338,61 @@ function pick(obj: Record<string, unknown>, keys: string[]): Record<string, unkn
   return Object.fromEntries(keys.filter((k) => k in obj).map((k) => [k, obj[k]]));
 }
 
-function chatReply(text: string, s: MockState): string {
+/** Like the real owner chat: a reply, and what it changed (API contract v2 actions). */
+function chatReply(text: string, s: MockState): { reply: string; actions: Record<string, unknown>[] } {
   const t = text.toLowerCase();
-  if (/who|call|missed/.test(t)) {
-    const today = s.calls.filter((c) => c.direction === 'inbound' && c.status !== 'rejected').slice(0, 3);
-    return `Today: ${today.map((c) => c.contact_name || c.number).join(', ')}. Amma wants a call back about Sunday lunch, and Rajesh asked for a call before 11 tomorrow.`;
+  const at = nowS();
+  if (/\b(book|reserve|ask|find out)\b/.test(t) && /\bcall\b/.test(t)) {
+    const paradise = /paradise/.test(t);
+    const task: Task = {
+      id: newId('task'),
+      kind: /book|reserve/.test(t) ? 'book' : 'enquire',
+      number: paradise ? '+914023456789' : '+914000000000',
+      goal: text,
+      target_name: paradise ? 'Paradise Biryani' : '',
+      status: 'queued',
+      outcome: '',
+      result: '',
+      call_id: null,
+      created_at: at,
+      updated_at: at,
+    };
+    s.tasks = [task, ...s.tasks];
+    return { reply: `Calling ${task.target_name || 'them'} now. I'll tell you how it goes.`, actions: [{ type: 'task_created', task }] };
   }
-  if (/away|meeting|busy/.test(t)) return "Done. I'll tell callers you're in a meeting until 3 PM and take messages.";
-  return "Got it. I'll keep that in mind on your calls.";
+  if (/who|missed|called/.test(t)) {
+    const today = s.calls.filter((c) => c.direction === 'inbound' && c.status !== 'rejected').slice(0, 3);
+    return {
+      reply: `Today: ${today.map((c) => c.contact_name || c.number).join(', ')}. Amma wants a call back about Sunday lunch, and Rajesh asked for a call before 11 tomorrow.`,
+      actions: [],
+    };
+  }
+  if (/meeting|busy|away/.test(t)) {
+    s.profile = { ...s.profile, available: false };
+    return { reply: "Done. I'll tell callers you're in a meeting until 3 PM and take messages.", actions: [{ type: 'availability', available: false }] };
+  }
+  if (/\b(tell|always|never|ask)\b/.test(t)) {
+    const ins: Instruction = {
+      id: newId('ins'),
+      text,
+      enabled: true,
+      applies_to: /courier|deliver|parcel/.test(t) ? 'delivery' : 'everyone',
+      numbers: [],
+      category: 'general',
+      expires_at: null,
+      created_at: at,
+      updated_at: at,
+    };
+    s.profile = { ...s.profile, instructions: [...s.profile.instructions, ins] };
+    return { reply: "Got it. I'll do that on every call it applies to.", actions: [{ type: 'instruction_added', text }] };
+  }
+  if (/\b(turn off|switch off|stop answering)\b/.test(t)) {
+    s.profile = { ...s.profile, enabled: false };
+    return { reply: "I've stopped answering. Calls ring through as usual.", actions: [{ type: 'enabled', enabled: false }] };
+  }
+  const note: KnowledgeNote = { id: newId('note'), text, enabled: true, share_with: 'anyone', numbers: [], expires_at: null, created_at: at, updated_at: at };
+  s.profile = { ...s.profile, knowledge: [...s.profile.knowledge, note] };
+  return { reply: "Got it. I'll keep that in mind on your calls.", actions: [{ type: 'note_added', text }] };
 }
 
 // ---------------------------------------------------------------- transport

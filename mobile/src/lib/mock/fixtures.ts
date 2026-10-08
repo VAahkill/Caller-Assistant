@@ -200,6 +200,22 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
     ],
   });
 
+  const priya = call({
+    id: 'call-priya',
+    number: '+919866554433',
+    contact_name: 'Priya',
+    category: 'contact',
+    language: 'en',
+    started_at: now - 26 * hour - 2 * min,
+    transcript: [
+      line(now - 26 * hour - 2 * min, 'assistant', "Hi Priya, Arjun can't take the call right now. Can I pass on a message?", 'en'),
+      line(now - 26 * hour - 2 * min + 6, 'caller', "Yes please, tell him I'm running 15 minutes late for the 6 PM meeting.", 'en'),
+      line(now - 26 * hour - 2 * min + 12, 'assistant', "Got it, I'll let him know right away.", 'en'),
+    ],
+    summary: 'Priya is running 15 minutes late for the 6 PM meeting.',
+    message: 'Running 15 minutes late for the 6 PM meeting.',
+  });
+
   const messages: CallerMessage[] = [
     {
       id: 'msg-amma',
@@ -225,7 +241,7 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
     },
     {
       id: 'msg-priya',
-      call_id: 'call-priya',
+      call_id: priya.id,
       number: '+919866554433',
       caller_name: 'Priya',
       text: 'Running 15 minutes late for the 6 PM meeting.',
@@ -479,7 +495,7 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
       llm_model: 'qwen2.5-3b-instruct-q4_k_m',
     },
     profile,
-    calls: [liveCall, amma, rajesh, scam, loan, paradise, bluedart],
+    calls: [liveCall, amma, rajesh, scam, loan, paradise, bluedart, priya],
     messages,
     tasks,
     voices,
