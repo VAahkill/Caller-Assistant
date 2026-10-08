@@ -43,9 +43,13 @@ const SHOTS = [
   { name: 'call-live', path: '/call/call-live-swiggy' },
   { name: 'call-ended', path: '/call/call-rajesh' },
   { name: 'call-scam', path: '/call/call-kyc' },
+  { name: 'today-server', path: '/', tap: 'Connected · everything ready' },
+  { name: 'call-live-reply', path: '/call/call-live-swiggy', tap: ['Yes, that works'], wait: 2500 },
   { name: 'chat', path: '/chat' },
+  { name: 'chat-reply', path: '/chat', tap: ['Call Paradise and book a table for 4 at 8'], wait: 2500 },
   { name: 'practice', path: '/practice' },
   { name: 'practice-live', path: '/practice', tap: 'Start practice call', wait: 3500 },
+  { name: 'practice-chat', path: '/practice', tap: ['Start practice call', 'Hi, I have a Swiggy order for you. Where should I come?'], wait: 4500 },
   { name: 'voices', path: '/voices' },
   { name: 'instructions', path: '/instructions' },
   { name: 'instructions-edit', path: '/instructions', tap: 'New instruction' },
@@ -151,8 +155,9 @@ async function main() {
         page.on('console', (m) => m.type() === 'error' && !m.text().includes('ERR_BLOCKED_BY_CLIENT') && errors.push(m.text()));
         await page.goto(base + shot.path, { waitUntil: 'networkidle' });
         await page.waitForTimeout(1500);
-        if (shot.tap) {
-          await page.getByText(shot.tap, { exact: true }).last().click();
+        // One tap, or several in order (each waits for the screen to settle).
+        for (const tap of shot.tap ? [shot.tap].flat() : []) {
+          await page.getByText(tap, { exact: true }).last().click();
           await page.waitForTimeout(shot.wait ?? 900);
         }
         const files = [];
