@@ -77,3 +77,34 @@ def test_speech_warm_up_sets_ready_and_keeps_fixed_lines_in_memory(engine):
     engine.tts.synthesize = must_not_synthesize
     pcm = asyncio.run(engine.speech(opening_line(engine.store.profile), engine.store.profile.voice, "en", cache=True))
     assert pcm
+
+
+async def test_a_profile_change_prepares_the_new_prompt_and_greeting(engine):
+    engine.llm = WarmableLLM()
+    engine.ready["tts"] = True
+    engine.store.profile.user_name = "Priya"
+    engine.store.save_profile()
+    engine.store.profile.assistant_name = "Maya"
+    engine.store.save_profile()  # while the first warm-up is still running
+    while engine._background:
+        await asyncio.gather(*engine._background)
+    assert len(engine.llm.warmed) == 2  # once, then again with the newest prompt
+    assert "Priya" in engine.llm.warmed[-1][0]["content"] and "Maya" in engine.llm.warmed[-1][0]["content"]
+    greeting = opening_line(engine.store.profile)
+    assert "Priya" in greeting and "Maya" in greeting and (greeting, engine.store.profile.voice, "en") in engine._speech_cache
+
+
+async def test_a_profile_change_during_a_call_waits_for_the_call_to_end(engine):
+    engine.llm = WarmableLLM()
+    bridge = QueueBridge("c1", "+919876543210")
+    task = asyncio.create_task(engine.handle_call(bridge))
+    while "c1" not in engine.sessions:
+        await asyncio.sleep(0.01)
+    engine.sessions["c1"].conv.llm = engine.llm
+    engine.store.profile.user_name = "Priya"
+    engine.store.save_profile()
+    assert engine.llm.warmed == []  # not while the caller is using the model
+    await bridge.hangup()
+    await task
+    await engine._llm_warming
+    assert "Priya" in engine.llm.warmed[-1][0]["content"]

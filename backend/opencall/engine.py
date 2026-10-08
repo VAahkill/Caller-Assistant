@@ -53,6 +53,9 @@ class Engine:
         self._speech_lock = threading.Lock()
         self._background: set[asyncio.Task] = set()
         self._llm_warming: asyncio.Task | None = None
+        self._warm_again = False
+        self._changed_during_call = False
+        self.store.on_profile_saved.append(self.profile_changed)
 
     # ------------------------------------------------------------ warm-up
     def warm_up(self) -> None:
@@ -73,10 +76,33 @@ class Engine:
         voice = self.store.profile.voice
         langs = {"en"} | {lang.strip() for lang in self.settings.indic_preload.split(",") if lang.strip()}
         supported = self.tts.supported_languages(voice)
-        texts = [(opening_line(self.store.profile), "en")]
-        texts += [(phrase(key, lang), lang) for lang in sorted(langs & supported) for key in ("filler", "fallback")]
-        for text, lang in texts:
+        self._prerender_greeting()
+        for text, lang in [(phrase(key, lang), lang) for lang in sorted(langs & supported)
+                           for key in ("filler", "fallback")]:
             self._remember((text, voice, lang), self.tts._synth_sync(text, voice, lang))
+
+    def _prerender_greeting(self) -> None:
+        voice, text = self.store.profile.voice, opening_line(self.store.profile)
+        with self._speech_lock:
+            if (text, voice, "en") in self._speech_cache:
+                return
+        self._remember((text, voice, "en"), self.tts._synth_sync(text, voice, "en"))
+
+    def profile_changed(self) -> None:
+        """The user changed something the call prompt or the greeting is made from
+        (their name, location, instructions...): prepare the new ones now, so the
+        next caller isn't kept waiting while the model reads the new prompt."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return  # saved outside the running server (a script): nothing to prepare
+        if self.sessions:
+            self._changed_during_call = True  # the caller is using the model; prepare when the call ends
+            return
+        self._changed_during_call = False
+        self.refresh_llm_cache()
+        if self.ready["tts"]:
+            self._spawn(asyncio.to_thread(self._prerender_greeting))
 
     async def warm_up_all(self) -> None:
         """Speech models (in a thread) and the LLM at the same time."""
@@ -111,6 +137,9 @@ class Engine:
                 continue
             self.ready["llm"] = True
             log.info("LLM %s is ready (warm-up took %.1f s).", self.settings.llm_model, time.monotonic() - started)
+            if self._warm_again:  # the prompt changed while this warm-up ran
+                self._warm_again = False
+                self._llm_warming = self._spawn(self.warm_up_llm(retry=False))
             return
 
     def _start_llm_warm_up(self, retry: bool) -> None:
@@ -125,10 +154,15 @@ class Engine:
             self._start_llm_warm_up(retry=True)
 
     def refresh_llm_cache(self) -> None:
-        """After a call summary (a different prompt) put the call prompt back in the
-        LLM server's cache, so the next caller's first reply starts quickly."""
-        if getattr(self.llm, "warm_up", None) is not None:
-            self._start_llm_warm_up(retry=False)
+        """Put the call prompt, as it is now, in the LLM server's cache, so the next
+        caller's first reply starts quickly. Done after a call summary (a different
+        prompt) and when the user changes something the prompt is made from."""
+        if getattr(self.llm, "warm_up", None) is None:
+            return
+        if self._llm_warming and not self._llm_warming.done():
+            self._warm_again = True
+            return
+        self._start_llm_warm_up(retry=False)
 
     def _spawn(self, coro) -> asyncio.Task:
         task = asyncio.get_running_loop().create_task(coro)
@@ -206,6 +240,8 @@ class Engine:
             await session.run()
         finally:
             self.sessions.pop(session.record.id, None)
+            if self._changed_during_call and not self.sessions:
+                self.profile_changed()
         return session
 
     async def handle_call(self, bridge: CallBridge) -> CallSession:

@@ -78,8 +78,10 @@ first time. Once words are flowing, a 30 s pause is a stall. Every failure raise
 
 At start-up the engine sends the real call prompt with a one-token request. This
 loads the model and fills its prompt cache before the first caller. It retries with
-back-off until it works, and does it again after a failed turn and after each call
-summary. Docker Compose sets `OLLAMA_KEEP_ALIVE=24h`, so Ollama doesn't unload the
+back-off until it works. It warms again after a failed turn and after each call
+summary. It also warms when the user changes something the prompt is made from
+(their name, instructions, notes...), and then the greeting is made again too. If a
+call is live, that waits until the call ends. Docker Compose sets `OLLAMA_KEEP_ALIVE=24h`, so Ollama doesn't unload the
 model between calls. `GET /health` shows `ready: {stt, tts, llm, mt, lid}` and
 `llm_model`.
 
