@@ -3,9 +3,13 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@expo-google-fonts/inter": "^0.4.2",
+    "@expo/metro-runtime": "~57.0.16",
+    "@expo/vector-icons": "^15.0.2",
     "@maplibre/maplibre-react-native": "^11.5.0",
     "@types/geojson": "^7946.0.16",
     "expo": "~57.0.27",
+    "expo-asset": "~57.0.19",
     "expo-audio": "~57.0.5",
     "expo-build-properties": "~57.0.22",
     "expo-clipboard": "~57.0.2",
@@ -13,21 +17,37 @@
     "expo-contacts": "~57.0.6",
     "expo-device": "~57.0.2",
     "expo-file-system": "~57.0.7",
+    "expo-font": "~57.0.4",
+    "expo-haptics": "~57.0.3",
+    "expo-linear-gradient": "~57.0.2",
     "expo-linking": "~57.0.12",
     "expo-location": "~57.0.20",
     "expo-notifications": "~57.0.22",
     "expo-router": "~57.0.25",
     "expo-secure-store": "~57.0.4",
+    "expo-splash-screen": "~57.0.9",
     "expo-status-bar": "~57.0.1",
     "expo-system-ui": "~57.0.4",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.3",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-keyboard-controller": "1.21.9",
+    "react-native-reanimated": "4.5.1",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "~4.26.0"
+    "react-native-screens": "~4.26.0",
+    "react-native-worklets": "0.10.1"
   },
   "devDependencies": {
+    "@testing-library/react-native": "^14.0.1",
+    "@types/jest": "29.5.14",
     "@types/react": "~19.2.2",
+    "babel-preset-expo": "~57.0.0",
+    "eslint": "^9.39.5",
+    "eslint-config-expo": "~57.0.2",
+    "jest-expo": "~57.0.5",
+    "react-native-web": "^0.21.2",
+    "test-renderer": "~1.2.0",
     "typescript": "~6.0.3"
   },
   "scripts": {
@@ -35,7 +55,28 @@
     "android": "expo run:android",
     "ios": "expo run:ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "lint": "expo lint",
+    "test": "jest",
+    "check": "tsc --noEmit && expo lint && jest",
+    "screenshots": "node scripts/screenshots.mjs"
   },
-  "private": true
+  "private": true,
+  "jest": {
+    "preset": "jest-expo/android",
+    "setupFiles": [
+      "./jest.setup.ts"
+    ],
+    "testPathIgnorePatterns": [
+      "/node_modules/",
+      "/android/",
+      "/dist/",
+      "/dist-web/"
+    ],
+    "transformIgnorePatterns": [
+      "/node_modules/(?!(.pnpm|react-native|@react-native|@react-native-community|expo|@expo|@expo-google-fonts|react-navigation|@react-navigation|@maplibre|react-native-keyboard-controller|react-native-reanimated|react-native-worklets))",
+      "/node_modules/react-native-reanimated/plugin/",
+      "/node_modules/@react-native/babel-preset/"
+    ]
+  }
 }

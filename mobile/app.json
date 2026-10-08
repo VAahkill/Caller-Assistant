@@ -65,7 +65,10 @@
             "usesCleartextTraffic": true
           }
         }
-      ]
+      ],
+      "expo-font",
+      "expo-asset",
+      "expo-splash-screen"
     ],
     "scheme": "opencall",
     "experiments": {
