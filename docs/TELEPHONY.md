@@ -135,7 +135,7 @@ asyncio.run(main())
 PY
 ```
 
-What you can send:
+Press Ctrl+C to hang up. What you can send:
 
 | Message | What it does |
 |---|---|
