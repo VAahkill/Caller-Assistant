@@ -4,7 +4,8 @@ import { Linking, StyleSheet, View } from 'react-native';
 import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { api } from '../../lib/api';
 import { prettyNumber, timeAgo } from '../../lib/format';
-import type { CallerMessage } from '../../lib/types';
+import { categoryOf } from '../../lib/labels';
+import type { CallSummary, CallerMessage } from '../../lib/types';
 import { Avatar } from '../ui/Avatar';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
@@ -16,6 +17,8 @@ import { useToast } from '../ui/Toast';
 
 export interface MessageCardProps {
   message: CallerMessage;
+  /** The call it was left on, for its category and urgency. */
+  call?: CallSummary;
   onOpen?: () => void;
   onChanged?: (m: CallerMessage) => void;
   testID?: string;
@@ -24,7 +27,7 @@ export interface MessageCardProps {
 const digits = (n: string) => n.replace(/[^\d]/g, '');
 
 /** A message a caller left: read it, reply through the assistant, call or WhatsApp back. */
-export function MessageCard({ message: m, onOpen, onChanged, testID }: MessageCardProps) {
+export function MessageCard({ message: m, call, onOpen, onChanged, testID }: MessageCardProps) {
   const toast = useToast();
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState('');
@@ -61,8 +64,14 @@ export function MessageCard({ message: m, onOpen, onChanged, testID }: MessageCa
           <Text variant="headline" numberOfLines={1}>
             {name}
           </Text>
-          <Text variant="footnote" color="text2">
+          <Text variant="footnote" color="text2" numberOfLines={1}>
             {timeAgo(m.created_at)}
+            {call && call.category !== 'unknown' ? ` · ${categoryOf(call.category).label}` : ''}
+            {call?.urgent ? (
+              <Text variant="footnote" weight="semibold" color="danger">
+                {' · Urgent'}
+              </Text>
+            ) : null}
           </Text>
         </View>
         {m.status === 'new' ? <StatusPill label="New" tone="primary" dot /> : null}
