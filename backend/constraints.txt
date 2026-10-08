@@ -1,0 +1,24 @@
+# Exact versions the Docker image is built with, all tested together on Python 3.12
+# (pip install -c constraints.txt ...). PyTorch comes from its CPU-only index unless
+# OPENCALL_TORCH_INDEX says otherwise (see the Dockerfile).
+torch==2.14.1
+torchaudio==2.11.0
+torchcodec==0.17.0
+# transformers 5 breaks XTTS-v2 (coqui-tts 0.27 generates with the 4.x API).
+transformers==4.57.6
+tokenizers==0.22.2
+huggingface-hub==0.36.2
+safetensors==0.8.0
+numpy==2.5.3
+onnxruntime==1.30.0
+faster-whisper==1.2.1
+ctranslate2==4.8.2
+av==19.0.1
+silero-vad==6.2.3
+kokoro==0.9.4
+misaki==0.9.4
+IndicTransToolkit==1.1.1
+sacrebleu==2.6.0
+num2words==0.5.14
+soundfile==0.14.0
+coqui-tts==0.27.5

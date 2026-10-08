@@ -11,7 +11,7 @@ services:
     build:
       context: ./backend
       args:
-        EXTRAS: stt,vad,tts,indic,clone
+        EXTRAS: stt-indic,lid,vad,mt,tts,piper,indic,clone
         TORCH_INDEX: ${OPENCALL_TORCH_INDEX:-https://download.pytorch.org/whl/cpu}
     env_file: .env
     environment:
