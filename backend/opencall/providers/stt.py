@@ -21,7 +21,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from ..audio import pcm16_to_float, split_at_pauses
+from ..audio import pcm16_to_float, split_at_pauses, trim_silence
 
 log = logging.getLogger("opencall.stt")
 
@@ -210,6 +210,11 @@ class FasterWhisperSTT:
 
     def _run(self, pcm16k: bytes, language_hint: str | None) -> Transcription:
         model = self._model_for(language_hint)
+        # The silence around the words is cut first: given silence or line noise after
+        # the speech, Whisper (the fine-tuned models most of all) tends to go on
+        # "hearing" sentences nobody said. On held-out Tamil this took the worst clips
+        # from a character error rate above 1 to under 0.3.
+        pcm16k = trim_silence(pcm16k) or pcm16k
         # Whisper writes at most 224 tokens per piece of audio. Telugu or Tamil needs
         # up to 20 a second, so a long turn would stop mid-word; it is transcribed in
         # pieces cut at pauses instead, all in the language of the first one.

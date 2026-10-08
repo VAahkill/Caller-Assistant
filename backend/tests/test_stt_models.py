@@ -2,9 +2,11 @@
 and Hindi fine-tunes by default (converted once on first use), the main model for
 everything else, and the main model again if a language's own model can't load."""
 
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 
 from opencall.config import Settings
@@ -35,11 +37,17 @@ def test_settings_reach_the_speech_model(tmp_path):
     assert stt.ct2_dir == tmp_path / "models" / "ct2"
 
 
+def fake_hub(monkeypatch, list_repo_files):
+    """The Hugging Face client, faked: these tests never go online, and CI doesn't
+    install the speech extras."""
+    monkeypatch.setitem(sys.modules, "huggingface_hub", SimpleNamespace(list_repo_files=list_repo_files))
+
+
 def test_model_names_and_folders_are_used_as_they_are(tmp_path, monkeypatch):
     def offline(*a, **k):
         raise AssertionError("must not look anything up")
 
-    monkeypatch.setattr("huggingface_hub.list_repo_files", offline)
+    fake_hub(monkeypatch, offline)
     assert resolve_model("large-v3-turbo", tmp_path) == "large-v3-turbo"
     folder = tmp_path / "my-model"
     folder.mkdir()
@@ -51,13 +59,13 @@ def test_model_names_and_folders_are_used_as_they_are(tmp_path, monkeypatch):
 
 
 def test_a_ready_made_ctranslate2_repo_is_not_converted(tmp_path, monkeypatch):
-    monkeypatch.setattr("huggingface_hub.list_repo_files", lambda repo, revision=None: ["config.json", "model.bin"])
+    fake_hub(monkeypatch, lambda repo, revision=None: ["config.json", "model.bin"])
     monkeypatch.setattr(stt_mod, "convert_to_ct2", lambda *a: pytest.fail("must not convert"))
     assert resolve_model("Systran/faster-whisper-small", tmp_path) == "Systran/faster-whisper-small"
 
 
 def test_a_transformers_fine_tune_is_converted_once(tmp_path, monkeypatch):
-    monkeypatch.setattr("huggingface_hub.list_repo_files",
+    fake_hub(monkeypatch,
                         lambda repo, revision=None: ["config.json", "model.safetensors", "flax_model.msgpack"])
     converted = []
 
@@ -86,6 +94,7 @@ class FakeModel:
 
     def transcribe(self, audio, language=None, **_):
         self.calls.append(language)
+        self.audio = audio
         return iter([SimpleNamespace(text=f" {self.name}")]), SimpleNamespace(language=language or "en",
                                                                              all_language_probs=[])
 
@@ -112,6 +121,19 @@ def test_each_language_is_transcribed_by_its_own_model(monkeypatch):
     assert stt._run(pcm, "hi").text == "large-v3-turbo"  # no model of its own here
     assert stt._run(pcm, "te").text == "org/telugu"
     assert opened == ["org/telugu", "large-v3-turbo"]  # each loaded once
+
+
+def test_only_the_speech_reaches_the_model_not_the_silence_around_it(monkeypatch):
+    stt, _ = fake_stt(monkeypatch)
+    rate = 16000
+    t = np.arange(rate) / rate
+    speech = (np.sin(2 * np.pi * 200 * t) * 8000).astype(np.int16).tobytes()
+    silence = b"\x00\x00" * rate
+    stt._run(silence + speech + silence * 2, "te")
+    heard = stt._extra["org/telugu"].audio
+    assert 1.0 <= len(heard) / rate <= 1.6  # the second of speech and a little padding
+    stt._run(silence, "te")  # nothing but silence: passed on as it is, not dropped here
+    assert len(stt._extra["org/telugu"].audio) == rate
 
 
 def test_a_model_that_cannot_load_falls_back_to_the_main_one(monkeypatch, caplog):
