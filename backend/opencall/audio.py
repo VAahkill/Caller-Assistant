@@ -93,21 +93,51 @@ def decode_audio(data: bytes) -> tuple[bytes, int]:
     """Mono PCM16 and rate from WAV, or from any format ffmpeg reads (the app
     records AAC/M4A, which is what phones produce natively)."""
     if data[:4] == b"RIFF":
-        return read_wav(data)
+        try:
+            return read_wav(data)
+        except (ValueError, wave.Error, EOFError):
+            pass  # float or 24-bit WAV: ffmpeg reads those too
     import shutil
     import subprocess
+    import tempfile
 
     if not shutil.which("ffmpeg"):
         raise ValueError("Install ffmpeg on the server to accept phone recordings (m4a).")
-    proc = subprocess.run(
-        ["ffmpeg", "-loglevel", "error", "-i", "pipe:0", "-ac", "1", "-ar", str(RATE), "-f", "s16le", "pipe:1"],
-        input=data,
-        capture_output=True,
-        timeout=60,
-    )
+    # From a file, not a pipe: an M4A whose index comes last can't be read from a pipe,
+    # and ffmpeg then "succeeds" with no audio at all.
+    with tempfile.NamedTemporaryFile(suffix=".audio") as f:
+        f.write(data)
+        f.flush()
+        proc = subprocess.run(
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", f.name, "-ac", "1", "-ar", str(RATE), "-f", "s16le",
+             "pipe:1"],
+            capture_output=True,
+            timeout=60,
+        )
     if proc.returncode != 0:
         raise ValueError("Could not read that audio file.")
+    if not proc.stdout:
+        raise ValueError("That recording has no audio in it.")
     return proc.stdout, RATE
+
+
+def trim_silence(pcm: bytes, rate: int = RATE, pad_ms: int = 250) -> bytes:
+    """Cuts the silence before and after the speech in a recording. Returns b""
+    when there is no speech at all. Quiet speech counts: the threshold follows the
+    loudest part of the recording, not a fixed level."""
+    x = pcm16_to_float(pcm)
+    n = rate * FRAME_MS // 1000
+    if len(x) < n:
+        return b""
+    frames_ = x[: len(x) - len(x) % n].reshape(-1, n)
+    db = 20 * np.log10(np.sqrt(np.mean(frames_ * frames_, axis=1)) + 1e-9)
+    voiced = np.flatnonzero(db > max(-50.0, float(db.max()) - 35.0))
+    if not len(voiced) or db.max() < -50.0:
+        return b""
+    pad = pad_ms // FRAME_MS
+    start = max(0, int(voiced[0]) - pad) * n
+    end = min(len(frames_), int(voiced[-1]) + 1 + pad) * n
+    return pcm[start * 2 : end * 2]
 
 
 class StereoRecorder:

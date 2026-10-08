@@ -17,7 +17,9 @@ dependencies = [
 [project.optional-dependencies]
 # Local speech stack. Install what your hardware can run.
 stt = ["faster-whisper>=1.0"]
-vad = ["silero-vad>=5.1"]
+# Silero voice detection (the default; without it a simple energy detector is used).
+# onnxruntime runs it about 5x cheaper per frame than TorchScript.
+vad = ["silero-vad>=5.1", "onnxruntime>=1.17"]
 tts = ["kokoro>=0.9", "soundfile>=0.12"]
 # Telugu, Tamil and other Indian-language voices (Meta MMS, runs on a CPU).
 indic = ["transformers>=4.40", "torch>=2.1", "num2words>=0.5.13"]

@@ -1,16 +1,22 @@
 """Voice activity detection: decides when the caller starts and stops talking.
 
-``EnergyVAD`` needs nothing but numpy and is fine on clean phone audio.
-``SileroVAD`` is far better on noisy lines (traffic, scooters) and runs on CPU.
+``SileroVAD`` (the default) is far better on noisy lines (traffic, scooters) and
+on quiet speech, and runs on a CPU. ``EnergyVAD`` needs nothing but numpy; it is
+used when Silero isn't installed.
 """
 
 from __future__ import annotations
 
+import copy
+import logging
+import threading
 from typing import Protocol
 
 import numpy as np
 
 from ..audio import FRAME_MS, pcm16_to_float
+
+log = logging.getLogger("opencall.vad")
 
 
 class VAD(Protocol):
@@ -32,13 +38,42 @@ class EnergyVAD:
         return speech
 
 
+_silero_model = None
+_silero_lock = threading.Lock()
+
+
+def _load_silero():
+    """Loads the Silero model once; every call gets its own copy of the state."""
+    global _silero_model
+    with _silero_lock:
+        if _silero_model is None:
+            import torch
+
+            threads = torch.get_num_threads()
+            from silero_vad import load_silero_vad
+
+            # Importing silero_vad sets torch to one thread for the whole process,
+            # which would slow every other model (the voices) down.
+            torch.set_num_threads(threads)
+            try:
+                import onnxruntime  # noqa: F401  (about 5x cheaper per frame than TorchScript)
+
+                _silero_model = load_silero_vad(onnx=True)
+            except ImportError:
+                _silero_model = load_silero_vad()
+        return _silero_model
+
+
 class SileroVAD:
     def __init__(self, threshold: float = 0.5):
-        from silero_vad import load_silero_vad
         import torch
 
         self._torch = torch
-        self.model = load_silero_vad()
+        shared = _load_silero()
+        # The ONNX wrapper keeps its state in plain attributes (a shallow copy shares
+        # the loaded session); the TorchScript model keeps it inside, so it is deep-copied.
+        self.model = copy.deepcopy(shared) if isinstance(shared, torch.nn.Module) else copy.copy(shared)
+        self.model.reset_states()
         self.threshold = threshold
         self._buf = np.zeros(0, dtype=np.float32)
         self._last = False
@@ -53,9 +88,20 @@ class SileroVAD:
         return self._last
 
 
+_warned: set[str] = set()
+
+
 def make_vad(kind: str) -> VAD:
     if kind == "silero":
-        return SileroVAD()
+        try:
+            return SileroVAD()
+        except ImportError as e:
+            reason = f"it isn't installed ({e.name}); install the vad extra"
+        except Exception as e:  # a broken install must not stop calls being answered
+            reason = f"it failed to load ({e.__class__.__name__}: {e})"
+        if reason not in _warned:
+            _warned.add(reason)
+            log.warning("Silero voice detection is off because %s. Using the simple energy detector.", reason)
     return EnergyVAD()
 
 

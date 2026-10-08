@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     # Languages your callers speak, e.g. "en,hi,te". Empty means any language.
     caller_languages: str = ""
 
-    vad_provider: str = "energy"  # energy | silero
+    vad_provider: str = "silero"  # silero (needs the vad extra) | energy
     end_of_turn_silence_ms: int = 650
     barge_in_ms: int = 300
 
