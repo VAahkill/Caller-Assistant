@@ -59,7 +59,8 @@
     "lint": "expo lint",
     "test": "jest",
     "check": "tsc --noEmit && expo lint && jest",
-    "screenshots": "node scripts/screenshots.mjs"
+    "screenshots": "node scripts/screenshots.mjs",
+    "icons": "node scripts/make-icons.mjs"
   },
   "private": true,
   "jest": {

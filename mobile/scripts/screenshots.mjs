@@ -22,9 +22,10 @@
 import { spawnSync } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { createRequire } from 'node:module';
 import { dirname, extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { loadPlaywright } from './playwright.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = join(ROOT, 'dist-web');
@@ -97,17 +98,6 @@ function serve() {
     createReadStream(file).pipe(res);
   });
   return new Promise((resolve) => server.listen(0, '127.0.0.1', () => resolve(server)));
-}
-
-function loadPlaywright() {
-  const dir = process.env.PLAYWRIGHT_MODULE ?? '/opt/node-tools/node_modules/playwright';
-  if (!process.env.PLAYWRIGHT_BROWSERS_PATH && existsSync('/opt/pw-browsers')) process.env.PLAYWRIGHT_BROWSERS_PATH = '/opt/pw-browsers';
-  const require = createRequire(import.meta.url);
-  try {
-    return require(existsSync(dir) ? dir : 'playwright');
-  } catch (e) {
-    throw new Error(`Playwright not found. Set PLAYWRIGHT_MODULE to its folder. (${e.message})`);
-  }
 }
 
 /** Scrolls the page's main scroll view one screenful; false at the bottom. */
