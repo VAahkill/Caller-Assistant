@@ -112,21 +112,45 @@ people who already have a Twilio account. It is never required and is off unless
 
 ## Try it without any phone line
 
-The server has a simulator websocket. With the server running:
+The server has a simulator websocket, `/ws/simulate`. The app's practice call uses
+it. With the server running (`pip install websockets` first):
 
 ```bash
 python - <<'PY'
 import asyncio, json, websockets
 async def main():
-    async with websockets.connect("ws://localhost:8000/ws/simulate?token=change-me&number=9876543210") as ws:
-        await ws.send(json.dumps({"text": "Hi, I have a Swiggy order, where do I come?", "lang": "en"}))
-        audio = 0
-        async for frame in ws:      # the assistant's voice as 16 kHz PCM16 frames
-            audio += len(frame)
-            print(f"received {audio / 32000:.1f}s of speech", end="\r")
+    url = "ws://localhost:8000/ws/simulate?token=change-me&number=9876543210&wav=1"
+    async with websockets.connect(url) as ws:
+        await ws.send(json.dumps({"text": "Hi, I have a Swiggy order for you. Where should I come?"}))
+        async for msg in ws:
+            if isinstance(msg, bytes):  # the assistant's voice, one WAV file per sentence
+                print(f"  (speech, {len(msg) / 32000:.1f} s)")
+                continue
+            ev = json.loads(msg)
+            if ev["event"] == "transcript":
+                print(f'{ev["line"]["speaker"]}: {ev["line"]["text"]}')
+            elif ev["event"] in ("ack", "error", "assistant_status", "turn_error"):
+                print("  ", ev)
 asyncio.run(main())
 PY
 ```
+
+What you can send:
+
+| Message | What it does |
+|---|---|
+| `{"text": "...", "lang": "te"}` | The caller says this (`lang` is optional; the script or the `lang=` in the URL is used otherwise) |
+| `{"audio_b64": "<base64 of any audio file>", "lang": "te"}` | A finished recording. The silence around it is cut and it is answered as one utterance |
+| binary 16 kHz PCM16 frames | A live microphone stream, cut into turns by the voice detector |
+| `{"action": "say", "text": "...", "lang": "en"}` / `{"action": "say_audio", "audio_b64": "..."}` | You speak to the caller yourself |
+| `{"hangup": true}` | Ends the call |
+
+Every message gets an `ack` or an `error` back, never silence. You also receive
+every event of the call: `transcript`, `transcript_update`, `assistant_status`
+(`listening`, `transcribing`, `thinking`, `speaking`, `idle`, `error`), `call_category`,
+`hold_question`, `sensitive_request`, `turn_error` and `call_ended`. Add `&lang=te` to the
+URL to say which language the caller speaks. Without `wav=1` the speech comes as
+real-time 16 kHz PCM16 frames.
 
 Watch the live transcript appear in the app while it runs.
 

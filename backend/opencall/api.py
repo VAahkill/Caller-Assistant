@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import binascii
 import contextlib
 import hmac
 import json
 import logging
+import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,10 +17,10 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request,
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel
 
-from .audio import decode_audio, resample, to_wav
+from . import __version__
+from .audio import decode_audio, resample, to_wav, trim_silence
 from .config import Settings
 from .engine import Engine
-from .languages import guess_language
 from .maps import coords_from_link, reverse_geocode
 from .models import Contact, Instruction, KnowledgeNote, Location, MessageStatus, Profile, TaskKind, new_id
 from .owner_chat import handle_owner_message
@@ -34,6 +36,30 @@ log = logging.getLogger("opencall.api")
 def _report_warm_up(task: asyncio.Task) -> None:
     if not task.cancelled() and task.exception():
         log.warning("Speech models didn't load: %s", task.exception())
+
+
+_LANG = re.compile(r"^[a-z]{2,3}$")
+
+
+def lang_code(value: object) -> str | None:
+    """A language code from the app ("te", "hi"...), or None for none/invalid ("auto")."""
+    code = str(value or "").strip().lower()
+    return code if _LANG.match(code) else None
+
+
+def decode_recording(b64: str) -> bytes:
+    """A recording sent by the app (base64, any format) as 16 kHz PCM with the
+    silence before and after the speech cut off. Raises ValueError with a message
+    for the user."""
+    try:
+        raw = base64.b64decode(b64, validate=True)
+    except (binascii.Error, ValueError) as e:
+        raise ValueError("The recording wasn't valid base64.") from e
+    pcm, rate = decode_audio(raw)
+    speech = trim_silence(resample(pcm, rate, 16000))
+    if len(speech) < 16000 * 2 // 4:  # under a quarter of a second
+        raise ValueError("I couldn't hear any speech in that recording. Please try again, a little closer to the phone.")
+    return speech
 
 
 class ProfilePatch(BaseModel):
@@ -59,6 +85,11 @@ class PushToken(BaseModel):
 class AnswerIn(BaseModel):
     text: str
     hold_id: str | None = None
+
+
+class SayIn(BaseModel):
+    text: str
+    lang: str | None = None
 
 
 class ReplyIn(BaseModel):
@@ -96,18 +127,20 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         if start_gateways:
-            warm = asyncio.create_task(asyncio.to_thread(engine.warm_up))
+            warm = asyncio.create_task(engine.warm_up_all())
             warm.add_done_callback(_report_warm_up)
         if start_gateways and settings.asterisk_enabled:
             await asterisk.start()
         if start_gateways and bluetooth:
             await bluetooth.start()
         yield
+        if start_gateways and not warm.done():
+            warm.cancel()
         await engine.shutdown()
         if start_gateways and settings.asterisk_enabled:
             await asterisk.stop()
 
-    app = FastAPI(title="OpenCall Receptionist", version="0.1.0", lifespan=lifespan)
+    app = FastAPI(title="OpenCall Receptionist", version=__version__, lifespan=lifespan)
     app.state.engine = engine
 
     def auth(request: Request) -> None:
@@ -125,7 +158,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     # ------------------------------------------------------------ health
     @app.get("/health")
     async def health():
-        return {"ok": True, "dialer": engine.dialer.name, "active_calls": len(engine.sessions)}
+        return {"ok": True, "version": __version__, "dialer": engine.dialer.name,
+                "active_calls": len(engine.sessions), "ready": dict(engine.ready), "llm_model": settings.llm_model}
 
     # ------------------------------------------------------------ profile & settings
     @app.get("/profile", dependencies=A)
@@ -229,6 +263,26 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
         await s.say_now(body.text)
         return {"ok": True, "mode": "said"}
 
+    @app.post("/calls/{call_id}/say", dependencies=A)
+    async def say(call_id: str, body: SayIn):
+        """The user's own words for the caller, said right away."""
+        if not await live(call_id).owner_say(body.text, lang_code(body.lang)):
+            raise HTTPException(422, "Nothing was said: the text was empty or contained a code-like number.")
+        return {"ok": True}
+
+    @app.post("/calls/{call_id}/say-audio", dependencies=A)
+    async def say_audio(call_id: str, audio: UploadFile = File(...), lang: str = Form("")):
+        """The user's spoken reply: transcribed, then said to the caller."""
+        s = live(call_id)
+        try:
+            pcm, rate = decode_audio(await audio.read())
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
+        heard = await s.owner_say_audio(resample(pcm, rate, 16000), lang_code(lang))
+        if not heard:
+            raise HTTPException(422, "I couldn't hear anything.")
+        return {"ok": True, "heard": heard}
+
     @app.post("/calls/{call_id}/end", dependencies=A)
     async def end_call(call_id: str):
         await live(call_id).end()
@@ -310,6 +364,29 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
         return {"ok": True}
 
     # ------------------------------------------------------------ live events for the app
+    async def owner_action(session, msg: dict):
+        """The user acting in a live call from the app: answer a hold question, or say
+        something to the caller (typed, or recorded). Checks the request first and
+        returns (problem for the user, None) or (None, the work to run)."""
+        action = msg.get("action")
+        lang = lang_code(msg.get("lang"))
+        if action in ("answer", "say"):
+            text = str(msg.get("text") or "").strip()
+            if not text:
+                return "The message was empty.", None
+            if not session.can_say(text):
+                return "Not said: it contains a code-like number, which the assistant never reads out.", None
+            if action == "answer":
+                return None, session.owner_answer(msg.get("hold_id"), text, lang)
+            return None, session.owner_say(text, lang)
+        if action == "say_audio":
+            try:
+                pcm = await asyncio.to_thread(decode_recording, str(msg.get("audio_b64") or ""))
+            except ValueError as e:
+                return str(e), None
+            return None, session.owner_say_audio(pcm, lang)
+        return f"Unknown action {action!r}. Use answer, say or say_audio.", None
+
     @app.websocket("/ws/events")
     async def events_ws(ws: WebSocket, token: str = Query("")):
         if not ws_ok(token):
@@ -328,13 +405,26 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
         out = asyncio.create_task(pump_out())
         try:
             while True:
-                msg = await ws.receive_json()
-                if msg.get("action") == "answer" and msg.get("call_id") in engine.sessions:
-                    s = engine.sessions[msg["call_id"]]
-                    if not await s.answer_hold(msg.get("hold_id"), msg.get("text", "")):
-                        await s.say_now(msg.get("text", ""))
-        except (WebSocketDisconnect, RuntimeError, json.JSONDecodeError):
-            pass
+                try:
+                    msg = json.loads(await ws.receive_text())
+                except json.JSONDecodeError:
+                    await ws.send_json({"event": "error", "detail": "Messages must be JSON."})
+                    continue
+                if not isinstance(msg, dict) or "action" not in msg:
+                    await ws.send_json({"event": "error", "detail": "Expected an action, e.g. {\"action\": \"say\", ...}."})
+                    continue
+                session = engine.sessions.get(str(msg.get("call_id") or ""))
+                if not session:
+                    await ws.send_json({"event": "error", "call_id": msg.get("call_id"),
+                                        "detail": "That call is no longer live."})
+                    continue
+                problem, work = await owner_action(session, msg)
+                if problem:
+                    await ws.send_json({"event": "error", "call_id": session.record.id, "detail": problem})
+                else:
+                    session.spawn(work, f"user {msg['action']}")
+        except (WebSocketDisconnect, RuntimeError):
+            pass  # the app went away (or closed mid-send); nothing to clean up but the queue
         finally:
             out.cancel()
             engine.bus.unsubscribe(q)
@@ -342,11 +432,22 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     # ------------------------------------------------------------ simulator (no phone needed)
     @app.websocket("/ws/simulate")
     async def simulate(ws: WebSocket, token: str = Query(""), number: str = Query("+919800000000"),
-                       wav: bool = Query(False)):
-        """Pretend to be a caller: send 16 kHz PCM16 audio frames, {"text": "..."}
-        or {"audio_b64": "<a recording in any format ffmpeg reads>"}; receive the
-        assistant's audio as binary. With ``wav=1`` (the app's practice call) each
-        sentence arrives at once as a WAV file instead of as real-time frames."""
+                       wav: bool = Query(False), lang: str = Query("")):
+        """Pretend to be a caller (the app's practice call).
+
+        Send binary 16 kHz PCM16 frames (a live stream), ``{"text": ..., "lang"?}``,
+        ``{"audio_b64": <a finished recording in any format ffmpeg reads>, "lang"?}``
+        (answered as one utterance), the user's own ``{"action": "say"|"say_audio"|
+        "answer", ...}``, or ``{"hangup": true}``. ``lang`` (here or per message) is
+        the caller's language, if known.
+
+        Receive ``started`` or ``rejected``; ``ack`` for every accepted message and
+        ``error`` (never silence) for anything that can't be used; every event of
+        this call (transcript, assistant_status, call_category, hold_question,
+        turn_error, call_ended...); and the assistant's speech as binary audio. With
+        ``wav=1`` each sentence arrives at once as a WAV file instead of as
+        real-time frames.
+        """
         if not ws_ok(token):
             await ws.close(code=4401)
             return
@@ -356,6 +457,21 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
             await ws.send_json({"event": "rejected", "reason": decision.reason})
             await ws.close()
             return
+
+        send_lock = asyncio.Lock()
+        gone = asyncio.Event()
+
+        async def send(data: dict | bytes) -> None:
+            if gone.is_set():
+                return
+            try:
+                async with send_lock:
+                    if isinstance(data, bytes):
+                        await ws.send_bytes(data)
+                    else:
+                        await ws.send_json(data)
+            except (WebSocketDisconnect, RuntimeError):
+                gone.set()  # the app closed the socket; the call is hung up below
 
         class SimBridge(QueueBridge):
             def __init__(self, call_id: str, number: str):
@@ -367,8 +483,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
             async def send_audio(self, frame: bytes) -> None:
                 if not wav:
-                    with contextlib.suppress(Exception):
-                        await ws.send_bytes(frame)
+                    await send(frame)
                     return
                 self._pending += frame
                 if self._timer:
@@ -383,12 +498,23 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
             async def flush(self) -> None:
                 pcm, self._pending = bytes(self._pending), bytearray()
                 if pcm:
-                    with contextlib.suppress(Exception):
-                        await ws.send_bytes(to_wav(pcm))
+                    await send(to_wav(pcm))
 
         bridge = SimBridge(new_id(), number)
-        call = asyncio.create_task(engine.handle_call(bridge))
-        await ws.send_json({"event": "started", "call_id": bridge.call_id})
+        events = engine.bus.subscribe()  # before the call starts, so no event is missed
+        session = engine.open_session(bridge)
+        session.language_hint = lang_code(lang)
+        call = asyncio.create_task(engine.run_session(session))
+        await send({"event": "started", "call_id": bridge.call_id})
+        done = {"event": "_simulate_done"}
+
+        async def forward():
+            while True:
+                ev = await events.get()
+                if ev is done:
+                    return
+                if ev.get("call_id") == bridge.call_id:
+                    await send(ev)
 
         async def read_client():
             while True:
@@ -397,37 +523,71 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
                     return
                 if msg.get("bytes"):
                     bridge.feed(msg["bytes"])
-                elif msg.get("text"):
+                    continue
+                if msg.get("text") is None:
+                    continue
+                try:
                     data = json.loads(msg["text"])
-                    if data.get("hangup"):
-                        return
-                    if data.get("audio_b64"):
-                        try:
-                            pcm, rate = await asyncio.to_thread(decode_audio, base64.b64decode(data["audio_b64"]))
-                        except ValueError as e:
-                            await ws.send_json({"event": "error", "detail": str(e)})
-                            continue
-                        # Trailing silence lets the turn detector hear that they've finished.
-                        bridge.feed(resample(pcm, rate, 16000) + b"\x00\x00" * 16000)
+                except json.JSONDecodeError:
+                    data = None
+                if not isinstance(data, dict):
+                    await send({"event": "error", "detail": 'Messages must be JSON objects, e.g. {"text": "Hello"}.'})
+                    continue
+                if data.get("hangup"):
+                    return
+                if session.closed.is_set():
+                    await send({"event": "error", "detail": "The call has ended."})
+                    continue
+                said_lang = lang_code(data.get("lang"))
+                if data.get("action"):
+                    problem, work = await owner_action(session, data)
+                    if problem:
+                        await send({"event": "error", "detail": problem})
+                    else:
+                        await send({"event": "ack", "kind": str(data["action"])})
+                        session.spawn(work, f"user {data['action']}")
+                elif "audio_b64" in data:
+                    try:
+                        pcm = await asyncio.to_thread(decode_recording, str(data["audio_b64"] or ""))
+                    except ValueError as e:
+                        await send({"event": "error", "detail": str(e)})
                         continue
-                    session = engine.sessions.get(bridge.call_id)
-                    if session and data.get("text"):
-                        lang = data.get("lang") or guess_language(data["text"])
-                        asyncio.create_task(session.handle_text(data["text"], lang))
+                    await send({"event": "ack", "kind": "audio", "seconds": round(len(pcm) / 32000, 1)})
+                    session.submit_recording(pcm, said_lang)
+                elif "text" in data:
+                    text = str(data["text"] or "").strip()
+                    if not text:
+                        await send({"event": "error", "detail": "The message was empty."})
+                        continue
+                    await send({"event": "ack", "kind": "text"})
+                    session.submit_text(text, said_lang)
+                else:
+                    await send({"event": "error",
+                                "detail": 'Send {"text": ...}, {"audio_b64": ...} or {"hangup": true}.'})
 
+        forwarder = asyncio.create_task(forward())
         reader = asyncio.create_task(read_client())
         hung_up = asyncio.create_task(bridge.hung_up.wait())
         try:
             await asyncio.wait({reader, hung_up}, return_when=asyncio.FIRST_COMPLETED)
+            if reader.done() and not reader.cancelled() and reader.exception():
+                log.error("Practice call socket failed", exc_info=reader.exception())
         finally:
             for t in (reader, hung_up):
                 t.cancel()
             await bridge.hangup()
-            await call
+            try:
+                await call
+            except Exception:
+                log.exception("Practice call %s ended with an error", bridge.call_id)
             if wav:
                 await bridge.flush()
-            with contextlib.suppress(Exception):
-                await ws.close()
+            events.put_nowait(done)  # everything published before this still goes out
+            await forwarder
+            engine.bus.unsubscribe(events)
+            if not gone.is_set():
+                with contextlib.suppress(RuntimeError):  # already closed by the client
+                    await ws.close()
 
     # ------------------------------------------------------------ telephony webhooks
     @app.get("/telephony/asterisk/screen", response_class=PlainTextResponse)
