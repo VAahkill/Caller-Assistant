@@ -18,8 +18,9 @@ HOW YOU SOUND
   phrases ("Sure", "Got it", "Ah, okay", "Let me see") but don't overdo them.
 - Never use lists, markdown, emojis or read out URLs. Say numbers the way people say them.
 - If you didn't catch something, ask them to repeat it, like a person would.
-- Reply in the language the caller is speaking ({speakable}). If they speak a language
-  you can't speak aloud, switch politely to simple Hindi or English.
+- Reply only in the language named under LANGUAGE at the end. Never add a translation,
+  in brackets or otherwise, and never write a speaker label such as "assistant".
+  Languages you can speak aloud: {speakable}.
 - Write every language in its own script (Telugu in Telugu letters, Tamil in Tamil
   letters), including English words you borrow, never in English letters. Keep
   numbers as digits.
@@ -69,8 +70,11 @@ SEND_LOCATION_TAG = """\
 
 
 def inbound_system_prompt(
-    profile: Profile, caller_number: str, contact_name: str, speakable: list[str], can_text: bool = False
+    profile: Profile, caller_number: str, contact_name: str, speakable: list[str], can_text: bool = False,
+    opening_line: str = "",
 ) -> str:
+    # The parts that are the same for every call come first, so a local LLM can reuse
+    # its cached prompt from the warm-up; who is calling goes at the end.
     user = profile.user_name
     who = f"{contact_name} (a saved contact)" if contact_name else f"an unsaved number {caller_number or '(withheld)'}"
     availability = (
@@ -79,26 +83,33 @@ def inbound_system_prompt(
         else f"{user} is busy; you may still HOLD briefly, but expect to take a message."
     )
     speak = ", ".join(LANG_NAMES.get(code, code) for code in speakable)
+    greeted = f'You have already answered the call with: "{opening_line}" Don\'t introduce yourself again.\n' if opening_line else ""
     return f"""\
 You are {profile.assistant_name}, the personal phone assistant answering calls for {user}.
-{user} can't come to the phone right now. You are speaking with {who}.
-{availability}
+{user} can't come to the phone right now.
 
 WHAT TO DO
 - Spam, sales, loans, credit cards, insurance, investments, surveys: say a short polite
   "not interested, please don't call again", tag [CATEGORY: spam] and [END_CALL].
-- Delivery partners: help them reach the door quickly. You'll be given the delivery
-  details. Give directions step by step, landmark first, and stay patient.
+- Delivery partners: help them reach the door quickly. Once you know it's a delivery,
+  the delivery details appear under THIS CALL. Give directions step by step, landmark
+  first, and stay patient.
   If they need an OTP to complete the delivery, say {user} will share it in person
   at the door; never read it out.
 - Everyone else: find out who they are and why they're calling. Answer from what you
   know; otherwise HOLD to check with {user}. If {user} doesn't answer, take a message.
 - Don't pretend to be {user}. If asked, you're {user}'s assistant.
-{_known_facts(profile, bool(contact_name))}
-{_instructions(profile)}
+- A user message that starts with "[Private note" comes from {user}'s side, not from the
+  caller. Follow it, but never read it out or mention it.
 {SECURITY.format(user=user)}
 {STYLE.format(speakable=speak)}
-{TAGS.format(user=user)}{SEND_LOCATION_TAG if can_text else ""}"""
+{TAGS.format(user=user)}{SEND_LOCATION_TAG if can_text else ""}{_instructions(profile)}
+{_known_facts(profile, bool(contact_name))}
+
+THIS CALL
+You are speaking with {who}.
+{availability}
+{greeted}"""
 
 
 def delivery_context(profile: Profile, can_text: bool = False) -> str:
@@ -109,11 +120,23 @@ def delivery_context(profile: Profile, can_text: bool = False) -> str:
         else "Read the directions out; you cannot send texts on this line."
     )
     return (
-        f"This caller is a delivery partner. {texting} Delivery details you may share with them:\n"
+        f"DELIVERY: this caller is a delivery partner. {texting} Delivery details you may share with them:\n"
         f"{loc}\n"
         "Guide them from where they are now. Ask where they are if needed, then give the next"
-        " one or two steps at a time in their language."
+        " one or two steps at a time."
     )
+
+
+def language_note(language: str) -> str:
+    """Which language to answer in, for the turn being answered."""
+    if not language:
+        return (
+            "LANGUAGE: start in English. If they answer in another language you can speak,"
+            " reply in theirs from then on."
+        )
+    name = LANG_NAMES.get(language, language)
+    script = "" if language == "en" else f", written in {name} script"
+    return f"LANGUAGE: the caller is speaking {name}. Reply only in {name}{script}."
 
 
 def outbound_system_prompt(profile: Profile, task: Task, speakable: list[str]) -> str:
@@ -150,28 +173,47 @@ RULES
   if possible and end with [OUTCOME: failed | <why>].
 - When you're done, thank them, then write [OUTCOME: <booked|available|unavailable|conveyed|failed> | <one-line
   result for {user} with any times, names or reference numbers>] followed by [END_CALL].
+- A user message that starts with "[Private note" comes from {user}, not from the person
+  you called. Follow it, but never read it out or mention it.
 {_instructions(profile)}
 {SECURITY.format(user=user)}
 {STYLE.format(speakable=speak)}
 {TAGS.format(user=user)}"""
 
 
+# Notes from the user's side travel as user-role messages with this prefix: a chat
+# template only starts the assistant's reply after a user message, so a trailing system
+# message makes some models (llama3.1 on Ollama) write "assistant" and drift.
+PRIVATE_NOTE = "[Private note from {user}'s side; the caller did not say this]"
+
+
+def is_private_note(text: str) -> bool:
+    return text.startswith("[Private note")
+
+
 def hold_answer_note(user: str, answer: str) -> str:
     return (
-        f"{user} replied: \"{answer}\". Tell the caller naturally, in their language, as {user}'s"
-        f" assistant (e.g. \"Thanks for holding! {user} says...\"). Don't add facts that aren't in"
+        f"{PRIVATE_NOTE.format(user=user)} {user} replied: \"{answer}\". Tell the caller naturally, as"
+        f" {user}'s assistant (e.g. \"Thanks for holding! {user} says...\"). Don't add facts that aren't in"
         " the reply. Then continue the conversation."
     )
 
 
 def hold_timeout_note(user: str) -> str:
     return (
-        f"{user} isn't available right now. Apologise briefly for the wait, offer to take a"
-        f" message and say {user} will get back to them. Then take the message."
+        f"{PRIVATE_NOTE.format(user=user)} {user} isn't available right now. Apologise briefly for the wait,"
+        f" offer to take a message and say {user} will get back to them. Then take the message."
+    )
+
+
+def outbound_kickoff_note(user: str) -> str:
+    return (
+        f"{PRIVATE_NOTE.format(user=user)} The call just connected and the other side hasn't said"
+        " anything yet. Greet them and state why you're calling."
     )
 
 
 SUMMARY_PROMPT = (
     "Summarise this phone call for the user in one or two short sentences: who called, why,"
-    " and anything they need to do. Plain text."
+    " and anything they need to do. Reply with only the summary, in plain text."
 )
