@@ -4,6 +4,7 @@ since they all speak the OpenAI chat-completions protocol."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import AsyncIterator, Callable
 from typing import Protocol
@@ -60,10 +61,14 @@ class OpenAICompatLLM:
         deadline = loop.time() + self.first_token_timeout
         got_text = False
         try:
-            async with self._client.stream(
-                "POST", f"{self.base_url}/chat/completions", json=self._payload(messages, stream=True),
-                headers=self._headers,
-            ) as resp:
+            async with contextlib.AsyncExitStack() as stack:
+                request = self._client.stream("POST", f"{self.base_url}/chat/completions",
+                                              json=self._payload(messages, stream=True), headers=self._headers)
+                try:
+                    # Some servers send nothing, not even headers, until the first word.
+                    resp = await asyncio.wait_for(stack.enter_async_context(request), max(0.0, deadline - loop.time()))
+                except asyncio.TimeoutError:
+                    raise LLMTimeout(self._timeout_text(False)) from None
                 if resp.status_code >= 400:
                     body = (await resp.aread()).decode(errors="replace")[:300]
                     raise LLMError(f"The language model at {self.base_url} answered HTTP {resp.status_code}: {body}")

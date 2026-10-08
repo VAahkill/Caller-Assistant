@@ -57,6 +57,18 @@ async def test_no_first_word_in_time_is_a_timeout():
         await collect(llm)
 
 
+async def test_a_server_that_holds_back_its_headers_times_out_on_the_first_word_limit():
+    async def handler(request):
+        await asyncio.sleep(2.0)  # sends nothing until its first word, like llama.cpp
+        return streaming(sse("Hello."))
+
+    llm = client(handler, first_token_timeout=0.2, idle_timeout=5)
+    start = asyncio.get_running_loop().time()
+    with pytest.raises(LLMTimeout, match="within 0.2 s"):
+        await collect(llm)
+    assert asyncio.get_running_loop().time() - start < 1.0
+
+
 async def test_a_stalled_stream_is_a_timeout():
     llm = client(lambda r: streaming(sse("One", " two"), gap=1.0), first_token_timeout=5, idle_timeout=0.2)
     with pytest.raises(LLMTimeout, match="stopped answering"):
