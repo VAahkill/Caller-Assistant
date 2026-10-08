@@ -100,8 +100,19 @@ class CallStatus(str, Enum):
 
 
 class TranscriptLine(BaseModel):
+    """One line of a call. ``text`` is what was said, in ``lang``. ``translation`` is
+    the line in the user's own language (it may arrive later, as a transcript_update
+    event) and ``english`` the English the assistant reasoned with. For the user's own
+    interjections (speaker "user") ``text`` is what was said to the caller and
+    ``translation`` what the user wrote."""
+
+    id: str = Field(default_factory=new_id)
     speaker: Literal["caller", "assistant", "user", "system"]
     text: str
+    lang: str = ""
+    translation: str = ""
+    translation_lang: str = ""
+    english: str = ""
     at: float = Field(default_factory=now)
     kind: Literal["speech", "hold_question", "alert", "note"] = "speech"
 

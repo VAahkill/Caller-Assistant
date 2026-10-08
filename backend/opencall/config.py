@@ -34,6 +34,10 @@ class Settings(BaseSettings):
     llm_first_token_timeout_s: float = 180.0
     llm_connect_timeout_s: float = 5.0
     llm_idle_timeout_s: float = 30.0  # max pause once the reply is streaming
+    # If the reply hasn't started after this many seconds, say "One moment, please"
+    # (and once more after filler_again_s) so the caller isn't left in silence. 0 = off.
+    filler_after_s: float = 2.5
+    filler_again_s: float = 15.0
 
     stt_provider: str = "faster_whisper"  # faster_whisper | none
     whisper_model: str = "large-v3-turbo"

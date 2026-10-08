@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
+import time
+from collections import OrderedDict
 
-from .agent import Conversation
+from .agent import Conversation, opening_line
 from .config import Settings
 from .events import EventBus
 from .models import CallDirection, CallerMessage, CallRecord, CallStatus
 from .providers import build_llm, build_stt, make_vad
-from .providers.llm import LLM
+from .phrases import phrase
+from .providers.llm import LLM, LLMError
 from .providers.stt import STT
 from .providers.tts import TTSRouter
 from .screening import ScreenDecision, find_contact, normalize_number, screen_number
@@ -42,14 +46,122 @@ class Engine:
         self.dialer: Dialer = dialer or NoDialer()
         self.tasks = TaskManager(self)
         self.sessions: dict[str, CallSession] = {}
+        # What is loaded and working, for /health and the app's status screen. mt
+        # (translation) and lid (language identification) are set by those services.
+        self.ready: dict[str, bool] = {"stt": False, "tts": False, "llm": False, "mt": False, "lid": False}
+        self._speech_cache: OrderedDict[tuple[str, str, str], bytes] = OrderedDict()
+        self._speech_lock = threading.Lock()
+        self._background: set[asyncio.Task] = set()
+        self._llm_warming: asyncio.Task | None = None
 
+    # ------------------------------------------------------------ warm-up
     def warm_up(self) -> None:
         """Download and load the speech models now, so the first call doesn't wait for them."""
         load_stt = getattr(self.stt, "warm_up", None)
         if load_stt is not None:
             load_stt()
+        self.ready["stt"] = True
+        vad = self.make_vad()
+        log.info("Voice activity detection: %s", type(vad).__name__)
         self.tts.warm_up(self.store.profile.voice, [lang.strip() for lang in self.settings.indic_preload.split(",")])
+        self._prerender_phrases()
+        self.ready["tts"] = True
         log.info("Speech models loaded, ready for calls.")
+
+    def _prerender_phrases(self) -> None:
+        """The greeting, "one moment" and the apology play instantly from memory."""
+        voice = self.store.profile.voice
+        langs = {"en"} | {lang.strip() for lang in self.settings.indic_preload.split(",") if lang.strip()}
+        supported = self.tts.supported_languages(voice)
+        texts = [(opening_line(self.store.profile), "en")]
+        texts += [(phrase(key, lang), lang) for lang in sorted(langs & supported) for key in ("filler", "fallback")]
+        for text, lang in texts:
+            self._remember((text, voice, lang), self.tts._synth_sync(text, voice, lang))
+
+    async def warm_up_all(self) -> None:
+        """Speech models (in a thread) and the LLM at the same time."""
+        llm = asyncio.create_task(self.warm_up_llm())
+        try:
+            await asyncio.to_thread(self.warm_up)
+        finally:
+            await llm
+
+    async def warm_up_llm(self, retry: bool = True) -> None:
+        """Sends the real call prompt once, so the model is loaded and the server has
+        the prompt cached before the first caller. Retries until the LLM answers (it
+        may still be starting, or the model not pulled yet)."""
+        warm = getattr(self.llm, "warm_up", None)
+        if warm is None:
+            self.ready["llm"] = True
+            return
+        messages = Conversation.inbound(self.store.profile, self.llm, "", "", self._speakable()).warm_up_messages()
+        delay = 15.0
+        while True:
+            started = time.monotonic()
+            try:
+                await warm(messages)
+            except LLMError as e:
+                self.ready["llm"] = False
+                if not retry:
+                    log.warning("LLM warm-up failed: %s", e)
+                    return
+                log.warning("The LLM isn't ready yet: %s Trying again in %.0f s.", e, delay)
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 300.0)
+                continue
+            self.ready["llm"] = True
+            log.info("LLM %s is ready (warm-up took %.1f s).", self.settings.llm_model, time.monotonic() - started)
+            return
+
+    def _start_llm_warm_up(self, retry: bool) -> None:
+        if self._llm_warming and not self._llm_warming.done():
+            return
+        self._llm_warming = self._spawn(self.warm_up_llm(retry=retry))
+
+    def llm_failed(self) -> None:
+        """A call turn couldn't get an answer: report not ready and keep trying."""
+        self.ready["llm"] = False
+        if getattr(self.llm, "warm_up", None) is not None:
+            self._start_llm_warm_up(retry=True)
+
+    def refresh_llm_cache(self) -> None:
+        """After a call summary (a different prompt) put the call prompt back in the
+        LLM server's cache, so the next caller's first reply starts quickly."""
+        if getattr(self.llm, "warm_up", None) is not None:
+            self._start_llm_warm_up(retry=False)
+
+    def _spawn(self, coro) -> asyncio.Task:
+        task = asyncio.get_running_loop().create_task(coro)
+        self._background.add(task)
+        task.add_done_callback(self._background_done)
+        return task
+
+    def _background_done(self, task: asyncio.Task) -> None:
+        self._background.discard(task)
+        if not task.cancelled() and task.exception() is not None:
+            log.error("background task failed", exc_info=task.exception())
+
+    # ------------------------------------------------------------ speech
+    def _remember(self, key: tuple[str, str, str], pcm: bytes) -> None:
+        with self._speech_lock:
+            self._speech_cache[key] = pcm
+            self._speech_cache.move_to_end(key)
+            while len(self._speech_cache) > 64:
+                self._speech_cache.popitem(last=False)
+
+    async def speech(self, text: str, voice: str, lang: str, cache: bool = False) -> bytes:
+        """Synthesised speech; fixed lines (cache=True) are kept in memory."""
+        if not cache:
+            return await self.tts.synthesize(text, voice, lang)
+        key = (text, voice, lang)
+        with self._speech_lock:
+            hit = self._speech_cache.get(key)
+        if hit is not None:
+            return hit
+        pcm = await self.tts.synthesize(text, voice, lang)
+        if pcm:
+            self._remember(key, pcm)
+        return pcm
 
     def make_vad(self):
         return make_vad(self.settings.vad_provider)
@@ -66,8 +178,8 @@ class Engine:
     def _speakable(self) -> list[str]:
         return sorted(self.tts.supported_languages(self.store.profile.voice))
 
-    async def handle_call(self, bridge: CallBridge) -> CallSession:
-        """Run a connected call to completion. Called by every telephony bridge."""
+    def open_session(self, bridge: CallBridge) -> CallSession:
+        """Set up a connected call (registered, not yet running)."""
         profile = self.store.profile
         task = self.tasks.task_for_call(bridge.call_id) if bridge.direction == "outbound" else None
         if task:
@@ -83,13 +195,22 @@ class Engine:
                                         can_text=getattr(bridge, "can_sms", False))
         session = CallSession(self, bridge, rec, conv)
         self.sessions[rec.id] = session
-        if task:
-            await self.tasks.on_connected(task, session)
+        return session
+
+    async def run_session(self, session: CallSession) -> CallSession:
+        """Run a call opened with ``open_session`` to completion."""
+        task = self.store.tasks.get(session.record.task_id) if session.record.task_id else None
         try:
+            if task:
+                await self.tasks.on_connected(task, session)
             await session.run()
         finally:
-            self.sessions.pop(rec.id, None)
+            self.sessions.pop(session.record.id, None)
         return session
+
+    async def handle_call(self, bridge: CallBridge) -> CallSession:
+        """Run a connected call to completion. Called by every telephony bridge."""
+        return await self.run_session(self.open_session(bridge))
 
     async def on_call_finished(self, session: CallSession) -> None:
         rec = session.record
@@ -107,4 +228,6 @@ class Engine:
     async def shutdown(self) -> None:
         for s in list(self.sessions.values()):
             await s.bridge.hangup()
-        await asyncio.sleep(0)
+        for t in list(self._background):
+            t.cancel()
+        await asyncio.gather(*self._background, return_exceptions=True)
