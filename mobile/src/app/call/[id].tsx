@@ -155,6 +155,15 @@ function LiveCall({
         keyboardShouldPersistTaps="handled"
       >
         <CallIntro call={call} compact />
+        {!live.connected || view.stale ? (
+          <Banner
+            tone="warning"
+            icon="cloud-offline-outline"
+            title="Reconnecting to your server"
+            message="The transcript catches up when it's back. Replies you send still go through."
+            testID="reconnecting"
+          />
+        ) : null}
         {lastError ? (
           <Banner
             tone="warning"

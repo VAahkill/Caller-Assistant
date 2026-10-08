@@ -64,6 +64,9 @@ function notifyFor(ev: ServerEvent) {
   }
 }
 
+/** How long after (re)connecting the snapshots of live calls must have arrived. */
+export const SNAPSHOT_GRACE_MS = 3000;
+
 /** Keeps one websocket to the server and turns its events into app state. */
 export function LiveProvider({ children }: { children: ReactNode }) {
   const [data, dispatch] = useReducer(liveReducer, initialLive);
@@ -75,6 +78,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
     let retry: ReturnType<typeof setTimeout> | undefined;
+    let settle: ReturnType<typeof setTimeout> | undefined;
     loadConfig()
       .then(() => {
         const url = wsUrl('/ws/events');
@@ -84,8 +88,11 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         socket.onopen = () => {
           failures.current = 0;
           setConnected(true);
-          // The server sends a snapshot of each live call; start from a clean slate.
+          // The server sends a snapshot of each live call right away. Calls it
+          // doesn't send again have ended while we were away: drop them shortly.
           dispatch({ type: 'reset' });
+          if (settle) clearTimeout(settle);
+          settle = setTimeout(() => dispatch({ type: 'dropStale' }), SNAPSHOT_GRACE_MS);
         };
         socket.onmessage = (m) => {
           const parsed = parseEvent(m.data);
@@ -110,6 +117,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
       if (retry) clearTimeout(retry);
+      if (settle) clearTimeout(settle);
       ws.current?.close();
       ws.current = null;
     };

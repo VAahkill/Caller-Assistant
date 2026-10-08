@@ -136,6 +136,8 @@ export interface CallView {
   languageConfidence: number;
   /** Turn errors and refused owner actions, newest last. */
   errors: { at: number; detail: string }[];
+  /** After a reconnect, until the server's snapshot confirms the call is still live. */
+  stale?: boolean;
 }
 
 export function callView(record: CallRecord): CallView {
@@ -261,7 +263,10 @@ export type LiveAction =
   | { type: 'restoreAlert'; alert: SecurityAlert }
   /** Something changed on the server outside an event (e.g. via the owner chat): reload lists and the profile. */
   | { type: 'invalidate' }
-  | { type: 'reset' };
+  /** A new connection: keep calls on screen as stale until their snapshots arrive. */
+  | { type: 'reset' }
+  /** Some time after reconnecting: drop calls the server didn't send a snapshot for. */
+  | { type: 'dropStale' };
 
 function withCall(state: LiveData, callId: string, ev: AnyEvent, now: number): LiveData {
   const view = state.calls[callId];
@@ -271,8 +276,23 @@ function withCall(state: LiveData, callId: string, ev: AnyEvent, now: number): L
 }
 
 export function liveReducer(state: LiveData, action: LiveAction): LiveData {
-  // A new connection: live calls come again as snapshots. Alerts stay until dismissed.
-  if (action.type === 'reset') return { ...state, calls: {}, questions: [], refreshKey: state.refreshKey + 1 };
+  // A new connection: live calls come again as snapshots. Until then the calls on
+  // screen stay (marked stale) so an open call screen doesn't flicker to "ended";
+  // dropStale removes the ones the server didn't send again. Alerts stay until dismissed.
+  if (action.type === 'reset') {
+    const calls = Object.fromEntries(Object.entries(state.calls).map(([id, v]) => [id, { ...v, stale: true }]));
+    return { ...state, calls, refreshKey: state.refreshKey + 1 };
+  }
+  if (action.type === 'dropStale') {
+    const gone = Object.values(state.calls).filter((v) => v.stale).map((v) => v.record.id);
+    if (!gone.length) return state;
+    return {
+      ...state,
+      calls: Object.fromEntries(Object.entries(state.calls).filter(([id]) => !gone.includes(id))),
+      questions: state.questions.filter((q) => !gone.includes(q.callId)),
+      refreshKey: state.refreshKey + 1,
+    };
+  }
   if (action.type === 'dismissAlert') return { ...state, alerts: state.alerts.filter((a) => a.id !== action.id) };
   if (action.type === 'invalidate') return { ...state, refreshKey: state.refreshKey + 1, profileKey: state.profileKey + 1 };
   if (action.type === 'restoreAlert') {
@@ -285,18 +305,20 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
     case 'call_snapshot':
     case 'call_started': {
       const prev = state.calls[ev.call.id];
-      const view = prev ? reduceCall(prev, ev, now) : callView(ev.call);
-      // A snapshot of a call on hold restores its unanswered questions.
-      const open = ev.call.holds.filter((h) => !h.answer && !state.questions.some((q) => q.holdId === h.id));
+      const view: CallView = { ...(prev ? reduceCall(prev, ev, now) : callView(ev.call)), stale: false };
+      // The snapshot is the truth about holds: keep questions still open in it, add new ones.
+      const openHolds = ev.call.status === 'on_hold' ? ev.call.holds.filter((h) => !h.answer && !h.answered_at) : [];
+      const kept = state.questions.filter((q) => q.callId !== ev.call.id || openHolds.some((h) => h.id === q.holdId));
+      const added = openHolds.filter((h) => !kept.some((q) => q.holdId === h.id));
       const who = ev.call.contact_name || ev.call.number;
       return {
         ...state,
         calls: { ...state.calls, [ev.call.id]: view },
         questions:
-          ev.call.status === 'on_hold' && open.length
+          added.length || kept.length !== state.questions.length
             ? [
-                ...state.questions,
-                ...open.map((h) => ({
+                ...kept,
+                ...added.map((h) => ({
                   callId: ev.call.id,
                   holdId: h.id,
                   question: h.question,

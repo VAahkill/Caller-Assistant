@@ -106,6 +106,19 @@ describe('a live call', () => {
     expect(screen.getByText(english)).toBeTruthy();
   });
 
+  test('losing the connection keeps the call on screen and says it is reconnecting', async () => {
+    await renderScreen(<CallScreen />);
+    expect(await screen.findByTestId('live-status-title')).toHaveTextContent('On hold, waiting for you');
+    expect(screen.queryByTestId('reconnecting')).toBeNull();
+    await act(async () => {
+      for (const s of server.liveSockets) (s as unknown as { close: (code: number) => void }).close(1006);
+      await new Promise((r) => setTimeout(r, 5));
+    });
+    expect(screen.getByTestId('reconnecting')).toBeTruthy();
+    expect(screen.getByTestId('live-status')).toBeTruthy();
+    expect(screen.queryByText('The call has ended')).toBeNull();
+  });
+
   test('ending the call asks first, then tells the server', async () => {
     await renderScreen(<CallScreen />);
     await fireEvent.press(await screen.findByRole('button', { name: 'End the call' }));

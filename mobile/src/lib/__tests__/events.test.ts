@@ -153,12 +153,30 @@ describe('liveReducer', () => {
     expect(s).toBe(withLive);
   });
 
-  test('reset (reconnect) drops live calls but keeps alerts', () => {
+  test('reset (reconnect) then dropStale drops calls the server no longer reports, but keeps alerts', () => {
     const a = apply(withLive, ev({ event: 'sensitive_request', call_id: LIVE_CALL_ID, who, kind: 'pin', text: 'PIN', said: '' }));
     const r = liveReducer(a, { type: 'reset' });
-    expect(r.calls).toEqual({});
+    // Still on screen (stale) until the snapshots have had time to arrive.
+    expect(r.calls[LIVE_CALL_ID].stale).toBe(true);
+    expect(r.questions).toHaveLength(1);
+    const dropped = liveReducer(r, { type: 'dropStale' });
+    expect(dropped.calls).toEqual({});
+    expect(dropped.questions).toEqual([]);
+    expect(dropped.alerts).toHaveLength(1);
+  });
+
+  test('a call sent again in the snapshot after a reconnect stays, with its open question once', () => {
+    const r = apply(liveReducer(withLive, { type: 'reset' }), ev({ event: 'call_snapshot', call: live }));
+    expect(r.calls[LIVE_CALL_ID].stale).toBe(false);
+    const after = liveReducer(r, { type: 'dropStale' });
+    expect(after).toBe(r);
+    expect(after.questions.filter((q) => q.holdId === LIVE_HOLD_ID)).toHaveLength(1);
+  });
+
+  test('a snapshot showing the hold was answered while away removes its question', () => {
+    const answered = { ...live, status: 'active' as const, holds: live.holds.map((h) => ({ ...h, answer: 'Bring it up', answered_at: 1 })) };
+    const r = apply(liveReducer(withLive, { type: 'reset' }), ev({ event: 'call_snapshot', call: answered }));
     expect(r.questions).toEqual([]);
-    expect(r.alerts).toHaveLength(1);
   });
 });
 
