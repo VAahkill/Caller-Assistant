@@ -40,9 +40,17 @@ class Settings(BaseSettings):
     filler_again_s: float = 15.0
 
     stt_provider: str = "faster_whisper"  # faster_whisper | none
+    # The main speech model: English, and any language without a model of its own.
     whisper_model: str = "large-v3-turbo"
     whisper_device: str = "auto"
-    # Languages your callers speak, e.g. "en,hi,te". Empty means any language.
+    # Per-language speech models on top of the built-in ones (Telugu, Tamil and Hindi
+    # fine-tunes, see providers/stt.py), e.g. "te=org/model,hi=off"; off = main model.
+    stt_models: str = ""
+    # Which language a caller speaks: voxlingua (accurate for Indian languages) |
+    # whisper (Whisper's own guess, often hears Telugu as Tamil) | none
+    lid_provider: str = "voxlingua"
+    # Only with lid_provider=none: the languages Whisper may hear, e.g. "en,hi,te"
+    # (the app's "Callers speak" setting does this job otherwise).
     caller_languages: str = ""
 
     vad_provider: str = "silero"  # silero (needs the vad extra) | energy
@@ -100,3 +108,8 @@ class Settings(BaseSettings):
     @property
     def voices_dir(self) -> Path:
         return self.data_dir / "voices"
+
+    @property
+    def models_dir(self) -> Path:
+        """Models OpenCall prepares itself (converted speech models)."""
+        return self.data_dir / "models"

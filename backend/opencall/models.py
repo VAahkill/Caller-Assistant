@@ -2,12 +2,35 @@
 
 from __future__ import annotations
 
+import re
 import time
 import uuid
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+LANGUAGE_CODE = re.compile(r"^[a-z]{2,3}$")
+
+
+def language_codes(value: list[str]) -> list[str]:
+    """Lower-case language codes, each once; English if none."""
+    codes = list(dict.fromkeys(code.strip().lower() for code in value if code.strip()))
+    bad = [c for c in codes if not LANGUAGE_CODE.match(c)]
+    if bad:
+        raise ValueError(f"not language codes: {', '.join(bad)} (use codes like en, hi, te, ta)")
+    return codes or ["en"]
+
+
+def voice_per_language(value: dict[str, str]) -> dict[str, str]:
+    """{language code: voice id}, e.g. {"te": "piper:te_IN-padmavathi-medium"}."""
+    out = {}
+    for lang, voice in value.items():
+        lang, voice = lang.strip().lower(), voice.strip()
+        if not LANGUAGE_CODE.match(lang) or ":" not in voice:
+            raise ValueError(f"expected a language code and a voice id like kokoro:af_heart, got {lang}: {voice}")
+        out[lang] = voice
+    return out
 
 
 def new_id() -> str:
@@ -77,13 +100,28 @@ class Profile(BaseModel):
     block_international: bool = True
     answer_unknown_numbers: bool = True
     voice: str = "kokoro:af_heart"
-    languages: list[str] = Field(default_factory=lambda: ["en", "hi"])
+    # Languages callers speak, most likely first (that order breaks ties when the
+    # assistant decides which one a caller is speaking).
+    caller_languages: list[str] = Field(default_factory=lambda: ["en", "hi", "te", "ta"])
+    # A voice per language, e.g. {"te": "piper:te_IN-padmavathi-medium"}; languages not
+    # listed use ``voice`` when it can speak them, else that language's default voice.
+    voices_by_language: dict[str, str] = Field(default_factory=dict)
     blocked_prefixes: list[str] = Field(default_factory=lambda: ["+91140"])  # India telemarketing series
     location: Location = Field(default_factory=Location)
     instructions: list[Instruction] = Field(default_factory=list)
     knowledge: list[KnowledgeNote] = Field(default_factory=list)
     contacts: list[Contact] = Field(default_factory=list)
     push_tokens: list[str] = Field(default_factory=list)
+
+    @field_validator("caller_languages")
+    @classmethod
+    def _languages(cls, value: list[str]) -> list[str]:
+        return language_codes(value)
+
+    @field_validator("voices_by_language")
+    @classmethod
+    def _voices(cls, value: dict[str, str]) -> dict[str, str]:
+        return voice_per_language(value)
 
 
 class CallDirection(str, Enum):

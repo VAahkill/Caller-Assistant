@@ -1,13 +1,45 @@
-"""Speech to text."""
+"""Speech to text.
+
+One main Whisper model (``OPENCALL_WHISPER_MODEL``) handles English and any language
+without a better model, plus per-language models for the Indian languages callers
+speak most (Whisper models fine-tuned on that language; see ``DEFAULT_MODELS``). The
+call's language is decided first (``languages.LanguageTracker``), and the turn is
+then transcribed in that language by that language's model.
+"""
 
 from __future__ import annotations
 
 import asyncio
+import logging
+import math
+import os
+import re
+import shutil
+import tempfile
 import threading
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from ..audio import pcm16_to_float, split_at_pauses
+
+log = logging.getLogger("opencall.stt")
+
+# Per-language models, used when the call is in that language. All Apache-2.0 and
+# downloadable without an account; fine-tuned from Whisper small, so each is small
+# and quick. Measured against the main model with the language forced, on FLEURS
+# *test* speech these models never saw (see docs/ARCHITECTURE.md for the numbers).
+# Override or turn off with OPENCALL_STT_MODELS, e.g. "te=org/other-model,hi=off".
+DEFAULT_MODELS: dict[str, str] = {
+    "te": "vasista22/whisper-telugu-small@717212f9c4c16a78a86ddcb98f93c7f73ef8a5cc",
+    "ta": "vasista22/whisper-tamil-small@ac0d71cd70d4c66aec7126996cd9e56e97e698b7",
+    "hi": "vasista22/whisper-hindi-small@fb4a24afc20c42906deed31c3689e4be31da41fe",
+}
+# What a Hugging Face Whisper fine-tune needs for conversion (not its Flax copy).
+_HF_FILES = ["config.json", "generation_config.json", "preprocessor_config.json", "added_tokens.json",
+             "merges.txt", "normalizer.json", "special_tokens_map.json", "tokenizer_config.json", "vocab.json",
+             "tokenizer.json", "model.safetensors", "pytorch_model.bin"]
+_OFF = {"", "off", "none", "default", "main"}
 
 
 @dataclass
@@ -20,46 +52,164 @@ class STT(Protocol):
     async def transcribe(self, pcm16k: bytes, language_hint: str | None = None) -> Transcription: ...
 
 
-class FasterWhisperSTT:
-    """Faster-Whisper on CPU or GPU. Detects the caller's language per turn,
-    which is how a Hindi or Telugu speaking delivery partner gets answered in
-    their own language."""
+def parse_models(spec: str, defaults: dict[str, str] | None = None) -> dict[str, str]:
+    """``"te=org/model@rev, hi=off"`` on top of ``defaults``; "off" means the main model."""
+    models = dict(DEFAULT_MODELS if defaults is None else defaults)
+    for item in spec.split(","):
+        lang, sep, model = item.partition("=")
+        lang, model = lang.strip().lower(), model.strip()
+        if not sep or not lang:
+            if item.strip():
+                log.warning("Ignoring %r in OPENCALL_STT_MODELS (expected lang=model).", item.strip())
+            continue
+        if model.lower() in _OFF:
+            models.pop(lang, None)
+        else:
+            models[lang] = model
+    return models
 
-    def __init__(self, model: str = "large-v3-turbo", device: str = "auto", languages: list[str] | None = None):
+
+def _slug(text: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]+", "--", text).strip("-")
+
+
+def _converted_dir(repo: str, revision: str | None, out_root: Path) -> Path:
+    return out_root / (_slug(repo) + (f"-{revision[:12]}" if revision else ""))
+
+
+def convert_to_ct2(repo: str, revision: str | None, out_root: Path) -> Path:
+    """Converts a Hugging Face Whisper fine-tune to CTranslate2 int8 (what
+    faster-whisper runs), once; later calls return the converted folder. The original
+    weights are downloaded to a temporary folder and deleted afterwards."""
+    out = _converted_dir(repo, revision, out_root)
+    if (out / "model.bin").exists():
+        return out
+    from ctranslate2.converters import TransformersConverter
+    from huggingface_hub import snapshot_download
+
+    out_root.mkdir(parents=True, exist_ok=True)
+    log.info("Preparing the %s speech model (a one-time download and conversion)...", repo)
+    with tempfile.TemporaryDirectory(dir=out_root, prefix=".download-") as tmp:
+        src = Path(tmp) / "hf"
+        snapshot_download(repo, revision=revision, local_dir=str(src), allow_patterns=_HF_FILES)
+        if (src / "model.safetensors").exists():
+            (src / "pytorch_model.bin").unlink(missing_ok=True)
+        if not (src / "tokenizer.json").exists():
+            # faster-whisper reads tokenizer.json; older fine-tunes only ship the parts.
+            from transformers import WhisperTokenizerFast
+
+            WhisperTokenizerFast.from_pretrained(str(src)).save_pretrained(str(src))
+        staged = Path(tmp) / "ct2"
+        TransformersConverter(str(src), copy_files=["tokenizer.json", "preprocessor_config.json"],
+                              low_cpu_mem_usage=True).convert(str(staged), quantization="int8")
+        shutil.rmtree(out, ignore_errors=True)
+        os.replace(staged, out)
+    log.info("The %s speech model is ready.", repo)
+    return out
+
+
+def resolve_model(spec: str, ct2_dir: Path) -> str:
+    """A path or name faster-whisper can load: a local folder, a faster-whisper model
+    name ("small", "large-v3-turbo"), a CTranslate2 repo on Hugging Face, or a
+    Hugging Face Whisper fine-tune (``org/name[@revision]``), converted on first use."""
+    if Path(spec).expanduser().is_dir():
+        return str(Path(spec).expanduser())
+    repo, _, revision = spec.partition("@")
+    if "/" not in repo:
+        return spec  # one of faster-whisper's own model names
+    converted = _converted_dir(repo, revision or None, ct2_dir)
+    if (converted / "model.bin").exists():
+        return str(converted)
+    from huggingface_hub import list_repo_files
+
+    if "model.bin" in list_repo_files(repo, revision=revision or None):
+        return repo  # already a CTranslate2 model
+    return str(convert_to_ct2(repo, revision or None, ct2_dir))
+
+
+class FasterWhisperSTT:
+    """Faster-Whisper on CPU or GPU, with an optional model per language."""
+
+    def __init__(self, model: str = "large-v3-turbo", device: str = "auto", languages: list[str] | None = None,
+                 models: dict[str, str] | None = None, models_dir: Path | None = None, cpu_threads: int = 0):
         self.model_name = model
         self.device = device
-        # When set, speech is only ever recognised as one of these. Whisper often
-        # mistakes Telugu for Tamil (and similar pairs); limiting it to the
-        # languages your callers actually speak avoids that.
+        # Only used when no language is given (language ID turned off): speech is then
+        # only ever recognised as one of these. Whisper often mistakes Telugu for Tamil
+        # (and similar pairs); limiting it to the languages callers speak avoids that.
         self.languages = languages or []
-        self._model = None
+        self.models = dict(models or {})  # language -> model spec
+        self.ct2_dir = (models_dir or Path("./data/models")) / "ct2"
+        self.cpu_threads = cpu_threads
+        self._model = None  # the main model
+        self._extra: dict[str, object] = {}  # per-language models by spec
+        self._failed: set[str] = set()
         self._lock = threading.Lock()
+        self._locks: dict[str, threading.Lock] = {}
 
-    def warm_up(self) -> None:
+    def warm_up(self, languages: list[str] | None = None) -> None:
+        """Load the main model, and the models for these languages, now."""
         self._load()
+        for lang in languages or []:
+            self._model_for(lang)
+
+    def model_for(self, language: str | None) -> str:
+        """The model spec that transcribes this language."""
+        spec = self.models.get(language or "", self.model_name)
+        return self.model_name if spec in self._failed else spec
+
+    def _device(self) -> tuple[str, str]:
+        device = self.device
+        if device == "auto":
+            try:
+                import torch
+
+                device = "cuda" if torch.cuda.is_available() else "cpu"
+            except ImportError:
+                device = "cpu"
+        return device, "float16" if device == "cuda" else "int8"
+
+    def _open(self, spec: str):
+        from faster_whisper import WhisperModel  # heavy import, done once
+
+        device, compute = self._device()
+        return WhisperModel(resolve_model(spec, self.ct2_dir), device=device, compute_type=compute,
+                            cpu_threads=self.cpu_threads)
 
     def _load(self):
+        """The main model."""
         with self._lock:
-            return self._load_locked()
+            if self._model is None:
+                self._model = self._open(self.model_name)
+            return self._model
 
-    def _load_locked(self):
-        if self._model is None:
-            from faster_whisper import WhisperModel  # heavy import, done once
-
-            device = self.device
-            if device == "auto":
+    def _model_for(self, language: str | None):
+        """This language's own model (loaded, and converted if needed, on first use);
+        the main one when it has none or its model can't be loaded."""
+        spec = self.model_for(language)
+        if spec == self.model_name:
+            return self._load()
+        with self._lock:
+            lock = self._locks.setdefault(spec, threading.Lock())
+        with lock:
+            if spec not in self._extra:
                 try:
-                    import torch
+                    self._extra[spec] = self._open(spec)
+                except Exception as e:
+                    log.warning("Couldn't load the %s speech model %s (%s: %s); using %s for it instead.",
+                                language, spec, e.__class__.__name__, e, self.model_name)
+                    self._failed.add(spec)
+                    return self._load()
+            return self._extra[spec]
 
-                    device = "cuda" if torch.cuda.is_available() else "cpu"
-                except ImportError:
-                    device = "cpu"
-            compute = "float16" if device == "cuda" else "int8"
-            self._model = WhisperModel(self.model_name, device=device, compute_type=compute)
-        return self._model
+    def detect_language(self, pcm16k: bytes) -> dict[str, float]:
+        """Whisper's own language guess, as log-probabilities (used only when the
+        language-ID model isn't available)."""
+        _, _, probs = self._load().detect_language(pcm16_to_float(pcm16k[: 30 * 32000]))
+        return {lang: math.log(max(p, 1e-12)) for lang, p in probs}
 
     def _run(self, pcm16k: bytes, language_hint: str | None) -> Transcription:
-        model = self._load()
+        model = self._model_for(language_hint)
         # Whisper writes at most 224 tokens per piece of audio. Telugu or Tamil needs
         # up to 20 a second, so a long turn would stop mid-word; it is transcribed in
         # pieces cut at pauses instead, all in the language of the first one.

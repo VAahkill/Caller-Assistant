@@ -15,14 +15,25 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from . import __version__
 from .audio import decode_audio, resample, to_wav, trim_silence
 from .config import Settings
 from .engine import Engine
 from .maps import coords_from_link, reverse_geocode
-from .models import Contact, Instruction, KnowledgeNote, Location, MessageStatus, Profile, TaskKind, new_id
+from .models import (
+    Contact,
+    Instruction,
+    KnowledgeNote,
+    Location,
+    MessageStatus,
+    Profile,
+    TaskKind,
+    language_codes,
+    new_id,
+    voice_per_language,
+)
 from .owner_chat import handle_owner_message
 from .telephony.asterisk import AsteriskGateway
 from .telephony.bluetooth import BluetoothGateway
@@ -72,6 +83,18 @@ class ProfilePatch(BaseModel):
     answer_unknown_numbers: bool | None = None
     voice: str | None = None
     blocked_prefixes: list[str] | None = None
+    caller_languages: list[str] | None = None
+    voices_by_language: dict[str, str] | None = None
+
+    @field_validator("caller_languages")
+    @classmethod
+    def _languages(cls, value: list[str] | None) -> list[str] | None:
+        return None if value is None else language_codes(value)
+
+    @field_validator("voices_by_language")
+    @classmethod
+    def _voices(cls, value: dict[str, str] | None) -> dict[str, str] | None:
+        return None if value is None else voice_per_language(value)
 
 
 class TextIn(BaseModel):

@@ -12,7 +12,7 @@ from .agent import Conversation, opening_line
 from .config import Settings
 from .events import EventBus
 from .models import CallDirection, CallerMessage, CallRecord, CallStatus
-from .providers import build_llm, build_stt, make_vad
+from .providers import build_lid, build_llm, build_stt, make_vad
 from .phrases import phrase
 from .providers.llm import LLM, LLMError
 from .providers.stt import STT
@@ -35,12 +35,15 @@ class Engine:
         stt: STT | None = None,
         tts: TTSRouter | None = None,
         dialer: Dialer | None = None,
+        lid=None,
     ):
         self.settings = settings
         self.store = store or Store(settings.data_dir)
         self.bus = EventBus(settings.expo_push_url, lambda: self.store.profile.push_tokens)
         self.llm = llm or build_llm(settings)
         self.stt = stt or build_stt(settings)
+        # Which language a caller speaks (None: Whisper guesses every turn).
+        self.lid = lid if lid is not None else build_lid(settings.lid_provider, self.stt)
         self.tts = tts or TTSRouter(settings.voices_dir, settings.tts_provider, settings.clone_provider,
                                     settings.indic_tts, settings.indic_parler_model)
         self.dialer: Dialer = dialer or NoDialer()
@@ -62,8 +65,15 @@ class Engine:
         """Download and load the speech models now, so the first call doesn't wait for them."""
         load_stt = getattr(self.stt, "warm_up", None)
         if load_stt is not None:
-            load_stt()
+            if getattr(self.stt, "models", None):
+                load_stt(self.store.profile.caller_languages)  # and each caller language's own model
+            else:
+                load_stt()
         self.ready["stt"] = True
+        if self.lid is not None:
+            self.lid.warm_up()
+            self.ready["lid"] = self.lid.available
+            log.info("Language identification: %s", self.lid.name)
         vad = self.make_vad()
         log.info("Voice activity detection: %s", getattr(vad, "name", type(vad).__name__))
         self.tts.warm_up(self.store.profile.voice, [lang.strip() for lang in self.settings.indic_preload.split(",")])

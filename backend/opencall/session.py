@@ -23,7 +23,7 @@ from .agent import (
 )
 from .audio import FRAME_BYTES, FRAME_MS, StereoRecorder, frames
 from .guardrails import scrub_outgoing
-from .languages import guess_language
+from .languages import LanguageTracker, guess_language
 from .models import CallRecord, CallStatus, HoldQuestion, TranscriptLine
 from .phrases import phrase
 from .providers.llm import LLMError
@@ -67,6 +67,9 @@ class CallSession:
         self._hold_waiters: dict[str, asyncio.Future[str]] = {}
         self._language = "en"
         self._status: str | None = None
+        # The caller's language: decided from their first words, then kept (see
+        # LanguageTracker), so one odd turn doesn't switch the call to another language.
+        self.tracker = LanguageTracker(engine.store.profile.caller_languages)
         # The caller's language when the app chose it (practice call); speech is then
         # recognised in that language instead of being guessed.
         self.language_hint: str | None = None
@@ -235,14 +238,36 @@ class CallSession:
 
     async def _handle_utterance(self, pcm: bytes, language_hint: str | None = None, origin: str = "live") -> None:
         await self._set_status("transcribing")
-        hint = language_hint or self.language_hint
-        result = await self.engine.stt.transcribe(pcm, hint)
+        language = await self._spoken_language(pcm, language_hint or self.language_hint)
+        result = await self.engine.stt.transcribe(pcm, language)
         text = result.text.strip()
         if not text:
             if origin == "recording":
                 await self._publish("turn_error", detail="Couldn't make out any words in that recording. Please try again.")
             return
-        await self._caller_turn(text, result.language or hint or self._language)
+        if language is None:  # no language ID: Whisper's guess for this turn
+            language = result.language or self._language
+            await self._language_heard(self.tracker.choose(language, confidence=0.0))
+        await self._caller_turn(text, language)
+
+    async def _spoken_language(self, pcm: bytes, chosen: str | None) -> str | None:
+        """The call's language, updated with this utterance: chosen in the app, or
+        decided by the language-ID model. None when there is no language ID."""
+        if chosen:
+            heard = self.tracker.choose(chosen)
+        else:
+            lid = self.engine.lid
+            logprobs = await asyncio.to_thread(lid.identify, pcm) if lid is not None else None
+            if logprobs is None:
+                return None
+            heard = self.tracker.hear(logprobs, len(pcm) / 32000)
+        await self._language_heard(heard)
+        return heard.language
+
+    async def _language_heard(self, heard) -> None:
+        if heard.changed:
+            self.record.language = heard.language
+            await self._publish("call_language", language=heard.language, confidence=round(heard.confidence, 2))
 
     async def _caller_turn(self, text: str, language: str, english: str | None = None) -> None:
         self._language = language
@@ -260,7 +285,12 @@ class CallSession:
         """Process one thing the other party said (also used by tests and the simulator).
         Returns when the turn is over."""
         lang = language or self._typed_language(text)
-        await self._turn("text", lambda: self._caller_turn(text, lang))
+
+        async def typed() -> None:
+            await self._language_heard(self.tracker.choose(lang))
+            await self._caller_turn(text, lang)
+
+        await self._turn("text", typed)
 
     def submit_text(self, text: str, language: str | None = None) -> asyncio.Task:
         """Queue a typed line; it is answered after any turn already in progress."""
