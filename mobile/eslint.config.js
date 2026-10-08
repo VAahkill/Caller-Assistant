@@ -29,7 +29,12 @@ module.exports = defineConfig([
     },
   },
   {
-    files: ['**/*.test.ts', '**/*.test.tsx', 'jest.setup.ts', 'scripts/**'],
+    files: ['**/*.test.ts', '**/*.test.tsx', 'jest.setup.ts', 'src/test/**', 'scripts/**'],
     languageOptions: { globals: { jest: 'readonly', describe: 'readonly', it: 'readonly', test: 'readonly', expect: 'readonly', beforeEach: 'readonly', afterEach: 'readonly', beforeAll: 'readonly', afterAll: 'readonly' } },
+    rules: {
+      // jest.mock factories must require() lazily, and jest hoists them above imports.
+      '@typescript-eslint/no-require-imports': 'off',
+      'import/first': 'off',
+    },
   },
 ]);

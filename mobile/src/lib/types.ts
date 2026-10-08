@@ -1,12 +1,21 @@
-// Mirrors backend/opencall/models.py
+// Mirrors backend/opencall/models.py, API contract v2 (docs: build spec
+// "API contract v2"). Times are seconds since the epoch.
 
 export type Speaker = 'caller' | 'assistant' | 'user' | 'system';
+export type LineKind = 'speech' | 'hold_question' | 'alert' | 'note';
 
 export interface TranscriptLine {
+  id: string;
   speaker: Speaker;
+  /** What was said, in `lang`. For speaker "user": what was spoken to the caller. */
   text: string;
+  lang: string;
+  /** The line in the owner's language; may arrive later via transcript_update. */
+  translation: string;
+  translation_lang: string;
+  english: string;
   at: number;
-  kind: 'speech' | 'hold_question' | 'alert' | 'note';
+  kind: LineKind;
 }
 
 export interface HoldQuestion {
@@ -14,15 +23,20 @@ export interface HoldQuestion {
   question: string;
   asked_at: number;
   answer: string | null;
+  answered_at: number | null;
+  sensitive: boolean;
 }
+
+export type CallStatus = 'ringing' | 'active' | 'on_hold' | 'ended' | 'rejected';
+export type CallCategory = 'spam' | 'delivery' | 'contact' | 'business' | 'unknown' | (string & {});
 
 export interface CallRecord {
   id: string;
   direction: 'inbound' | 'outbound';
   number: string;
   contact_name: string;
-  category: string;
-  status: 'ringing' | 'active' | 'on_hold' | 'ended' | 'rejected';
+  category: CallCategory;
+  status: CallStatus;
   language: string;
   started_at: number;
   ended_at: number | null;
@@ -33,7 +47,12 @@ export interface CallRecord {
   recording: string;
   task_id: string | null;
   reject_reason: string;
+  urgent: boolean;
+  action_items: string[];
 }
+
+/** GET /calls leaves the transcript out. */
+export type CallSummary = Omit<CallRecord, 'transcript'> & { transcript?: TranscriptLine[] };
 
 export interface CallerMessage {
   id: string;
@@ -48,6 +67,7 @@ export interface CallerMessage {
 }
 
 export type TaskKind = 'enquire' | 'book' | 'callback' | 'custom';
+export type TaskStatus = 'queued' | 'dialing' | 'in_call' | 'waiting_user' | 'done' | 'failed';
 
 export interface Task {
   id: string;
@@ -55,11 +75,12 @@ export interface Task {
   number: string;
   goal: string;
   target_name: string;
-  status: 'queued' | 'dialing' | 'in_call' | 'waiting_user' | 'done' | 'failed';
+  status: TaskStatus;
   outcome: string;
   result: string;
   call_id: string | null;
   created_at: number;
+  updated_at: number;
 }
 
 export interface Location {
@@ -73,15 +94,59 @@ export interface Location {
   geocoded_hint: string;
 }
 
+export type AppliesTo = 'everyone' | 'contacts' | 'unknown' | 'delivery' | 'numbers';
+
 export interface Instruction {
   id: string;
   text: string;
+  enabled: boolean;
+  applies_to: AppliesTo;
+  numbers: string[];
+  category: string;
+  expires_at: number | null;
+  created_at: number;
+  updated_at: number;
 }
+
+export type InstructionInput = Pick<Instruction, 'text'> &
+  Partial<Pick<Instruction, 'enabled' | 'applies_to' | 'numbers' | 'category' | 'expires_at'>>;
+
+export interface InstructionTemplate {
+  category: string;
+  text: string;
+  applies_to: AppliesTo;
+}
+
+export type ShareWith = 'anyone' | 'contacts' | 'delivery' | 'numbers';
 
 export interface KnowledgeNote {
   id: string;
   text: string;
-  share_with: 'anyone' | 'contacts';
+  enabled: boolean;
+  share_with: ShareWith;
+  numbers: string[];
+  expires_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export type KnowledgeInput = Pick<KnowledgeNote, 'text'> &
+  Partial<Pick<KnowledgeNote, 'share_with' | 'numbers' | 'enabled' | 'expires_at'>>;
+
+export interface Away {
+  preset: string;
+  /** In English, e.g. "In a meeting until 3 PM". */
+  message: string;
+  until: number | null;
+  set_at: number;
+}
+
+export type AwayInput = Pick<Away, 'preset' | 'message' | 'until'>;
+
+export interface Contact {
+  number: string;
+  name: string;
+  blocked: boolean;
 }
 
 export interface Profile {
@@ -89,31 +154,83 @@ export interface Profile {
   assistant_name: string;
   enabled: boolean;
   available: boolean;
+  /** ^\+[1-9]\d{0,3}$, e.g. "+91". Not a phone number. */
   home_country_code: string;
   block_international: boolean;
   answer_unknown_numbers: boolean;
   voice: string;
+  blocked_prefixes: string[];
+  /** Order is the prior used for language detection. */
+  caller_languages: string[];
+  owner_language: string;
+  translate_live: boolean;
+  voices_by_language: Record<string, string>;
+  blocked_numbers: string[];
+  vip_numbers: string[];
+  away: Away | null;
   location: Location;
   instructions: Instruction[];
   knowledge: KnowledgeNote[];
+  contacts: Contact[];
+  push_tokens: string[];
 }
 
-export interface Voice {
+export type ProfilePatch = Partial<Omit<Profile, 'location' | 'instructions' | 'knowledge' | 'contacts' | 'push_tokens'>>;
+
+export type VoiceEngine = 'kokoro' | 'mms' | 'piper' | 'xtts' | 'parler';
+export type VoiceStatus = 'ready' | 'preparing' | 'failed';
+
+export interface VoiceInfo {
   id: string;
   name: string;
   kind: 'builtin' | 'clone';
+  engine: VoiceEngine;
   languages: string[];
   gender: string;
+  /** Relative, e.g. "/voices/kokoro:af_heart/sample.wav?lang=en&v=3f2a1c". */
+  sample_url: string;
+  recording_url: string;
+  seconds: number | null;
+  created_at: number | null;
+  status: VoiceStatus;
 }
 
-export type ServerEvent =
-  | { event: 'call_started' | 'call_snapshot' | 'call_ended'; call: CallRecord; call_id?: string }
-  | { event: 'call_rejected'; call: CallRecord; reason: string }
-  | { event: 'transcript'; call_id: string; line: TranscriptLine }
-  | { event: 'hold_question' | 'task_needs_decision'; call_id: string; hold_id: string; question: string; who: string; task_id?: string }
-  | { event: 'hold_resolved'; call_id: string; hold_id: string; answered: boolean }
-  | { event: 'sensitive_request'; call_id: string; kind: string; text: string; who: string }
-  | { event: 'call_category'; call_id: string; category: string }
-  | { event: 'message_taken'; message: CallerMessage; who: string }
-  | { event: 'task_update'; task: Task; title: string }
-  | { event: 'profile_updated' };
+export interface ReadyFlags {
+  stt: boolean;
+  tts: boolean;
+  llm: boolean;
+  mt: boolean;
+  lid: boolean;
+}
+
+export interface Health {
+  ok: boolean;
+  version: string;
+  dialer: string;
+  active_calls: number;
+  /** null from servers older than v2, which don't report readiness. */
+  ready: ReadyFlags | null;
+  llm_model: string;
+}
+
+export type AssistantState = 'listening' | 'transcribing' | 'translating' | 'thinking' | 'speaking' | 'idle' | 'error';
+
+export interface ChatReply {
+  reply: string;
+  actions: { type: string }[];
+}
+
+export interface VoiceChatReply extends ChatReply {
+  heard: string;
+}
+
+export interface ChatTurn {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface SayAudioReply {
+  ok: boolean;
+  /** What the server heard in the owner's recording. */
+  heard: string;
+}
