@@ -15,6 +15,8 @@ Indian-language sentence are written in its script first (see transliterate.py).
 from __future__ import annotations
 
 import asyncio
+import ctypes
+import gc
 import hashlib
 import json
 import logging
@@ -165,6 +167,15 @@ class XTTSEngine:
     def warm_up(self) -> None:
         self._model()
 
+    def unload(self) -> None:
+        """Frees the model (2 to 3 GB) until a recorded voice is needed again."""
+        with self._lock:
+            if self._tts is None:
+                return
+            self._tts = None
+        gc.collect()
+        _return_freed_memory()
+
     def make_latents(self, reference: Path, out: Path) -> None:
         model = self._model()
         import torch
@@ -182,6 +193,17 @@ class XTTSEngine:
         out = model.inference(text, "zh-cn" if lang == "zh" else lang, saved["gpt_cond_latent"],
                               saved["speaker_embedding"])
         return resample(float_to_pcm16(np.asarray(out["wav"], dtype=np.float32)), 24000, RATE)
+
+
+def _return_freed_memory() -> None:
+    """glibc keeps freed memory for the process to reuse; on Linux, give it back to
+    the system, so the language model can have it."""
+    try:
+        libc = ctypes.CDLL("libc.so.6")
+    except OSError:
+        log.debug("Not glibc; freed memory stays with the process until it is reused.")
+        return
+    libc.malloc_trim(0)
 
 
 def _gender(voice: str) -> str:
@@ -409,8 +431,12 @@ class TTSRouter:
                 self.piper.warm_up(name)
             elif kind in ("mms", "parler") and self.indic is not None:
                 self.indic.warm_up(lang)
-        if self.xtts is not None and self.clones():
-            self.xtts.warm_up()
+        if self.xtts is not None and self.uses_recorded_voice(voice, voices_by_language):
+            self.xtts.warm_up()  # only when one is in use: the model is big and slow on a CPU
+
+    def uses_recorded_voice(self, voice: str, voices_by_language: dict[str, str] | None = None) -> bool:
+        chosen = self.chosen_voices() if voices_by_language is None else voices_by_language
+        return any(v.startswith("clone:") for v in [voice, *chosen.values()])
 
     # ----- synthesis -----------------------------------------------------
     def _synth_sync(self, text: str, voice: str, lang: str = "en",

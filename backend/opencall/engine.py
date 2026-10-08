@@ -145,6 +145,7 @@ class Engine:
             return
         self._changed_during_call = False
         self.refresh_llm_cache()
+        self.release_unused_voice_model()
         if self.ready["tts"]:
             self._spawn(asyncio.to_thread(self._prerender_phrases))
 
@@ -231,9 +232,16 @@ class Engine:
                     await self.samples.get(voice_id)
                 except Exception as e:
                     log.warning("Couldn't make the demo for %s: %s: %s", voice_id, e.__class__.__name__, e)
+            self.release_unused_voice_model()
             await self.bus.publish("voice_status", voice_id=voice_id, status=info.status, detail=info.detail)
 
         return self._spawn(prepare())
+
+    def release_unused_voice_model(self) -> None:
+        """The recorded-voice model takes 2 to 3 GB; it stays loaded only while the
+        user has a recorded voice in use (it is loaded again when one is chosen)."""
+        if self.tts.xtts is not None and not self.tts.uses_recorded_voice(self.store.profile.voice):
+            self.tts.xtts.unload()
 
     def forget_voice(self, voice_id: str) -> None:
         """A recorded voice was deleted: stop using it anywhere."""

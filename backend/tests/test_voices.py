@@ -38,6 +38,13 @@ class FakeXTTS(FakeEngine):
     def __init__(self, fail=False):
         super().__init__("xtts")
         self.fail = fail
+        self.loaded = False
+
+    def warm_up(self):
+        self.loaded = True
+
+    def unload(self):
+        self.loaded = False
 
     def make_latents(self, reference, out):
         if self.fail:
@@ -200,6 +207,25 @@ def test_recorded_voices_say_clearly_what_they_need(monkeypatch):
         XTTSEngine().warm_up()
 
 
+def test_letting_the_recorded_voice_model_go_frees_it(monkeypatch):
+    from opencall.providers import tts as tts_mod
+
+    trimmed = []
+    monkeypatch.setattr(tts_mod, "_return_freed_memory", lambda: trimmed.append(True))
+    x = tts_mod.XTTSEngine()
+    x.unload()  # nothing loaded: nothing to do
+    assert trimmed == []
+    x._tts = object()
+    x.unload()
+    assert x._tts is None and trimmed == [True]
+
+
+def test_giving_freed_memory_back_works_on_this_system():
+    from opencall.providers.tts import _return_freed_memory
+
+    _return_freed_memory()  # glibc: trims the heap; elsewhere: does nothing
+
+
 def test_a_voice_that_cant_load_its_model_is_marked_failed_with_the_reason(tmp_path, monkeypatch):
     import sys
     import types
@@ -248,6 +274,26 @@ async def test_a_new_voice_is_prepared_in_the_background(engine):
     assert event["voice_id"] == voice.id and event["status"] == "ready"
     _, _, demo = engine.samples.locate(voice.id)
     assert demo.exists()  # its demo was made too
+    assert not engine.tts.xtts.loaded  # and the big model let go, as the voice isn't in use
+
+
+def test_the_recorded_voice_model_is_loaded_only_while_a_recorded_voice_is_in_use(tmp_path):
+    r = router(tmp_path, xtts=FakeXTTS())
+    r.provider = "kokoro"
+    clone = r.add_clone("Mum", wav_bytes())
+    r.warm_up("kokoro:af_heart", ["te"], {})
+    assert not r.xtts.loaded  # recorded, but not chosen
+    r.warm_up("kokoro:af_heart", ["te"], {"hi": clone.id})
+    assert r.xtts.loaded
+    assert r.uses_recorded_voice(clone.id, {}) and not r.uses_recorded_voice("kokoro:af_heart", {})
+
+
+async def test_choosing_a_built_in_voice_again_lets_the_recorded_voice_model_go(engine):
+    engine.tts.xtts = FakeXTTS()
+    engine.tts.xtts.loaded = True
+    engine.store.profile.voice = "kokoro:am_adam"
+    engine.store.save_profile()
+    assert not engine.tts.xtts.loaded
 
 
 def test_demos_are_made_once_and_cached(settings, engine):
