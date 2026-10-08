@@ -24,6 +24,16 @@ export class MockFile {
   async base64(): Promise<string> {
     return btoa(String.fromCharCode(...(await this.bytes())));
   }
+  /** Files written and deleted, for tests of the cache. */
+  static written: string[] = [];
+  static deleted: string[] = [];
+  create(): void {}
+  write(_data: Uint8Array | string): void {
+    MockFile.written.push(this.uri);
+  }
+  delete(): void {
+    MockFile.deleted.push(this.uri);
+  }
   upload(): Promise<never> {
     return Promise.reject(new Error('File.upload is native; tests go through the mock transport'));
   }
