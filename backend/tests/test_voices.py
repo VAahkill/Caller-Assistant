@@ -8,7 +8,6 @@ import re
 import shutil
 import subprocess
 import wave
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -411,4 +410,4 @@ def test_settings_turn_piper_on_for_the_server(tmp_path):
     off = Engine(Settings(data_dir=tmp_path / "b", stt_provider="none", lid_provider="none", mt_provider="none",
                           clone_provider="none", piper_voices="off"))
     assert off.tts.piper is None
-    assert isinstance(Path(on.samples.folder), Path)
+    assert on.samples.folder == tmp_path / "voices" / "samples"  # demos are kept with the voices
