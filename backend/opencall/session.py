@@ -23,7 +23,7 @@ from .agent import (
 )
 from .audio import FRAME_BYTES, FRAME_MS, StereoRecorder, frames
 from .guardrails import scrub_outgoing
-from .languages import LanguageTracker, guess_language
+from .languages import LanguageTracker, guess_language, needs_translation
 from .models import CallRecord, CallStatus, HoldQuestion, TranscriptLine
 from .phrases import phrase
 from .providers.llm import LLMError
@@ -356,8 +356,18 @@ class CallSession:
                 return
             text = res.text
         lang = lang or self._language
+        english = ""
+        if needs_translation(text, lang) and self.engine.mt.can_translate("en", lang):
+            # The assistant's English, said in the caller's language. The translation is
+            # checked again: a number must not slip through in other words.
+            english, text = text, await self.engine.mt.translate(text, "en", lang)
+            res = scrub_outgoing(text, self.conv.allowed_numbers())
+            if res.blocked:
+                await self._security_alert(SecurityAlert("blocked_output", text))
+                return
+            text = res.text
         if record:
-            await self._line("assistant", text, lang=lang)
+            await self._line("assistant", text, lang=lang, english=english)
         voice = self.engine.store.profile.voice
         tts_lang = lang if lang in self.engine.tts.supported_languages(voice) else "en"
         try:

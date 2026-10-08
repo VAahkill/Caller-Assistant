@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # Only with lid_provider=none: the languages Whisper may hear, e.g. "en,hi,te"
     # (the app's "Callers speak" setting does this job otherwise).
     caller_languages: str = ""
+    # Translation between callers' languages and English: indictrans2 (needs the mt
+    # extra; about 500 MB, downloaded on first start) | none
+    mt_provider: str = "indictrans2"
 
     vad_provider: str = "silero"  # silero (needs the vad extra) | energy
     end_of_turn_silence_ms: int = 650

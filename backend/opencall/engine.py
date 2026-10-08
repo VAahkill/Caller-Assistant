@@ -11,10 +11,12 @@ from collections import OrderedDict
 from .agent import Conversation, opening_line
 from .config import Settings
 from .events import EventBus
+from .languages import needs_translation
 from .models import CallDirection, CallerMessage, CallRecord, CallStatus
-from .providers import build_lid, build_llm, build_stt, make_vad
 from .phrases import phrase
+from .providers import build_lid, build_llm, build_stt, make_vad
 from .providers.llm import LLM, LLMError
+from .providers.mt import TranslationService, build_translator
 from .providers.stt import STT
 from .providers.tts import TTSRouter
 from .screening import ScreenDecision, find_contact, normalize_number, screen_number
@@ -36,6 +38,7 @@ class Engine:
         tts: TTSRouter | None = None,
         dialer: Dialer | None = None,
         lid=None,
+        mt: TranslationService | None = None,
     ):
         self.settings = settings
         self.store = store or Store(settings.data_dir)
@@ -44,6 +47,8 @@ class Engine:
         self.stt = stt or build_stt(settings)
         # Which language a caller speaks (None: Whisper guesses every turn).
         self.lid = lid if lid is not None else build_lid(settings.lid_provider, self.stt)
+        # Translation between the caller's language and English.
+        self.mt = mt or build_translator(settings.mt_provider)
         self.tts = tts or TTSRouter(settings.voices_dir, settings.tts_provider, settings.clone_provider,
                                     settings.indic_tts, settings.indic_parler_model)
         self.dialer: Dialer = dialer or NoDialer()
@@ -74,6 +79,9 @@ class Engine:
             self.lid.warm_up()
             self.ready["lid"] = self.lid.available
             log.info("Language identification: %s", self.lid.name)
+        self.mt.warm_up([lang for lang in self.store.profile.caller_languages if lang != "en"])
+        self.ready["mt"] = self.mt.available
+        log.info("Translation: %s", self.mt.name)
         vad = self.make_vad()
         log.info("Voice activity detection: %s", getattr(vad, "name", type(vad).__name__))
         self.tts.warm_up(self.store.profile.voice, [lang.strip() for lang in self.settings.indic_preload.split(",")])
@@ -84,12 +92,21 @@ class Engine:
     def _prerender_phrases(self) -> None:
         """The greeting, "one moment" and the apology play instantly from memory."""
         voice = self.store.profile.voice
-        langs = {"en"} | {lang.strip() for lang in self.settings.indic_preload.split(",") if lang.strip()}
+        langs = {"en", *self.store.profile.caller_languages}
+        langs |= {lang.strip() for lang in self.settings.indic_preload.split(",") if lang.strip()}
         supported = self.tts.supported_languages(voice)
         self._prerender_greeting()
-        for text, lang in [(phrase(key, lang), lang) for lang in sorted(langs & supported)
+        for text, lang in [(self.fixed_line(key, lang), lang) for lang in sorted(langs & supported)
                            for key in ("filler", "fallback")]:
             self._remember((text, voice, lang), self.tts._synth_sync(text, voice, lang))
+
+    def fixed_line(self, key: str, lang: str) -> str:
+        """A fixed line (see phrases.py) in ``lang``: written by hand for the languages
+        callers use most, translated from English (and cached) for the rest."""
+        text = phrase(key, lang)
+        if lang != "en" and needs_translation(text, lang):
+            return self.mt.translate_sync(text, "en", lang)
+        return text
 
     def _prerender_greeting(self) -> None:
         voice, text = self.store.profile.voice, opening_line(self.store.profile)

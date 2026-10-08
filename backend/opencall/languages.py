@@ -53,6 +53,14 @@ def guess_language(text: str, default: str = "en") -> str:
     return max(counts, key=counts.__getitem__) if counts else default
 
 
+def needs_translation(text: str, lang: str) -> bool:
+    """Whether English-looking ``text`` should be translated before it is said to a
+    caller speaking ``lang``: it has no letters of any Indian script, and ``lang``
+    isn't written in Latin letters."""
+    return lang != "en" and lang in LANGUAGE_NAMES and not any(
+        (script_of(ch) or "en") != "en" for ch in text)
+
+
 def script_runs(text: str) -> list[tuple[str, str]]:
     """Splits text into (language, piece) runs of one script each. Digits, spaces and
     punctuation stay with the run they are in (or start the text's first run)."""
