@@ -1,6 +1,7 @@
 import { Contact, ContactField, requestPermissionsAsync } from 'expo-contacts';
 
 import { api } from './api';
+import { cleanNumber } from './format';
 import { storage } from './storage';
 
 export interface PhoneContact {
@@ -17,15 +18,10 @@ export type SyncResult =
   | { ok: true; count: number; at: number }
   | { ok: false; denied: true; canAskAgain: boolean; message: string };
 
+export { cleanNumber };
+
 const LAST_SYNC_KEY = 'contacts_sync';
 
-/** "+91 98480-12345" -> "+919848012345"; keeps a leading + and the digits. */
-export function cleanNumber(raw: string): string {
-  const trimmed = raw.trim();
-  const digits = trimmed.replace(/\D/g, '');
-  if (!digits) return '';
-  return trimmed.startsWith('+') ? `+${digits}` : trimmed.startsWith('00') ? `+${digits.slice(2)}` : digits;
-}
 
 /** Names and numbers only, one entry per number. */
 export function flattenContacts(list: { fullName?: string | null; phones?: { number?: string | null }[] | null }[]): PhoneContact[] {

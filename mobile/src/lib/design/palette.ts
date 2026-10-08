@@ -43,6 +43,8 @@ export interface Palette {
   heroTo: string;
   onHero: string;
   onHero2: string;
+  heroSuccess: string; // status dots on the hero
+  heroWarning: string;
 }
 
 export const dark: Palette = {
@@ -87,6 +89,8 @@ export const dark: Palette = {
   heroTo: '#1A1D45',
   onHero: '#FFFFFF',
   onHero2: '#D3D6FF',
+  heroSuccess: '#3DD68C',
+  heroWarning: '#F5B544',
 };
 
 export const light: Palette = {
@@ -131,6 +135,8 @@ export const light: Palette = {
   heroTo: '#2E2A8F',
   onHero: '#FFFFFF',
   onHero2: '#E0E2FF',
+  heroSuccess: '#3DD68C',
+  heroWarning: '#F5B544',
 };
 
 // Tinted tiles for avatars and setting icons, picked by a stable hash.

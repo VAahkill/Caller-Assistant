@@ -41,3 +41,41 @@ export function tabBarColors(t: Tokens) {
     onBadge: t.dark ? t.color.onPrimary : '#FFFFFF',
   };
 }
+
+export const TAB_BAR_BASE_HEIGHT = 64;
+
+/** Bottom tab bar options shared by the tab layout and its test. */
+export function tabBarOptions(t: Tokens, bottomInset: number) {
+  const c = tabBarColors(t);
+  return {
+    headerShown: false,
+    tabBarActiveTintColor: c.active,
+    tabBarInactiveTintColor: c.inactive,
+    tabBarActiveBackgroundColor: 'transparent',
+    tabBarStyle: {
+      backgroundColor: c.background,
+      borderTopColor: c.border,
+      height: TAB_BAR_BASE_HEIGHT + bottomInset,
+      paddingTop: 6,
+      paddingBottom: bottomInset + 6,
+      elevation: 0,
+    },
+    tabBarLabelStyle: { fontFamily: fonts.medium, fontSize: 12, lineHeight: 16, fontWeight: 'normal' as const },
+    tabBarBadgeStyle: { backgroundColor: c.badge, color: c.onBadge, fontFamily: fonts.semibold, fontSize: 11 },
+    tabBarHideOnKeyboard: true,
+    sceneStyle: { backgroundColor: t.color.bg },
+  };
+}
+
+/** Header look for stack screens: flat, on the page background, Inter titles. */
+export function stackOptions(t: Tokens) {
+  return {
+    headerStyle: { backgroundColor: t.color.bg },
+    headerShadowVisible: false,
+    headerTintColor: t.color.text,
+    headerTitleStyle: { fontFamily: fonts.semibold, fontSize: 17, fontWeight: 'normal' as const, color: t.color.text },
+    headerBackButtonDisplayMode: 'minimal' as const,
+    contentStyle: { backgroundColor: t.color.bg },
+    animation: 'slide_from_right' as const,
+  };
+}

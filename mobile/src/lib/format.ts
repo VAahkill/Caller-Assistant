@@ -48,3 +48,11 @@ export function greeting(now: Date = new Date()): string {
   const h = now.getHours();
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
 }
+
+/** "+91 98480-12345" -> "+919848012345"; keeps a leading + and the digits. */
+export function cleanNumber(raw: string): string {
+  const trimmed = raw.trim();
+  const digits = trimmed.replace(/\D/g, '');
+  if (!digits) return '';
+  return trimmed.startsWith('+') ? `+${digits}` : trimmed.startsWith('00') ? `+${digits.slice(2)}` : digits;
+}

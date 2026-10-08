@@ -166,3 +166,15 @@ test('reduceCall works on its own for the practice screen', () => {
   const v = reduceCall(callView({ ...live, transcript: [] }), ev({ event: 'transcript', call_id: live.id, who, line: line('z') }));
   expect(v.record.transcript.map((l) => l.id)).toEqual(['z']);
 });
+
+test('a final record without lines keeps the transcript already on screen', () => {
+  let v = reduceCall(callView({ ...live, transcript: [] }), ev({ event: 'transcript', call_id: live.id, who, line: line('a') }));
+  v = reduceCall(v, ev({ event: 'call_ended', call_id: live.id, call: { ...live, status: 'completed', transcript: [] } }));
+  expect(v.status).toBe('idle');
+  expect(v.record.status).toBe('completed');
+  expect(v.record.transcript.map((l) => l.id)).toEqual(['a']);
+
+  // A record that does carry lines is the final word.
+  v = reduceCall(v, ev({ event: 'call_ended', call_id: live.id, call: { ...live, transcript: [line('b')] } }));
+  expect(v.record.transcript.map((l) => l.id)).toEqual(['b']);
+});

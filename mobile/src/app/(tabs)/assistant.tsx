@@ -1,107 +1,118 @@
-import * as Clipboard from 'expo-clipboard';
-import { AudioModule, RecordingPresets, setAudioModeAsync, useAudioRecorder } from 'expo-audio';
-import { useState } from 'react';
-import { FlatList, KeyboardAvoidingView, Platform, StyleSheet, Text, View } from 'react-native';
+import { router } from 'expo-router';
 
-import { Button, Chip, Input, Muted } from '../../components/ui';
-import { api, phoneFromText } from '../../lib/api';
-import { useTheme } from '../../lib/theme';
+import { Banner } from '../../components/ui/Banner';
+import { LargeHeader } from '../../components/ui/LargeHeader';
+import { ListRow } from '../../components/ui/ListRow';
+import { Screen } from '../../components/ui/Screen';
+import { Section } from '../../components/ui/Section';
+import { SkeletonRows } from '../../components/ui/Skeleton';
+import { useProfile } from '../../hooks/useProfile';
+import { awayActive } from '../../lib/api';
+import { countryLabel } from '../../lib/countries';
+import { languageName } from '../../lib/languages';
+import { isExpired } from '../../lib/rules';
 
-interface Msg {
-  role: 'user' | 'assistant';
-  content: string;
-}
+const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
-const EXAMPLES = [
-  'Check if a 3 seater table is free at 8 tonight',
-  'From now on, tell couriers to leave parcels with the guard',
-  "I'm travelling until Friday, callers can know that",
-  "I'm available to answer questions now",
-];
+/** Assistant: everything about how calls are answered, one row per area. */
+export default function AssistantHub() {
+  const profile = useProfile();
+  const p = profile.data;
+  const go = (href: string) => () => router.push(href as never);
 
-/** Talk to your own assistant: give it instructions or ask it to call somewhere. */
-export default function Assistant() {
-  const t = useTheme();
-  const [msgs, setMsgs] = useState<Msg[]>([]);
-  const [text, setText] = useState('');
-  const [busy, setBusy] = useState(false);
-  const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
-  const [recording, setRecording] = useState(false);
-
-  async function send(message: string) {
-    if (!message.trim()) return;
-    setText('');
-    setBusy(true);
-    const history = msgs.slice(-10);
-    setMsgs((m) => [...m, { role: 'user', content: message }]);
-    try {
-      // If the user copied a number (e.g. from Google Maps), pass it along.
-      const clip = await Clipboard.getStringAsync().catch(() => '');
-      const shared = phoneFromText(clip) ? clip : '';
-      const r = await api.chat(message, shared, history);
-      setMsgs((m) => [...m, { role: 'assistant', content: r.reply }]);
-    } catch (e) {
-      setMsgs((m) => [...m, { role: 'assistant', content: (e as Error).message }]);
-    }
-    setBusy(false);
-  }
-
-  async function toggleRecording() {
-    if (!recording) {
-      const perm = await AudioModule.requestRecordingPermissionsAsync();
-      if (!perm.granted) return;
-      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
-      await recorder.prepareToRecordAsync();
-      recorder.record();
-      setRecording(true);
-      return;
-    }
-    await recorder.stop();
-    setRecording(false);
-    if (!recorder.uri) return;
-    setBusy(true);
-    try {
-      const r = await api.voiceChat(recorder.uri);
-      setMsgs((m) => [...m, { role: 'user', content: r.heard }, { role: 'assistant', content: r.reply }]);
-    } catch (e) {
-      setMsgs((m) => [...m, { role: 'assistant', content: (e as Error).message }]);
-    }
-    setBusy(false);
-  }
+  const activeInstructions = p ? p.instructions.filter((i) => i.enabled && !isExpired(i.expires_at)).length : 0;
+  const notes = p ? p.knowledge.filter((k) => k.enabled).length : 0;
+  const blocked = p ? p.blocked_numbers.length + p.blocked_prefixes.length : 0;
+  const loc = p?.location;
 
   return (
-    <KeyboardAvoidingView style={{ flex: 1 }} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
-      <FlatList
-        data={msgs}
-        keyExtractor={(_, i) => String(i)}
-        contentContainerStyle={{ padding: 16, gap: 8 }}
-        ListEmptyComponent={
-          <View style={{ gap: 8 }}>
-            <Muted>Tell your assistant what to do. Try:</Muted>
-            {EXAMPLES.map((e) => (
-              <Chip key={e} label={e} onPress={() => send(e)} />
-            ))}
-          </View>
-        }
-        renderItem={({ item }) => (
-          <View style={{ flexDirection: 'row', justifyContent: item.role === 'user' ? 'flex-end' : 'flex-start' }}>
-            <View style={[styles.bubble, { backgroundColor: item.role === 'user' ? t.user : t.assistant }]}>
-              <Text style={{ color: t.text, fontSize: 16 }}>{item.content}</Text>
-            </View>
-          </View>
-        )}
+    <Screen topInset refreshing={profile.refreshing} onRefresh={() => void profile.refresh()} testID="assistant">
+      <LargeHeader
+        title="Assistant"
+        subtitle={p ? `How ${p.assistant_name} answers your calls.` : 'How your assistant answers your calls.'}
       />
-      <View style={[styles.bar, { borderColor: t.border, backgroundColor: t.card }]}>
-        <Input style={{ flex: 1 }} value={text} onChangeText={setText} placeholder="Message your assistant"
-          onSubmitEditing={() => send(text)} returnKeyType="send" />
-        <Button title={recording ? 'Stop' : '🎙'} kind={recording ? 'danger' : 'secondary'} onPress={toggleRecording} disabled={busy && !recording} />
-        <Button title="Send" onPress={() => send(text)} disabled={busy} />
-      </View>
-    </KeyboardAvoidingView>
+      {profile.error && !p ? (
+        <Banner tone="danger" title="Couldn't load your settings" message={profile.error} action={{ label: 'Retry', onPress: () => void profile.reload() }} />
+      ) : null}
+      {!p && !profile.error ? (
+        <SkeletonRows rows={6} />
+      ) : p ? (
+        <>
+          <Section title="Your assistant">
+            <ListRow
+              icon="person-circle-outline"
+              iconTone="primary"
+              title="Name and greeting"
+              subtitle={`${p.assistant_name} answers for ${p.user_name || 'you'}`}
+              chevron
+              onPress={go('/persona')}
+            />
+            <ListRow icon="mic-outline" iconTone="primary" title="Voices" subtitle="Pick a voice per language, or record your own" chevron onPress={go('/voices')} />
+            <ListRow
+              icon="language-outline"
+              iconTone="primary"
+              title="Languages"
+              subtitle={`Callers: ${p.caller_languages.map(languageName).join(', ')} · You: ${languageName(p.owner_language)}`}
+              chevron
+              onPress={go('/languages')}
+            />
+          </Section>
+
+          <Section title="What it knows">
+            <ListRow
+              icon="list-outline"
+              iconTone="success"
+              title="Instructions"
+              subtitle={activeInstructions ? `${plural(activeInstructions, 'rule')} in use` : 'Tell it how to handle calls'}
+              chevron
+              onPress={go('/instructions')}
+            />
+            <ListRow
+              icon="book-outline"
+              iconTone="success"
+              title="What callers may know"
+              subtitle={notes ? plural(notes, 'note') : 'Facts it may share, and with whom'}
+              chevron
+              onPress={go('/notes')}
+            />
+            <ListRow
+              icon="location-outline"
+              iconTone="success"
+              title="Delivery location"
+              subtitle={loc && (loc.building || loc.address) ? [loc.floor_unit, loc.building || loc.address].filter(Boolean).join(', ') : 'Pin your door for delivery partners'}
+              chevron
+              onPress={go('/location')}
+            />
+          </Section>
+
+          <Section title="Calls">
+            <ListRow
+              icon="shield-checkmark-outline"
+              iconTone="warning"
+              title="Who gets through"
+              subtitle={`${countryLabel(p.home_country_code)}${blocked ? ` · ${plural(blocked, 'block')}` : ''}`}
+              chevron
+              onPress={go('/screening')}
+            />
+            <ListRow
+              icon="moon-outline"
+              iconTone="warning"
+              title="Away"
+              subtitle={awayActive(p.away) ? p.away.message : 'Not set'}
+              chevron
+              onPress={go('/away')}
+            />
+            <ListRow
+              icon="play-circle-outline"
+              iconTone="primary"
+              title="Practice call"
+              subtitle="Play a caller and hear how it answers"
+              chevron
+              onPress={go('/practice')}
+            />
+          </Section>
+        </>
+      ) : null}
+    </Screen>
   );
 }
-
-const styles = StyleSheet.create({
-  bubble: { maxWidth: '85%', borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
-  bar: { flexDirection: 'row', gap: 8, padding: 12, alignItems: 'center', borderTopWidth: StyleSheet.hairlineWidth },
-});

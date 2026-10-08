@@ -10,6 +10,25 @@ jest.mock('expo-haptics', () => ({
 }));
 jest.mock('expo-system-ui', () => ({ setBackgroundColorAsync: jest.fn(() => Promise.resolve()) }));
 jest.mock('expo-audio', () => require('./src/test/expoAudioMock').expoAudioMock);
+// expo-notifications refuses to load outside a development build; screens
+// only need these calls to exist. Tests that check notifications spy on them.
+jest.mock('expo-notifications', () => ({
+  AndroidImportance: { DEFAULT: 3, HIGH: 4, MAX: 5 },
+  DEFAULT: 'default',
+  addNotificationResponseReceivedListener: jest.fn(() => ({ remove: jest.fn() })),
+  getExpoPushTokenAsync: jest.fn(async () => ({ data: 'ExponentPushToken[test]' })),
+  getPermissionsAsync: jest.fn(async () => ({ granted: true, canAskAgain: true, status: 'granted' })),
+  requestPermissionsAsync: jest.fn(async () => ({ granted: true, canAskAgain: true, status: 'granted' })),
+  scheduleNotificationAsync: jest.fn(async () => 'notification-id'),
+  setNotificationCategoryAsync: jest.fn(async () => null),
+  setNotificationChannelAsync: jest.fn(async () => null),
+  setNotificationHandler: jest.fn(),
+}));
+jest.mock('expo-contacts', () => ({
+  ContactField: { FULL_NAME: 'fullName', PHONES: 'phones' },
+  requestPermissionsAsync: jest.fn(async () => ({ granted: true, canAskAgain: true, status: 'granted' })),
+  Contact: { getAllDetails: jest.fn(async () => []) },
+}));
 // The device keystore, in memory.
 jest.mock('expo-secure-store', () => {
   const store = new Map<string, string>();

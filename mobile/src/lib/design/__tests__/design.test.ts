@@ -65,6 +65,12 @@ describe.each(schemes)('%s theme', (scheme) => {
     expect(ratio(fg, bg, base)).toBeGreaterThanOrEqual(4.5);
   });
 
+  test('status dots on the hero meet the 3:1 non-text minimum', () => {
+    for (const dot of ['heroSuccess', 'heroWarning'] as const) {
+      for (const bg of ['heroFrom', 'heroTo'] as const) expect(ratio(dot, bg)).toBeGreaterThanOrEqual(3);
+    }
+  });
+
   test('avatar and icon tile accents are readable', () => {
     for (const a of t.accents) expect(contrast(a.fg, a.bg)).toBeGreaterThanOrEqual(4.5);
   });

@@ -167,7 +167,13 @@ export function reduceCall(view: CallView, ev: AnyEvent, now = Date.now() / 1000
       return { ...view, record: ev.call, language: ev.call.language || view.language };
     case 'call_ended':
     case 'call_rejected':
-      return { ...view, record: ev.call, status: 'idle', statusDetail: '' };
+      // Keep the lines already shown if the final record arrives without them.
+      return {
+        ...view,
+        record: { ...ev.call, transcript: ev.call.transcript.length ? ev.call.transcript : r.transcript },
+        status: 'idle',
+        statusDetail: '',
+      };
     case 'transcript':
       return { ...view, record: { ...r, transcript: upsertLine(r.transcript, ev.line) } };
     case 'transcript_update': {

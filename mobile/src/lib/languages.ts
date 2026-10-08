@@ -31,3 +31,19 @@ export const languageNative = (code: string): string => BY_CODE.get(code)?.nativ
 
 /** Short tag for bubbles and pills, e.g. "TE". */
 export const languageTag = (code: string): string => (code ? code.slice(0, 2).toUpperCase() : '');
+
+/** Adds a language at the end, or removes it (never the last one). */
+export function toggleLanguage(list: string[], code: string): string[] {
+  if (!list.includes(code)) return [...list, code];
+  return list.length > 1 ? list.filter((c) => c !== code) : list;
+}
+
+/** Moves a language one place up (-1) or down (+1); the order is the detection prior. */
+export function moveLanguage(list: string[], code: string, by: -1 | 1): string[] {
+  const i = list.indexOf(code);
+  const j = i + by;
+  if (i < 0 || j < 0 || j >= list.length) return list;
+  const next = [...list];
+  [next[i], next[j]] = [next[j], next[i]];
+  return next;
+}
