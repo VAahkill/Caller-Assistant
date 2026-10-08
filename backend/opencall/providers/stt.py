@@ -7,7 +7,7 @@ import threading
 from dataclasses import dataclass
 from typing import Protocol
 
-from ..audio import pcm16_to_float
+from ..audio import pcm16_to_float, split_at_pauses
 
 
 @dataclass
@@ -60,6 +60,17 @@ class FasterWhisperSTT:
 
     def _run(self, pcm16k: bytes, language_hint: str | None) -> Transcription:
         model = self._load()
+        # Whisper writes at most 224 tokens per piece of audio. Telugu or Tamil needs
+        # up to 20 a second, so a long turn would stop mid-word; it is transcribed in
+        # pieces cut at pauses instead, all in the language of the first one.
+        first, *rest = split_at_pauses(pcm16k)
+        heard = self._once(model, first, language_hint)
+        texts = [heard.text] + [self._once(model, piece, heard.language).text for piece in rest]
+        # A piece that still ran out of tokens ends in half a character.
+        text = " ".join(t for t in texts if t).replace("\ufffd", "").strip()
+        return Transcription(text=text, language=heard.language)
+
+    def _once(self, model, pcm16k: bytes, language_hint: str | None) -> Transcription:
         audio = pcm16_to_float(pcm16k)
         options = dict(beam_size=1, vad_filter=False, condition_on_previous_text=False)
         segments, info = model.transcribe(audio, language=language_hint, **options)
@@ -67,7 +78,7 @@ class FasterWhisperSTT:
             # Segments are lazy, so nothing was transcribed yet; redo it in the most
             # likely of the allowed languages.
             segments, info = model.transcribe(audio, language=_closest(info, self.languages), **options)
-        text = " ".join(s.text for s in segments).strip()
+        text = " ".join(s.text.strip() for s in segments).strip()
         return Transcription(text=text, language=info.language or "en")
 
     async def transcribe(self, pcm16k: bytes, language_hint: str | None = None) -> Transcription:

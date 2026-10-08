@@ -140,6 +140,42 @@ def trim_silence(pcm: bytes, rate: int = RATE, pad_ms: int = 250) -> bytes:
     return pcm[start * 2 : end * 2]
 
 
+def _middle_of_longest_quiet(energy: np.ndarray) -> int:
+    quiet = np.append(energy <= energy.min() * 1.5 + 1e-7, False)
+    best, best_len, run = 0, 0, -1
+    for i, q in enumerate(quiet):
+        if q and run < 0:
+            run = i
+        elif not q and run >= 0:
+            if i - run > best_len:
+                best, best_len = (run + i) // 2, i - run
+            run = -1
+    return best
+
+
+def split_at_pauses(pcm: bytes, rate: int = RATE, max_s: float = 9.0, min_s: float = 4.0) -> list[bytes]:
+    """Cuts long speech into pieces of at most ``max_s`` seconds. Each cut is in the
+    middle of the longest quiet stretch (energy averaged over 60 ms, so not inside a
+    word) between ``min_s`` and ``max_s`` into the piece. Short speech comes back
+    as one piece."""
+    n = rate * FRAME_MS // 1000
+    max_frames, min_frames = int(max_s * 1000) // FRAME_MS, int(min_s * 1000) // FRAME_MS
+    x = pcm16_to_float(pcm)
+    total = len(x) // n
+    if total <= max_frames:
+        return [pcm]
+    frames_ = x[: total * n].reshape(-1, n)
+    energy = np.convolve(np.mean(frames_ * frames_, axis=1), np.ones(3) / 3, mode="same")
+    pieces, start = [], 0
+    while total - start > max_frames:
+        lo, hi = start + min_frames, start + max_frames
+        cut = lo + _middle_of_longest_quiet(energy[lo:hi])
+        pieces.append(pcm[start * n * 2 : cut * n * 2])
+        start = cut
+    pieces.append(pcm[start * n * 2 :])
+    return pieces
+
+
 class StereoRecorder:
     """Keeps caller (left) and assistant (right) audio for the call recording."""
 

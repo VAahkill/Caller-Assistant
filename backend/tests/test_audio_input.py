@@ -1,14 +1,16 @@
-"""Caller audio: Silero voice detection by default, and recordings from the app
-decoded reliably and trimmed to the speech."""
+"""Caller audio: Silero voice detection by default, recordings from the app decoded
+reliably and trimmed to the speech, and long speech transcribed in full."""
 
 import shutil
 import subprocess
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
 
-from opencall.audio import decode_audio, to_wav, trim_silence
+from opencall.audio import decode_audio, split_at_pauses, to_wav, trim_silence
 from opencall.config import Settings
+from opencall.providers.stt import FasterWhisperSTT
 from opencall.providers.vad import EnergyVAD, make_vad
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg is not installed")
@@ -40,6 +42,40 @@ def test_trim_silence_keeps_quiet_speech_and_drops_silence():
     assert 1.0 <= len(trimmed) / 32000 <= 1.6
     assert trim_silence(silence) == b""
     assert trim_silence(b"") == b""
+
+
+def test_long_speech_is_cut_at_its_pauses():
+    pause = b"\x00\x00" * 8000  # half a second
+    speech = tone(6) + pause + tone(6) + pause + tone(7)
+    pieces = split_at_pauses(speech)
+    assert b"".join(pieces) == speech
+    # cut near the middle of each pause (6.0-6.5 s and 12.5-13.0 s), not in the speech
+    first, second = len(pieces[0]) / 32000, (len(pieces[0]) + len(pieces[1])) / 32000
+    assert len(pieces) == 3 and 6.1 <= first <= 6.4 and 12.6 <= second <= 12.9
+    assert split_at_pauses(tone(8)) == [tone(8)]
+    assert all(len(p) <= 9 * 32000 for p in split_at_pauses(tone(30)))
+
+
+def test_a_long_turn_is_transcribed_in_full():
+    """Whisper stops after 224 tokens, which a long Telugu turn needs; the pieces
+    are transcribed one by one in the language of the first."""
+
+    class FakeWhisper:
+        def __init__(self):
+            self.calls = []
+
+        def transcribe(self, audio, language=None, **_):
+            self.calls.append(language)
+            text = ["ఆర్డర్ ఉంది", "గేట్ దగ్గర ఉన్నాను", "ఎక్కడికి రావాలి\ufffd"][len(self.calls) - 1]
+            return iter([SimpleNamespace(text=" " + text)]), SimpleNamespace(language=language or "te",
+                                                                          all_language_probs=[("te", 0.9)])
+
+    stt = FasterWhisperSTT(languages=["en", "hi", "te"])
+    stt._model = FakeWhisper()
+    pause = b"\x00\x00" * 8000
+    result = stt._run(tone(6) + pause + tone(6) + pause + tone(7), None)
+    assert stt._model.calls == [None, "te", "te"]
+    assert result.text == "ఆర్డర్ ఉంది గేట్ దగ్గర ఉన్నాను ఎక్కడికి రావాలి" and result.language == "te"
 
 
 @needs_ffmpeg
