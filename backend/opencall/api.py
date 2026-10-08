@@ -35,10 +35,12 @@ from .models import (
     voice_per_language,
 )
 from .owner_chat import handle_owner_message
+from .providers.tts import VoiceInfo
 from .telephony.asterisk import AsteriskGateway
 from .telephony.bluetooth import BluetoothGateway
 from .telephony.queue_bridge import QueueBridge
 from .telephony.twilio import TwilioGateway, valid_signature
+from .voice_samples import VoiceNotReady
 
 
 log = logging.getLogger("opencall.api")
@@ -95,6 +97,10 @@ class ProfilePatch(BaseModel):
     @classmethod
     def _voices(cls, value: dict[str, str] | None) -> dict[str, str] | None:
         return None if value is None else voice_per_language(value)
+
+
+class VoicePatch(BaseModel):
+    label: str
 
 
 class TextIn(BaseModel):
@@ -370,20 +376,73 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
         return Response(to_wav(pcm), media_type="audio/wav")
 
     # ------------------------------------------------------------ voices
+    def voice_json(voice: VoiceInfo) -> dict:
+        data = voice.to_json()
+        data["sample_url"] = engine.samples.url(voice)
+        return data
+
     @app.get("/voices", dependencies=A)
     async def list_voices():
-        return [v.__dict__ for v in engine.tts.list_voices()]
+        """The user's recorded voices first (newest first), then the built-in ones."""
+        return [voice_json(v) for v in engine.tts.list_voices()]
+
+    @app.get("/voices/{voice_id}/sample.wav", dependencies=A)
+    async def voice_sample(voice_id: str, request: Request, lang: str | None = None, v: str | None = None):
+        """The voice saying a short line in ``lang`` (or its own language). Made once
+        and kept; the URL in ``sample_url`` carries its version, so the app may cache
+        it for good."""
+        if engine.tts.get_voice(voice_id) is None:
+            raise HTTPException(404, "No such voice.")
+        try:
+            path, key = await engine.samples.get(voice_id, lang_code(lang))
+        except VoiceNotReady as e:
+            raise HTTPException(409, str(e)) from e
+        except Exception as e:
+            log.exception("Couldn't make the demo for %s", voice_id)
+            raise HTTPException(503, f"Couldn't make this voice's demo ({e.__class__.__name__}: {e})"[:300]) from e
+        etag = f'"{key}"'
+        cache = "public, max-age=31536000, immutable" if v == key else "no-cache"
+        headers = {"ETag": etag, "Cache-Control": cache}
+        if request.headers.get("if-none-match") == etag:
+            return Response(status_code=304, headers=headers)
+        return FileResponse(path, media_type="audio/wav", headers=headers)
+
+    @app.get("/voices/{voice_id}/recording", dependencies=A)
+    async def voice_recording(voice_id: str):
+        """What the user recorded for a voice of their own."""
+        path = engine.tts.clone_recording(voice_id)
+        if path is None:
+            raise HTTPException(404, "No recording for this voice.")
+        return FileResponse(path, media_type="audio/wav", headers={"Cache-Control": "private, max-age=3600"})
 
     @app.post("/voices", dependencies=A)
-    async def add_voice(label: str = Form(...), audio: UploadFile = File(...)):
+    async def add_voice(label: str = Form("My voice"), audio: UploadFile = File(...)):
+        """A recording of the user's voice (15-30 s, any format the phone records).
+        Returns the new voice as "preparing"; a voice_status event follows when it is
+        ready (or failed), and GET /voices shows its status too."""
+        data = await audio.read()
         try:
-            return engine.tts.add_clone(label, await audio.read()).__dict__
+            voice = await asyncio.to_thread(engine.tts.add_clone, label, data)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
+        engine.prepare_voice(voice.id)
+        return voice_json(voice)
 
-    @app.delete("/voices/{name}", dependencies=A)
-    async def delete_voice(name: str):
-        engine.tts.delete_clone(name)
+    @app.patch("/voices/{voice_id}", dependencies=A)
+    async def rename_voice(voice_id: str, patch: VoicePatch):
+        try:
+            return voice_json(engine.tts.rename_clone(voice_id, patch.label))
+        except KeyError as e:
+            raise HTTPException(404, "Only your own recorded voices can be renamed.") from e
+
+    @app.delete("/voices/{voice_id}", dependencies=A)
+    async def delete_voice(voice_id: str):
+        """Deletes a recorded voice. If it was in use, the default voice takes over."""
+        voice_id = voice_id if ":" in voice_id else f"clone:{voice_id}"  # older apps send the bare name
+        if not engine.tts.delete_clone(voice_id):
+            raise HTTPException(404, "No such recorded voice.")
+        engine.forget_voice(voice_id)
+        await engine.bus.publish("profile_updated")
         return {"ok": True}
 
     # ------------------------------------------------------------ live events for the app

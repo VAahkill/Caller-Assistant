@@ -67,7 +67,10 @@ class Settings(BaseSettings):
     # mms (fast on a CPU) | parler (more natural, wants a GPU) | none
     indic_tts: str = "mms"
     indic_parler_model: str = "ai4bharat/indic-parler-tts"
-    indic_preload: str = "te,ta"  # loaded at startup so the first call isn't slow
+    # Loaded at startup so the first call isn't slow (the caller languages are too).
+    indic_preload: str = "te,ta"
+    # Piper voices (Telugu; needs espeak-ng and onnxruntime): on | off
+    piper_voices: str = "on"
 
     # Telephony: which bridges to enable. See docs/TELEPHONY.md. All free:
     # Bluetooth to your own phone, or Asterisk with a USB GSM modem.

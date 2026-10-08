@@ -1,6 +1,7 @@
 import base64
 import io
 import json
+import re
 import wave
 
 import numpy as np
@@ -69,8 +70,9 @@ def test_voice_clone_upload(settings, engine):
         w.writeframes(b"\x01\x00" * 16000 * 8)
     c = client(settings, engine)
     r = c.post("/voices", headers=H, data={"label": "My Voice"}, files={"audio": ("v.wav", buf.getvalue(), "audio/wav")})
-    assert r.json()["id"] == "clone:my_voice"
-    assert any(v["id"] == "clone:my_voice" for v in c.get("/voices", headers=H).json())
+    voice_id = r.json()["id"]
+    assert re.fullmatch(r"clone:my_voice-[0-9a-f]{6}", voice_id)  # unique, so a second "My Voice" can't replace it
+    assert any(v["id"] == voice_id for v in c.get("/voices", headers=H).json())
 
 
 def test_simulator_websocket(settings, engine, llm):

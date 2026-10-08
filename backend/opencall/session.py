@@ -360,6 +360,7 @@ class CallSession:
         if needs_translation(text, lang) and self.engine.mt.can_translate("en", lang):
             # The assistant's English, said in the caller's language. The translation is
             # checked again: a number must not slip through in other words.
+            await self._set_status("translating")
             english, text = text, await self.engine.mt.translate(text, "en", lang)
             res = scrub_outgoing(text, self.conv.allowed_numbers())
             if res.blocked:
@@ -369,15 +370,15 @@ class CallSession:
         if record:
             await self._line("assistant", text, lang=lang, english=english)
         voice = self.engine.store.profile.voice
-        tts_lang = lang if lang in self.engine.tts.supported_languages(voice) else "en"
         try:
-            pcm = await self.engine.speech(text, voice, tts_lang, cache=cached)
+            # Each sentence is said by a voice that reads its script (see TTSRouter).
+            pcm = await self.engine.speech(text, voice, lang, cache=cached)
         except Exception as e:
             log.exception("TTS failed for %r", text)
             await self._publish("turn_error", detail=f"Couldn't speak a reply ({e.__class__.__name__}: {e})"[:300])
             return
         if not pcm:
-            log.warning("TTS made no audio for %r (%s)", text, tts_lang)
+            log.warning("TTS made no audio for %r (%s)", text, lang)
             return
         await self._set_status("speaking")
         for f in frames(pcm):

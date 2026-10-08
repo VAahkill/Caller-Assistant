@@ -89,12 +89,14 @@ def read_wav(data: bytes) -> tuple[bytes, int]:
     return raw, rate
 
 
-def decode_audio(data: bytes) -> tuple[bytes, int]:
+def decode_audio(data: bytes, rate: int | None = None) -> tuple[bytes, int]:
     """Mono PCM16 and rate from WAV, or from any format ffmpeg reads (the app
-    records AAC/M4A, which is what phones produce natively)."""
+    records AAC/M4A, which is what phones produce natively). With ``rate``, the
+    audio is converted to that rate."""
     if data[:4] == b"RIFF":
         try:
-            return read_wav(data)
+            pcm, src = read_wav(data)
+            return (resample(pcm, src, rate), rate) if rate else (pcm, src)
         except (ValueError, wave.Error, EOFError):
             pass  # float or 24-bit WAV: ffmpeg reads those too
     import shutil
@@ -109,8 +111,8 @@ def decode_audio(data: bytes) -> tuple[bytes, int]:
         f.write(data)
         f.flush()
         proc = subprocess.run(
-            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", f.name, "-ac", "1", "-ar", str(RATE), "-f", "s16le",
-             "pipe:1"],
+            ["ffmpeg", "-nostdin", "-loglevel", "error", "-i", f.name, "-ac", "1", "-ar", str(rate or RATE),
+             "-f", "s16le", "pipe:1"],
             capture_output=True,
             timeout=60,
         )
@@ -118,7 +120,7 @@ def decode_audio(data: bytes) -> tuple[bytes, int]:
         raise ValueError("Could not read that audio file.")
     if not proc.stdout:
         raise ValueError("That recording has no audio in it.")
-    return proc.stdout, RATE
+    return proc.stdout, rate or RATE
 
 
 def trim_silence(pcm: bytes, rate: int = RATE, pad_ms: int = 250) -> bytes:

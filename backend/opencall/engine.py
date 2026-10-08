@@ -24,6 +24,7 @@ from .session import CallSession
 from .store import Store
 from .tasks import TaskManager
 from .telephony.base import CallBridge, Dialer, NoDialer
+from .voice_samples import VoiceSamples
 
 log = logging.getLogger("opencall.engine")
 
@@ -50,14 +51,16 @@ class Engine:
         # Translation between the caller's language and English.
         self.mt = mt or build_translator(settings.mt_provider)
         self.tts = tts or TTSRouter(settings.voices_dir, settings.tts_provider, settings.clone_provider,
-                                    settings.indic_tts, settings.indic_parler_model)
+                                    settings.indic_tts, settings.indic_parler_model, settings.piper_voices)
+        self.tts.chosen_voices = lambda: self.store.profile.voices_by_language
+        self.samples = VoiceSamples(self.tts, settings.voices_dir / "samples")
         self.dialer: Dialer = dialer or NoDialer()
         self.tasks = TaskManager(self)
         self.sessions: dict[str, CallSession] = {}
         # What is loaded and working, for /health and the app's status screen. mt
         # (translation) and lid (language identification) are set by those services.
         self.ready: dict[str, bool] = {"stt": False, "tts": False, "llm": False, "mt": False, "lid": False}
-        self._speech_cache: OrderedDict[tuple[str, str, str], bytes] = OrderedDict()
+        self._speech_cache: OrderedDict[tuple[str, ...], bytes] = OrderedDict()
         self._speech_lock = threading.Lock()
         self._background: set[asyncio.Task] = set()
         self._llm_warming: asyncio.Task | None = None
@@ -84,21 +87,42 @@ class Engine:
         log.info("Translation: %s", self.mt.name)
         vad = self.make_vad()
         log.info("Voice activity detection: %s", getattr(vad, "name", type(vad).__name__))
-        self.tts.warm_up(self.store.profile.voice, [lang.strip() for lang in self.settings.indic_preload.split(",")])
+        self.tts.warm_up(self.store.profile.voice, self._speech_languages())
         self._prerender_phrases()
         self.ready["tts"] = True
         log.info("Speech models loaded, ready for calls.")
+        made = self.samples.prerender(["en", *self._speech_languages()])
+        log.info("Voice demos ready: %d.", made)
 
     def _prerender_phrases(self) -> None:
-        """The greeting, "one moment" and the apology play instantly from memory."""
+        """The greeting, "one moment" and the apology play instantly from memory, in
+        the voices now chosen. Lines already in memory aren't made again."""
         voice = self.store.profile.voice
-        langs = {"en", *self.store.profile.caller_languages}
-        langs |= {lang.strip() for lang in self.settings.indic_preload.split(",") if lang.strip()}
         supported = self.tts.supported_languages(voice)
-        self._prerender_greeting()
-        for text, lang in [(self.fixed_line(key, lang), lang) for lang in sorted(langs & supported)
-                           for key in ("filler", "fallback")]:
-            self._remember((text, voice, lang), self.tts._synth_sync(text, voice, lang))
+        self._prerender(opening_line(self.store.profile), voice, "en")
+        for lang in ["en", *self._speech_languages()]:
+            if lang in supported:
+                for key in ("filler", "fallback"):
+                    self._prerender(self.fixed_line(key, lang), voice, lang)
+
+    def _prerender(self, text: str, voice: str, lang: str) -> None:
+        key = self._speech_key(text, voice, lang)
+        with self._speech_lock:
+            if key in self._speech_cache:
+                return
+        self._remember(key, self.tts._synth_sync(text, voice, lang))
+
+    def _speech_languages(self) -> list[str]:
+        """Languages to have voices ready for: the caller languages and OPENCALL_INDIC_PRELOAD."""
+        extra = [lang.strip() for lang in self.settings.indic_preload.split(",") if lang.strip()]
+        return list(dict.fromkeys([*self.store.profile.caller_languages, *extra]))
+
+    def _speech_key(self, text: str, voice: str, lang: str) -> tuple[str, ...]:
+        """Cached speech depends on the voices chosen per language too."""
+        chosen = self.store.profile.voices_by_language
+        if not chosen:
+            return (text, voice, lang)
+        return (text, voice, lang, ",".join(f"{k}={v}" for k, v in sorted(chosen.items())))
 
     def fixed_line(self, key: str, lang: str) -> str:
         """A fixed line (see phrases.py) in ``lang``: written by hand for the languages
@@ -108,17 +132,10 @@ class Engine:
             return self.mt.translate_sync(text, "en", lang)
         return text
 
-    def _prerender_greeting(self) -> None:
-        voice, text = self.store.profile.voice, opening_line(self.store.profile)
-        with self._speech_lock:
-            if (text, voice, "en") in self._speech_cache:
-                return
-        self._remember((text, voice, "en"), self.tts._synth_sync(text, voice, "en"))
-
     def profile_changed(self) -> None:
         """The user changed something the call prompt or the greeting is made from
-        (their name, location, instructions...): prepare the new ones now, so the
-        next caller isn't kept waiting while the model reads the new prompt."""
+        (their name, location, instructions, voices...): prepare the new ones now, so
+        the next caller isn't kept waiting while the model reads the new prompt."""
         try:
             asyncio.get_running_loop()
         except RuntimeError:
@@ -129,7 +146,7 @@ class Engine:
         self._changed_during_call = False
         self.refresh_llm_cache()
         if self.ready["tts"]:
-            self._spawn(asyncio.to_thread(self._prerender_greeting))
+            self._spawn(asyncio.to_thread(self._prerender_phrases))
 
     async def warm_up_all(self) -> None:
         """Speech models (in a thread) and the LLM at the same time."""
@@ -202,8 +219,38 @@ class Engine:
         if not task.cancelled() and task.exception() is not None:
             log.error("background task failed", exc_info=task.exception())
 
+    # ------------------------------------------------------------ voices
+    def prepare_voice(self, voice_id: str) -> asyncio.Task:
+        """Gets a just-recorded voice ready (its speaker latents, then its demo) in the
+        background, and tells the app when it is ready or why it failed."""
+
+        async def prepare() -> None:
+            info = await asyncio.to_thread(self.tts.prepare_clone, voice_id)
+            if info.status == "ready":
+                try:
+                    await self.samples.get(voice_id)
+                except Exception as e:
+                    log.warning("Couldn't make the demo for %s: %s: %s", voice_id, e.__class__.__name__, e)
+            await self.bus.publish("voice_status", voice_id=voice_id, status=info.status, detail=info.detail)
+
+        return self._spawn(prepare())
+
+    def forget_voice(self, voice_id: str) -> None:
+        """A recorded voice was deleted: stop using it anywhere."""
+        self.samples.forget(voice_id)
+        profile = self.store.profile
+        changed = False
+        if profile.voice == voice_id:
+            profile.voice = self.settings.default_voice
+            changed = True
+        if voice_id in profile.voices_by_language.values():
+            profile.voices_by_language = {k: v for k, v in profile.voices_by_language.items() if v != voice_id}
+            changed = True
+        if changed:
+            self.store.save_profile()
+
     # ------------------------------------------------------------ speech
-    def _remember(self, key: tuple[str, str, str], pcm: bytes) -> None:
+    def _remember(self, key: tuple[str, ...], pcm: bytes) -> None:
         with self._speech_lock:
             self._speech_cache[key] = pcm
             self._speech_cache.move_to_end(key)
@@ -214,7 +261,7 @@ class Engine:
         """Synthesised speech; fixed lines (cache=True) are kept in memory."""
         if not cache:
             return await self.tts.synthesize(text, voice, lang)
-        key = (text, voice, lang)
+        key = self._speech_key(text, voice, lang)
         with self._speech_lock:
             hit = self._speech_cache.get(key)
         if hit is not None:
