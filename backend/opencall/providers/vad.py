@@ -24,6 +24,8 @@ class VAD(Protocol):
 
 
 class EnergyVAD:
+    name = "energy"
+
     def __init__(self, threshold_db: float = -38.0):
         self.threshold_db = threshold_db
         self.noise_db = -60.0
@@ -72,8 +74,10 @@ class SileroVAD:
         shared = _load_silero()
         # The ONNX wrapper keeps its state in plain attributes (a shallow copy shares
         # the loaded session); the TorchScript model keeps it inside, so it is deep-copied.
-        self.model = copy.deepcopy(shared) if isinstance(shared, torch.nn.Module) else copy.copy(shared)
+        jit = isinstance(shared, torch.nn.Module)
+        self.model = copy.deepcopy(shared) if jit else copy.copy(shared)
         self.model.reset_states()
+        self.name = "Silero (TorchScript)" if jit else "Silero (ONNX)"
         self.threshold = threshold
         self._buf = np.zeros(0, dtype=np.float32)
         self._last = False

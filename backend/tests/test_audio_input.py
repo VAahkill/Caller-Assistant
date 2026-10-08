@@ -1,6 +1,7 @@
 """Caller audio: Silero voice detection by default, recordings from the app decoded
 reliably and trimmed to the speech, and long speech transcribed in full."""
 
+import importlib.util
 import shutil
 import subprocess
 from types import SimpleNamespace
@@ -33,6 +34,17 @@ def test_silero_is_the_default_and_energy_the_fallback(monkeypatch, caplog):
     assert isinstance(make_vad("silero"), EnergyVAD)
     assert "Silero voice detection is off" in caplog.text and "silero_vad" in caplog.text
     assert isinstance(make_vad("energy"), EnergyVAD)
+
+
+@pytest.mark.skipif(importlib.util.find_spec("silero_vad") is None, reason="silero-vad is not installed")
+def test_silero_loads_once_and_each_call_has_its_own_state():
+    import torch
+
+    threads = torch.get_num_threads()
+    a, b = make_vad("silero"), make_vad("silero")
+    assert a.name.startswith("Silero") and a.model is not b.model
+    assert torch.get_num_threads() == threads  # importing silero_vad must not slow the voices
+    assert a.is_speech(b"\x00\x00" * 16000) is False
 
 
 def test_trim_silence_keeps_quiet_speech_and_drops_silence():

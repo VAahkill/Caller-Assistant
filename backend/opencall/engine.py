@@ -62,7 +62,7 @@ class Engine:
             load_stt()
         self.ready["stt"] = True
         vad = self.make_vad()
-        log.info("Voice activity detection: %s", type(vad).__name__)
+        log.info("Voice activity detection: %s", getattr(vad, "name", type(vad).__name__))
         self.tts.warm_up(self.store.profile.voice, [lang.strip() for lang in self.settings.indic_preload.split(",")])
         self._prerender_phrases()
         self.ready["tts"] = True
