@@ -42,7 +42,7 @@ test('a full practice call: greeting, typed Telugu line, translation, reply, own
   expect(call.callId).toMatch(/^practice-/);
   await until(() => r.events.some((e) => e.event === 'transcript'), 'the greeting');
 
-  await expect(call.sendText('నమస్తే, మీ ఆర్డర్ తీసుకొచ్చాను')).resolves.toBeUndefined();
+  await expect(call.sendText('నమస్తే, మీ ఆర్డర్ తీసుకొచ్చాను')).resolves.toEqual({ kind: 'text' });
   await until(() => r.events.filter((e) => e.event === 'transcript').length >= 3, 'the reply');
   const lines = r.events.flatMap((e) => (e.event === 'transcript' ? [e.line] : []));
   expect(lines[1]).toMatchObject({ speaker: 'caller', lang: 'te' });
@@ -50,7 +50,7 @@ test('a full practice call: greeting, typed Telugu line, translation, reply, own
   expect(r.events).toContainEqual(expect.objectContaining({ event: 'transcript_update', line_id: lines[1].id, translation_lang: 'en' }));
   expect(lines[2]).toMatchObject({ speaker: 'assistant', lang: 'te', text: expect.stringContaining('గేట్ 2') });
 
-  await expect(call.say('Please leave it with security')).resolves.toBeUndefined();
+  await expect(call.say('Please leave it with security')).resolves.toEqual({ kind: 'say' });
   await until(() => r.events.some((e) => e.event === 'transcript' && e.line.speaker === 'user'), 'the owner line');
   const mine = r.events.find((e) => e.event === 'transcript' && e.line.speaker === 'user');
   expect(mine?.event === 'transcript' && mine.line).toMatchObject({ lang: 'te', translation: 'Please leave it with security' });
@@ -68,7 +68,8 @@ test('input the server refuses is reported, never dropped', async () => {
   const call = await PracticeCall.start({}, r.handlers);
   await expect(call.sendText('   ')).rejects.toThrow('The message was empty.');
   await expect(call.sendAudio('')).rejects.toThrow('That recording was empty');
-  await expect(call.sendAudio('QUFBQQ==', 'te')).resolves.toBeUndefined();
+  // The ack says how long the recording was, so the screen can show it.
+  await expect(call.sendAudio('QUFBQQ==', 'te')).resolves.toEqual({ kind: 'audio', seconds: 2.4 });
   expect(call.waiting).toBe(0);
   call.hangup();
 });

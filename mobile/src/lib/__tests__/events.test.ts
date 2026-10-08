@@ -178,3 +178,36 @@ test('a final record without lines keeps the transcript already on screen', () =
   v = reduceCall(v, ev({ event: 'call_ended', call_id: live.id, call: { ...live, transcript: [line('b')] } }));
   expect(v.record.transcript.map((l) => l.id)).toEqual(['b']);
 });
+
+describe('reduceCall, one call on its own (practice and the live screen)', () => {
+  const base = callView({ ...live, transcript: [line('a')] });
+  const at = 1_760_000_200;
+
+  test('a translation for a line not on screen changes nothing', () => {
+    const v = reduceCall(base, ev({ event: 'transcript_update', call_id: live.id, who, line_id: 'missing', translation: 'x', translation_lang: 'en' }));
+    expect(v).toBe(base);
+  });
+
+  test('assistant_status replaces the detail, and clears it when none is sent', () => {
+    let v = reduceCall(base, ev({ event: 'assistant_status', call_id: live.id, who, state: 'idle', detail: 'waiting for Arjun' }));
+    expect(v).toMatchObject({ status: 'idle', statusDetail: 'waiting for Arjun' });
+    v = reduceCall(v, ev({ event: 'assistant_status', call_id: live.id, who, state: 'thinking' }));
+    expect(v).toMatchObject({ status: 'thinking', statusDetail: '' });
+  });
+
+  test('only the last five turn errors are kept', () => {
+    let v = base;
+    for (let i = 0; i < 7; i++) v = reduceCall(v, ev({ event: 'turn_error', call_id: live.id, who, detail: `e${i}` }), at + i);
+    expect(v.errors.map((e) => e.detail)).toEqual(['e2', 'e3', 'e4', 'e5', 'e6']);
+  });
+
+  test('a hold puts the call on hold; resolving it marks the hold done and resumes', () => {
+    const fresh = callView({ ...live, status: 'active', holds: [], transcript: [] });
+    let v = reduceCall(fresh, ev({ event: 'hold_question', call_id: live.id, who, hold_id: 'h9', question: 'Bring it up?' }), at);
+    expect(v.record.status).toBe('on_hold');
+    expect(v.record.holds).toEqual([{ id: 'h9', question: 'Bring it up?', asked_at: at, answer: null, answered_at: null, sensitive: false }]);
+    v = reduceCall(v, ev({ event: 'hold_resolved', call_id: live.id, who, hold_id: 'h9', answered: true }), at + 5);
+    expect(v.record.status).toBe('active');
+    expect(v.record.holds[0].answered_at).toBe(at + 5);
+  });
+});

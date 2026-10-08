@@ -34,9 +34,15 @@ export function practiceUrl({ number = PRACTICE_NUMBER, lang = '' }: PracticeOpt
   return wsUrl(`/ws/simulate?${q}`);
 }
 
+/** The server accepted a message; for a recording, how long it was. */
+export interface Ack {
+  kind: string;
+  seconds?: number;
+}
+
 interface Pending {
   kind: string;
-  resolve: () => void;
+  resolve: (ack: Ack) => void;
   reject: (e: Error) => void;
   timer: ReturnType<typeof setTimeout>;
   timedOut: boolean;
@@ -110,27 +116,27 @@ export class PracticeCall {
   }
 
   /** The caller says something (typed). */
-  sendText(text: string, lang?: string): Promise<void> {
+  sendText(text: string, lang?: string): Promise<Ack> {
     return this.send('text', { text, ...(lang ? { lang } : {}) });
   }
 
   /** The caller says something (a finished recording, base64). */
-  sendAudio(audioB64: string, lang?: string): Promise<void> {
+  sendAudio(audioB64: string, lang?: string): Promise<Ack> {
     return this.send('audio', { audio_b64: audioB64, ...(lang ? { lang } : {}) });
   }
 
   /** The owner cuts in with typed words, said to the caller in their language. */
-  say(text: string, lang?: string): Promise<void> {
+  say(text: string, lang?: string): Promise<Ack> {
     return this.send('say', { action: 'say', call_id: this.callId, text, ...(lang ? { lang } : {}) });
   }
 
   /** The owner cuts in with a recording. */
-  sayAudio(audioB64: string, lang?: string): Promise<void> {
+  sayAudio(audioB64: string, lang?: string): Promise<Ack> {
     return this.send('say_audio', { action: 'say_audio', call_id: this.callId, audio_b64: audioB64, ...(lang ? { lang } : {}) });
   }
 
   /** The owner answers a hold question. */
-  answer(text: string, holdId?: string): Promise<void> {
+  answer(text: string, holdId?: string): Promise<Ack> {
     return this.send('answer', { action: 'answer', call_id: this.callId, text, hold_id: holdId });
   }
 
@@ -139,9 +145,9 @@ export class PracticeCall {
     else this.finish(1000, '');
   }
 
-  private send(kind: string, payload: Record<string, unknown>): Promise<void> {
+  private send(kind: string, payload: Record<string, unknown>): Promise<Ack> {
     if (!this.isOpen) return Promise.reject(new Error('The practice call has ended. Start a new one.'));
-    return new Promise<void>((resolve, reject) => {
+    return new Promise<Ack>((resolve, reject) => {
       const entry: Pending = {
         kind,
         resolve,
@@ -158,13 +164,13 @@ export class PracticeCall {
     });
   }
 
-  private settle(error: string | null): boolean {
+  private settle(result: { error: string } | { ack: Ack }): boolean {
     const entry = this.pending.shift();
     if (!entry) return false;
     clearTimeout(entry.timer);
     if (!entry.timedOut) {
-      if (error) entry.reject(new Error(error));
-      else entry.resolve();
+      if ('error' in result) entry.reject(new Error(result.error));
+      else entry.resolve(result.ack);
     }
     return true;
   }
@@ -181,10 +187,10 @@ export class PracticeCall {
     }
     const ev = parsed.event as ServerEvent | SimulateEvent;
     if (ev.event === 'ack') {
-      this.settle(null);
+      this.settle({ ack: { kind: ev.kind, ...(typeof ev.seconds === 'number' ? { seconds: ev.seconds } : {}) } });
       return;
     }
-    if (ev.event === 'error' && !ev.call_id && this.settle(ev.detail)) return;
+    if (ev.event === 'error' && !ev.call_id && this.settle({ error: ev.detail })) return;
     if (ev.event === 'started' || ev.event === 'rejected') return;
     this.handlers.onEvent(ev);
   }

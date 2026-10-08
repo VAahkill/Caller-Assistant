@@ -204,7 +204,15 @@ export function reduceCall(view: CallView, ev: AnyEvent, now = Date.now() / 1000
         },
       };
     case 'hold_resolved':
-      return { ...view, record: { ...r, status: r.status === 'on_hold' ? 'active' : r.status } };
+      // Answered or timed out: either way nobody is waiting on it any more.
+      return {
+        ...view,
+        record: {
+          ...r,
+          status: r.status === 'on_hold' ? 'active' : r.status,
+          holds: r.holds.map((h) => (h.id === ev.hold_id ? { ...h, answered_at: h.answered_at ?? now } : h)),
+        },
+      };
     default:
       return view;
   }
