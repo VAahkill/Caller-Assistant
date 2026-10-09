@@ -5,12 +5,15 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from collections.abc import Callable
 from enum import Enum
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 LANGUAGE_CODE = re.compile(r"^[a-z]{2,3}$")
+# A country calling code such as +91 (not a phone number).
+COUNTRY_CODE = re.compile(r"^\+[1-9]\d{0,3}$")
 
 
 def language_codes(value: list[str]) -> list[str]:
@@ -20,6 +23,23 @@ def language_codes(value: list[str]) -> list[str]:
     if bad:
         raise ValueError(f"not language codes: {', '.join(bad)} (use codes like en, hi, te, ta)")
     return codes or ["en"]
+
+
+def language_code(value: str) -> str:
+    code = value.strip().lower()
+    if not LANGUAGE_CODE.match(code):
+        raise ValueError(f"not a language code: {value!r} (use a code like en, hi, te, ta)")
+    return code
+
+
+def country_code(value: str) -> str:
+    """"+91" as it is; "91" or " +91 " tidied; anything else refused."""
+    code = value.strip().replace(" ", "")
+    if code.isdigit():
+        code = "+" + code
+    if not COUNTRY_CODE.match(code):
+        raise ValueError(f"not a country calling code: {value!r} (the code with a plus, like +91; not a phone number)")
+    return code
 
 
 def voice_per_language(value: dict[str, str]) -> dict[str, str]:
@@ -58,17 +78,23 @@ class Location(BaseModel):
             return ""
         return f"https://www.google.com/maps/search/?api=1&query={self.lat},{self.lng}"
 
-    def describe(self) -> str:
+    def describe(self, english: Callable[[str], str] = lambda t: t) -> str:
+        """The details for the assistant; ``english`` gives the English of what the
+        user wrote in another language (the map hint is kept as the map gives it)."""
         parts = [
-            ("Address", self.address),
-            ("Building", self.building),
-            ("Floor / unit", self.floor_unit),
-            ("Landmarks", self.landmarks),
-            ("Gate / entry", self.gate_instructions),
+            ("Address", english(self.address)),
+            ("Building", english(self.building)),
+            ("Floor / unit", english(self.floor_unit)),
+            ("Landmarks", english(self.landmarks)),
+            ("Gate / entry", english(self.gate_instructions)),
             ("Nearby (from map pin)", self.geocoded_hint),
             ("Map link (can be sent by SMS)", self.maps_link()),
         ]
         return "\n".join(f"- {k}: {v}" for k, v in parts if v)
+
+    def texts(self) -> list[str]:
+        """What the user wrote (for translating ahead of calls)."""
+        return [self.address, self.building, self.floor_unit, self.landmarks, self.gate_instructions]
 
 
 class Contact(BaseModel):
@@ -77,18 +103,59 @@ class Contact(BaseModel):
     blocked: bool = False
 
 
-class Instruction(BaseModel):
+AppliesTo = Literal["everyone", "contacts", "unknown", "delivery", "numbers"]
+ShareWith = Literal["anyone", "contacts", "delivery", "numbers"]
+
+
+class _Rule(BaseModel):
+    """What instructions and notes have in common: they can be switched off, can end
+    on their own, and can be meant for some callers only."""
+
     id: str = Field(default_factory=new_id)
     text: str
+    enabled: bool = True
+    numbers: list[str] = Field(default_factory=list)  # for applies_to / share_with "numbers"
+    expires_at: float | None = None
     created_at: float = Field(default_factory=now)
+    updated_at: float = Field(default_factory=now)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _updated_defaults_to_created(cls, data):
+        # New, or saved by an older server: not updated since it was made.
+        if isinstance(data, dict) and "updated_at" not in data:
+            stamp = data.get("created_at") or now()
+            data = {**data, "created_at": stamp, "updated_at": stamp}
+        return data
+
+    def active(self, at: float | None = None) -> bool:
+        return self.enabled and (self.expires_at is None or self.expires_at > (now() if at is None else at))
 
 
-class KnowledgeNote(BaseModel):
+class Instruction(_Rule):
+    """How to handle calls ("Tell couriers to leave parcels with the guard")."""
+
+    applies_to: AppliesTo = "everyone"
+    category: str = "general"
+
+
+class KnowledgeNote(_Rule):
     """Facts the assistant may share with callers ("I'm in Goa until Friday")."""
 
-    id: str = Field(default_factory=new_id)
-    text: str
-    share_with: Literal["anyone", "contacts"] = "contacts"
+    share_with: ShareWith = "contacts"
+
+
+class Away(BaseModel):
+    """What the user is doing instead of taking calls. ``message`` is English and
+    reads after "Rahul is ...", e.g. "In a meeting until 3 PM"."""
+
+    preset: str = "custom"
+    message: str
+    until: float | None = None  # when it ends by itself; None: until switched off
+    set_at: float = Field(default_factory=now)
+
+    def active(self, at: float | None = None) -> bool:
+        return self.until is None or self.until > (now() if at is None else at)
 
 
 class Profile(BaseModel):
@@ -106,7 +173,15 @@ class Profile(BaseModel):
     # A voice per language, e.g. {"te": "piper:te_IN-padmavathi-medium"}; languages not
     # listed use ``voice`` when it can speak them, else that language's default voice.
     voices_by_language: dict[str, str] = Field(default_factory=dict)
+    # The language the user reads and writes in the app: caller lines are shown
+    # translated into it (translate_live), and what the user types or says to a caller
+    # in it is translated into the caller's language.
+    owner_language: str = "en"
+    translate_live: bool = True
     blocked_prefixes: list[str] = Field(default_factory=lambda: ["+91140"])  # India telemarketing series
+    blocked_numbers: list[str] = Field(default_factory=list)  # never answered
+    vip_numbers: list[str] = Field(default_factory=list)  # urgent notification; the assistant takes extra care
+    away: Away | None = None
     location: Location = Field(default_factory=Location)
     instructions: list[Instruction] = Field(default_factory=list)
     knowledge: list[KnowledgeNote] = Field(default_factory=list)
@@ -122,6 +197,25 @@ class Profile(BaseModel):
     @classmethod
     def _voices(cls, value: dict[str, str]) -> dict[str, str]:
         return voice_per_language(value)
+
+    @field_validator("owner_language")
+    @classmethod
+    def _owner_language(cls, value: str) -> str:
+        return language_code(value)
+
+    @field_validator("home_country_code")
+    @classmethod
+    def _country(cls, value: str) -> str:
+        # Tidied when it can be; an odd value saved by an older app is kept as it is
+        # (the app's PATCH is checked strictly, see api.ProfilePatch).
+        try:
+            return country_code(value)
+        except ValueError:
+            return value
+
+    def current_away(self, at: float | None = None) -> Away | None:
+        """The away status, unless it has ended."""
+        return self.away if self.away is not None and self.away.active(at) else None
 
 
 class CallDirection(str, Enum):
@@ -181,6 +275,8 @@ class CallRecord(BaseModel):
     recording: str = ""  # file name under recordings/
     task_id: str | None = None  # set for outbound concierge calls
     reject_reason: str = ""
+    urgent: bool = False  # a VIP called, or the call needs the user soon
+    action_items: list[str] = Field(default_factory=list)  # from the end-of-call summary
 
 
 class MessageStatus(str, Enum):

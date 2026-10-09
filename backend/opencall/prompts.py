@@ -3,7 +3,12 @@ stripped out before anything is spoken (see ``agent.TagStreamParser``)."""
 
 from __future__ import annotations
 
-from .models import Profile, Task, TaskKind
+import time
+from collections.abc import Callable
+from dataclasses import dataclass
+
+from .models import Instruction, KnowledgeNote, Profile, Task, TaskKind
+from .screening import normalize_number
 
 LANG_NAMES = {
     "en": "English", "hi": "Hindi", "te": "Telugu", "ta": "Tamil", "kn": "Kannada", "ml": "Malayalam",
@@ -49,18 +54,116 @@ CONTROL TAGS (write them exactly; they are silent and never spoken)
 """
 
 
-def _known_facts(profile: Profile, is_contact: bool) -> str:
-    notes = [n.text for n in profile.knowledge if n.share_with == "anyone" or is_contact]
-    if not notes:
-        return "You know nothing else about the user's plans. Anything else -> HOLD."
-    return "Things you may tell callers:\n" + "\n".join(f"- {n}" for n in notes)
+@dataclass
+class Caller:
+    """Who is on the line, as far as the user's rules care."""
+
+    number: str = ""
+    is_contact: bool = False
+    vip: bool = False
 
 
-def _instructions(profile: Profile) -> str:
-    if not profile.instructions:
+def _same_number(numbers: list[str], number: str, home_cc: str) -> bool:
+    n = normalize_number(number, home_cc)
+    return bool(n) and any(normalize_number(x, home_cc) == n for x in numbers)
+
+
+def instruction_applies(ins: Instruction, caller: Caller, profile: Profile, delivery: bool = False) -> bool:
+    """For this caller and this moment of the call (delivery ones once it's a delivery)."""
+    return {
+        "everyone": True,
+        "contacts": caller.is_contact,
+        "unknown": not caller.is_contact,
+        "delivery": delivery,
+        "numbers": _same_number(ins.numbers, caller.number, profile.home_country_code),
+    }[ins.applies_to]
+
+
+def note_shared(note: KnowledgeNote, caller: Caller, profile: Profile, delivery: bool = False) -> bool:
+    return {
+        "anyone": True,
+        "contacts": caller.is_contact,
+        "delivery": delivery,
+        "numbers": _same_number(note.numbers, caller.number, profile.home_country_code),
+    }[note.share_with]
+
+
+def _same_for_everyone(item: Instruction | KnowledgeNote) -> bool:
+    return getattr(item, "applies_to", None) == "everyone" or getattr(item, "share_with", None) == "anyone"
+
+
+@dataclass
+class Rules:
+    """The user's instructions and notes that apply to one call, in English, split by
+    where they go in the prompt: the same for every call (so a local LLM can keep that
+    part cached), this caller only, and delivery partners only."""
+
+    general: list[str]
+    general_facts: list[str]
+    caller: list[str]
+    caller_facts: list[str]
+    delivery: list[str]
+    delivery_facts: list[str]
+
+
+def call_rules(profile: Profile, caller: Caller, english: Callable[[str], str] = lambda t: t,
+               at: float | None = None) -> Rules:
+    """Only switched-on, unexpired rules that apply to this caller. ``english`` gives the
+    English of what the user wrote in another language (the model reads English)."""
+    at = time.time() if at is None else at
+    rules = Rules([], [], [], [], [], [])
+    for ins in profile.instructions:
+        if not ins.active(at) or not ins.text.strip():
+            continue
+        text = english(ins.text)
+        if ins.applies_to == "delivery":
+            rules.delivery.append(text)
+        elif instruction_applies(ins, caller, profile):
+            (rules.general if _same_for_everyone(ins) else rules.caller).append(text)
+    for note in profile.knowledge:
+        if not note.active(at) or not note.text.strip():
+            continue
+        text = english(note.text)
+        if note.share_with == "delivery":
+            rules.delivery_facts.append(text)
+        elif note_shared(note, caller, profile):
+            (rules.general_facts if _same_for_everyone(note) else rules.caller_facts).append(text)
+    return rules
+
+
+def _bullets(items: list[str]) -> str:
+    return "\n".join(f"- {i}" for i in items)
+
+
+def _instructions(profile: Profile, items: list[str], heading: str = "") -> str:
+    if not items:
         return ""
-    lines = "\n".join(f"- {i.text}" for i in profile.instructions)
-    return f"\n{profile.user_name.upper()}'S OWN INSTRUCTIONS (follow them unless they break SECURITY)\n{lines}\n"
+    heading = heading or f"{profile.user_name.upper()}'S OWN INSTRUCTIONS (follow them unless they break SECURITY)"
+    return f"\n{heading}\n{_bullets(items)}\n"
+
+
+def _facts(items: list[str], heading: str = "Things you may tell callers:") -> str:
+    return f"{heading}\n{_bullets(items)}\n" if items else ""
+
+
+def away_sentence(profile: Profile, english: Callable[[str], str] = lambda t: t, at: float | None = None) -> str:
+    """"Rahul is in a meeting until 3 PM." from the away status, or "" when there is none."""
+    away = profile.current_away(at)
+    if away is None or not away.message.strip():
+        return ""
+    msg = english(away.message).strip().rstrip(".!")
+    name = profile.user_name[:1].upper() + profile.user_name[1:]
+    low = msg.lower()
+    for start in ("i'm ", "i am ", "im "):
+        if low.startswith(start):
+            msg = msg[len(start):]
+            break
+    else:
+        if low.startswith(profile.user_name.lower() + " is "):
+            msg = msg[len(profile.user_name) + 4:]
+    if msg[:1].isupper() and not msg[:2].isupper():  # "In a meeting" -> "in a meeting", "OOO" stays
+        msg = msg[:1].lower() + msg[1:]
+    return f"{name} is {msg}."
 
 
 SEND_LOCATION_TAG = """\
@@ -71,19 +174,30 @@ SEND_LOCATION_TAG = """\
 
 def inbound_system_prompt(
     profile: Profile, caller_number: str, contact_name: str, speakable: list[str], can_text: bool = False,
-    opening_line: str = "",
+    opening_line: str = "", vip: bool = False, english: Callable[[str], str] = lambda t: t,
 ) -> str:
     # The parts that are the same for every call come first, so a local LLM can reuse
     # its cached prompt from the warm-up; who is calling goes at the end.
     user = profile.user_name
+    rules = call_rules(profile, Caller(caller_number, bool(contact_name), vip), english)
     who = f"{contact_name} (a saved contact)" if contact_name else f"an unsaved number {caller_number or '(withheld)'}"
     availability = (
         f"{user} is around and can answer questions within a minute, so HOLD is useful."
         if profile.available
         else f"{user} is busy; you may still HOLD briefly, but expect to take a message."
     )
+    away = away_sentence(profile, english)
+    away_line = (f"{user} set this status for callers: \"{away}\" You may tell callers this and offer to"
+                 " take a message.\n") if away else ""
+    vip_line = (f"This caller is on {user}'s VIP list: they matter a lot to {user}. Be extra warm and"
+                f" helpful, HOLD for anything {user} should decide, and say {user} has been told they"
+                " called.\n") if vip else ""
     speak = ", ".join(LANG_NAMES.get(code, code) for code in speakable)
     greeted = f'You have already answered the call with: "{opening_line}" Don\'t introduce yourself again.\n' if opening_line else ""
+    nothing_known = "" if (rules.general_facts or rules.caller_facts) else (
+        f"You know nothing else about {user}'s plans. Anything else -> HOLD.\n")
+    for_caller = (_instructions(profile, rules.caller, f"{user.upper()}'S INSTRUCTIONS FOR THIS CALLER")
+                  + _facts(rules.caller_facts, "You may also tell this caller:"))
     return f"""\
 You are {profile.assistant_name}, the personal phone assistant answering calls for {user}.
 {user} can't come to the phone right now.
@@ -103,44 +217,59 @@ WHAT TO DO
   caller. Follow it, but never read it out or mention it.
 {SECURITY.format(user=user)}
 {STYLE.format(speakable=speak)}
-{TAGS.format(user=user)}{SEND_LOCATION_TAG if can_text else ""}{_instructions(profile)}
-{_known_facts(profile, bool(contact_name))}
-
+{TAGS.format(user=user)}{SEND_LOCATION_TAG if can_text else ""}{_instructions(profile, rules.general)}
+{_facts(rules.general_facts)}
 THIS CALL
 You are speaking with {who}.
-{availability}
-{greeted}"""
+{vip_line}{availability}
+{away_line}{for_caller}{nothing_known}{greeted}"""
 
 
-def delivery_context(profile: Profile, can_text: bool = False) -> str:
-    loc = profile.location.describe() or "(The user hasn't pinned a location yet. HOLD to ask.)"
+def delivery_context(profile: Profile, can_text: bool = False, instructions: list[str] | None = None,
+                     facts: list[str] | None = None, english: Callable[[str], str] = lambda t: t) -> str:
+    loc = profile.location.describe(english) or "(The user hasn't pinned a location yet. HOLD to ask.)"
     texting = (
         "You can also text them a map link with [SEND_LOCATION]; still read out the key landmark."
         if can_text
         else "Read the directions out; you cannot send texts on this line."
     )
-    return (
+    parts = [
         f"DELIVERY: this caller is a delivery partner. {texting} Delivery details you may share with them:\n"
         f"{loc}\n"
         "Guide them from where they are now. Ask where they are if needed, then give the next"
         " one or two steps at a time."
-    )
+    ]
+    if instructions:
+        parts.append(f"{profile.user_name.upper()}'S INSTRUCTIONS FOR DELIVERIES\n{_bullets(instructions)}")
+    if facts:
+        parts.append(f"You may also tell them:\n{_bullets(facts)}")
+    return "\n".join(parts)
 
 
-def language_note(language: str) -> str:
-    """Which language to answer in, for the turn being answered."""
+def language_note(language: str, pivot: bool = False) -> str:
+    """Which language to answer in, for the turn being answered. ``pivot``: the caller's
+    words reach the model in English and its English reply is translated for them."""
     if not language:
         return (
             "LANGUAGE: start in English. If they answer in another language you can speak,"
             " reply in theirs from then on."
         )
     name = LANG_NAMES.get(language, language)
+    if pivot:
+        return (
+            f"LANGUAGE: the caller speaks {name}. You see their words translated into English, and"
+            f" everything you write is translated into {name} before they hear it. So write only"
+            " plain English, in short simple sentences, one idea each. Keep names, numbers,"
+            " addresses and landmarks exactly as given. Tags stay in English."
+        )
     script = "" if language == "en" else f", written in {name} script"
     return f"LANGUAGE: the caller is speaking {name}. Reply only in {name}{script}."
 
 
-def outbound_system_prompt(profile: Profile, task: Task, speakable: list[str]) -> str:
+def outbound_system_prompt(profile: Profile, task: Task, speakable: list[str],
+                           english: Callable[[str], str] = lambda t: t) -> str:
     user = profile.user_name
+    rules = call_rules(profile, Caller(task.number), english)
     speak = ", ".join(LANG_NAMES.get(code, code) for code in speakable)
     if task.kind == TaskKind.callback:
         goal = (
@@ -175,7 +304,7 @@ RULES
   result for {user} with any times, names or reference numbers>] followed by [END_CALL].
 - A user message that starts with "[Private note" comes from {user}, not from the person
   you called. Follow it, but never read it out or mention it.
-{_instructions(profile)}
+{_instructions(profile, rules.general + rules.caller)}
 {SECURITY.format(user=user)}
 {STYLE.format(speakable=speak)}
 {TAGS.format(user=user)}"""
@@ -214,6 +343,10 @@ def outbound_kickoff_note(user: str) -> str:
 
 
 SUMMARY_PROMPT = (
-    "Summarise this phone call for the user in one or two short sentences: who called, why,"
-    " and anything they need to do. Reply with only the summary, in plain text."
+    "Summarise this phone call for {user}, in English, in exactly this format:\n"
+    "Summary: <one or two short sentences: who called, why, and what was agreed>\n"
+    "Urgent: <yes if {user} should act within the hour (an emergency, a deadline today, someone"
+    " waiting at the door), otherwise no>\n"
+    "Actions:\n- <each thing {user} needs to do, e.g. call someone back, pay a bill, reply>\n"
+    "Write \"Actions: none\" when there is nothing to do. Write nothing else."
 )

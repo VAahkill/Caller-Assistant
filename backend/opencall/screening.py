@@ -40,6 +40,19 @@ def find_contact(profile: Profile, number: str) -> Contact | None:
     return None
 
 
+def _listed(numbers: list[str], number: str, home_cc: str) -> bool:
+    n = normalize_number(number, home_cc)
+    return bool(n) and any(normalize_number(x, home_cc) == n for x in numbers)
+
+
+def is_vip(profile: Profile, number: str) -> bool:
+    return _listed(profile.vip_numbers, number, profile.home_country_code)
+
+
+def is_blocked(profile: Profile, number: str) -> bool:
+    return _listed(profile.blocked_numbers, number, profile.home_country_code)
+
+
 @dataclass
 class ScreenDecision:
     answer: bool
@@ -54,12 +67,16 @@ def screen_number(profile: Profile, number: str) -> ScreenDecision:
     contact = find_contact(profile, number)
     if contact and contact.blocked:
         return ScreenDecision(False, "blocked contact", contact, "spam")
+    if is_blocked(profile, number):
+        return ScreenDecision(False, "blocked number", contact, "spam")
     n = normalize_number(number, profile.home_country_code)
     if not n:
         # Withheld numbers are answered (couriers often call from masked lines).
         return ScreenDecision(True, "withheld number", None, "unknown")
     if contact:
         return ScreenDecision(True, "saved contact", contact, "contact")
+    if is_vip(profile, n):  # VIPs get through every filter but a block
+        return ScreenDecision(True, "VIP", None, "unknown")
     for prefix in profile.blocked_prefixes:
         if n.startswith(prefix):
             return ScreenDecision(False, f"blocked prefix {prefix}", None, "spam")
