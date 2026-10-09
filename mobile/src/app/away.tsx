@@ -27,6 +27,16 @@ export default function Away() {
   const [preset, setPreset] = useState<AwayPreset>(AWAY_PRESETS[0]);
   const [length, setLength] = useState<Duration>(AWAY_PRESETS[0].defaultFor);
   const [custom, setCustom] = useState<string | null>(null);
+  // Changing a status that is on starts from what it is now (once, when it loads).
+  const [seeded, setSeeded] = useState(false);
+  if (p && !seeded) {
+    setSeeded(true);
+    const now = awayActive(p.away) ? AWAY_PRESETS.find((x) => x.id === p.away?.preset) : undefined;
+    if (now) {
+      setPreset(now);
+      setLength(now.defaultFor);
+    }
+  }
 
   const until = untilFor(length);
   const message = custom ?? awayMessage(preset.phrase, until);
@@ -105,7 +115,7 @@ export default function Away() {
         </Card>
       ) : null}
 
-      <Section title="What are you doing?" grouped={false}>
+      <Section title={active ? 'Change it' : 'What are you doing?'} grouped={false}>
         <View style={styles.grid}>
           {AWAY_PRESETS.map((x) => {
             const on = x.id === preset.id && custom == null;
@@ -135,7 +145,7 @@ export default function Away() {
         </View>
       </Section>
 
-      <Section title="For how long?" grouped={false}>
+      <Section title={active ? 'For how long, from now?' : 'For how long?'} grouped={false}>
         <View style={styles.chips}>
           {DURATIONS.map((d) => (
             <Chip
@@ -151,9 +161,9 @@ export default function Away() {
         </View>
       </Section>
 
-      <Section title="What callers hear" grouped={false}>
+      <Section title={active ? 'What callers will hear' : 'What callers hear'} grouped={false}>
         <TextField
-          label="Away message"
+          label={active ? 'New away message' : 'Away message'}
           value={message}
           onChangeText={setCustom}
           maxLength={120}

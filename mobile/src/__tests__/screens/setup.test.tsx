@@ -294,7 +294,8 @@ describe('Setup screens', () => {
     expect(screen.queryByText(/^Ends at /)).toBeNull();
     await fireEvent.press(screen.getByRole('radio', { name: 'Driving' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Until I turn it off' }));
-    expect(screen.getByLabelText('Away message').props.value).toBe('Driving');
+    // While away, the form is a change to the status shown above it.
+    expect(screen.getByLabelText('New away message').props.value).toBe('Driving');
     await fireEvent.press(screen.getByRole('button', { name: 'Update away status' }));
     await waitFor(() => expect(requests('PUT', '/away')).toHaveLength(1));
     expect(requests('PUT', '/away')[0].body).toEqual({ preset: 'driving', message: 'Driving', until: null });
@@ -303,5 +304,15 @@ describe('Setup screens', () => {
     await waitFor(() => expect(requests('DELETE', '/away')).toHaveLength(1));
     expect(await screen.findByRole('button', { name: 'Set away' })).toBeTruthy();
     expect(within(screen.getByTestId('away')).queryByText('You are away')).toBeNull();
+    expect(screen.getByLabelText('Away message')).toBeTruthy();
+  });
+
+  test('Away: changing a status that is on starts from its preset', async () => {
+    server.state.profile = { ...server.state.profile, away: { ...server.state.profile.away!, preset: 'gym', message: 'At the gym until 9 AM' } };
+    await renderScreen(<Away />);
+    expect(await screen.findByText('At the gym until 9 AM')).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'At the gym' }).props.accessibilityState).toMatchObject({ checked: true });
+    expect(screen.getByLabelText('New away message').props.value).toMatch(/^At the gym until /);
+    expect(screen.getByText('Change it')).toBeTruthy();
   });
 });
