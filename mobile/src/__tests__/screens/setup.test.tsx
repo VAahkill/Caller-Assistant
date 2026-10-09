@@ -161,6 +161,9 @@ describe('Setup screens', () => {
     await renderScreen(<LocationScreen />);
     await screen.findByRole('button', { name: 'Saved' });
     const hint = server.state.profile.location.geocoded_hint;
+    // With a street already written, it isn't offered until the pin moves or the field is empty.
+    expect(screen.queryByRole('button', { name: 'Use this as the street and area' })).toBeNull();
+    await fireEvent.changeText(screen.getByLabelText('Street and area'), '');
     await fireEvent.press(screen.getByRole('button', { name: 'Use this as the street and area' }));
     expect(screen.getByLabelText('Street and area').props.value).toBe(hint);
     expect(screen.getByRole('button', { name: 'Save location' })).toBeEnabled();
@@ -201,6 +204,8 @@ describe('Setup screens', () => {
     expect(await screen.findByText('Pin set from your link. Check it on the map, then save.')).toBeTruthy();
     expect(await screen.findByText('Road No. 2, Kondapur, Hyderabad 500084')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Save location' })).toBeEnabled();
+    // The pin moved, so the new map line can replace the street.
+    expect(screen.getByRole('button', { name: 'Use this as the street and area' })).toBeTruthy();
   });
 
   test('Screening: add a VIP, and unblock a number with Undo', async () => {
@@ -230,7 +235,7 @@ describe('Setup screens', () => {
     ]);
     await renderScreen(<Screening />);
     const row = within(await screen.findByTestId('contacts-sync'));
-    expect(row.getByText('3 numbers on your server · not synced from this phone yet')).toBeTruthy();
+    expect(row.getByText('3 numbers on your server')).toBeTruthy();
     await fireEvent.press(row.getByRole('button', { name: 'Sync now' }));
     expect(await screen.findByText('Synced 2 numbers. Saved contacts always get through.')).toBeTruthy();
     expect(within(screen.getByTestId('contacts-sync')).getByText('Last synced just now · 2 numbers')).toBeTruthy();

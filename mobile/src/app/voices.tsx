@@ -23,7 +23,7 @@ import { Icon } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
 import { duration, timeAgo } from '../lib/format';
 import { engineName } from '../lib/labels';
-import { languageName, languageNative } from '../lib/languages';
+import { languageName } from '../lib/languages';
 import { useLive } from '../lib/live';
 import type { VoiceInfo, VoiceStatus } from '../lib/types';
 import { STATUS_LABEL, choosePatch, chosenVoiceId, samplePathFor, statusChanges, suggestName, voiceGroups, type VoiceGroup } from '../lib/voices';
@@ -248,11 +248,11 @@ export default function Voices() {
 
 function LanguageGroup({ group, chosen, demo, onChoose }: { group: VoiceGroup; chosen?: string; demo: DemoPlayer; onChoose: (v: VoiceInfo) => void }) {
   const name = languageName(group.lang);
-  const native = languageNative(group.lang);
   const picked = group.voices.some((v) => v.id === chosen);
   return (
     <Section
-      title={native && native !== name ? `${name} · ${native}` : name}
+      // English name only: the overline's letter spacing breaks Indic scripts apart.
+      title={name}
       footer={
         group.voices.length === 0
           ? undefined
@@ -281,7 +281,7 @@ function VoiceRow({ voice: v, lang, chosen, demo, onChoose }: { voice: VoiceInfo
   const phase = demo.phaseOf(key);
   const mine = v.kind === 'clone';
   const meta = mine
-    ? ['Your voice', v.seconds ? `recorded ${duration(v.seconds)}` : null]
+    ? ['Your voice', v.seconds ? `${duration(v.seconds)} recording` : null]
     : [v.gender && v.gender.charAt(0).toUpperCase() + v.gender.slice(1), v.engine && engineName(v.engine)];
   return (
     <View testID={`voice-${v.id}-${lang}`}>
@@ -345,11 +345,15 @@ function MyVoiceCard({
           <Text variant="headline" numberOfLines={1}>
             {v.name}
           </Text>
-          <Text variant="footnote" color="text2">
-            {[v.seconds ? duration(v.seconds) : null, v.created_at ? `recorded ${timeAgo(v.created_at)}` : null].filter(Boolean).join(' · ')}
-          </Text>
+          <View style={styles.meta}>
+            <StatusPill label={STATUS_LABEL[v.status]} tone={tone} dot={v.status === 'preparing'} pulse={v.status === 'preparing'} />
+            <Text variant="footnote" color="text2">
+              {[v.seconds ? duration(v.seconds) : null, v.created_at ? `recorded ${timeAgo(v.created_at)}` : null].filter(Boolean).join(' · ')}
+            </Text>
+          </View>
         </View>
-        <StatusPill label={STATUS_LABEL[v.status]} tone={tone} dot={v.status === 'preparing'} pulse={v.status === 'preparing'} />
+        <IconButton icon="create-outline" label={`Rename ${v.name}`} onPress={onRename} />
+        <IconButton icon="trash-outline" label={`Delete ${v.name}`} onPress={onDelete} />
       </View>
       {v.status === 'preparing' ? (
         <Text variant="footnote" color="text2">
@@ -390,9 +394,6 @@ function MyVoiceCard({
           disabled={v.status !== 'ready'}
           onPress={() => demo.toggle(sample, api.voiceSample({ sample_url: samplePathFor(v, sampleLang) }))}
         />
-        <View style={styles.flex} />
-        <IconButton icon="create-outline" label={`Rename ${v.name}`} onPress={onRename} />
-        <IconButton icon="trash-outline" label={`Delete ${v.name}`} onPress={onDelete} />
       </View>
       {busy(originalPhase) || busy(samplePhase) ? <ProgressLine value={demo.progress} /> : null}
     </Card>
@@ -438,6 +439,7 @@ const styles = StyleSheet.create({
   voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 64, paddingVertical: 8 },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   used: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  meta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 },
   none: { padding: 16 },
   sheet: { gap: 16 },
   progress: { height: 3, borderRadius: 2, overflow: 'hidden', marginHorizontal: 16, marginBottom: 6 },

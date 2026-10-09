@@ -145,7 +145,7 @@ export default function Screening() {
             synced
               ? `Last synced ${timeAgo(synced.at)} · ${synced.count} numbers`
               : p.contacts.length
-                ? `${p.contacts.length} numbers on your server · not synced from this phone yet`
+                ? `${p.contacts.length} numbers on your server`
                 : 'Not synced yet'
           }
           trailing={<Button title={sync.busy ? 'Syncing' : 'Sync now'} size="sm" variant="tonal" icon="sync" loading={sync.busy} onPress={() => void sync.run()} />}

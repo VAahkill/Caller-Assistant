@@ -90,7 +90,10 @@ export default function LocationScreen() {
     }
   };
 
+  // After the pin moves, the map's line may be worth copying into the street field.
+  const [moved, setMoved] = useState(false);
   const movePin = (lat: number, lng: number) => {
+    setMoved(true);
     setLoc((l) => ({ ...l, lat, lng, geocoded_hint: '' }));
     void describePin(lat, lng);
   };
@@ -198,7 +201,7 @@ export default function LocationScreen() {
           </View>
           {mapSays.busy ? <ActivityIndicator size="small" color={t.color.primary} accessibilityLabel="Looking up this spot" /> : null}
         </View>
-        {mapSays.text && !mapSays.busy && loc.address.trim() !== mapSays.text ? (
+        {mapSays.text && !mapSays.busy && loc.address.trim() !== mapSays.text && (moved || !loc.address.trim()) ? (
           <Button
             title="Use this as the street and area"
             icon="arrow-down"

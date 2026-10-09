@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 
 import { CallerPreview } from '../components/domain/CallerPreview';
 import { RuleCard } from '../components/domain/RuleCard';
@@ -23,7 +23,7 @@ import { AWAY_PRESETS, DURATIONS, awayMessage, untilFor, type AwayPreset } from 
 import { Icon } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
 import { SHARE_WITH } from '../lib/labels';
-import { numbersLabel } from '../lib/phone';
+import { contactName, numbersLabel } from '../lib/phone';
 import { RULE_FILTERS, filterRules, notePreview, ruleCounts, type RuleFilter } from '../lib/rules';
 import type { Away, KnowledgeInput, KnowledgeNote, ShareWith } from '../lib/types';
 
@@ -257,7 +257,7 @@ export default function Notes() {
                       text={n.text}
                       enabled={n.enabled}
                       audience={n.share_with === 'numbers' ? numbersLabel(n.numbers, p.contacts, homeCc) : (SHARE_WITH[n.share_with] ?? n.share_with)}
-                      audienceIcon={AUDIENCE_ICON[n.share_with]}
+                      audienceIcon={n.share_with === 'numbers' && n.numbers.some((x) => contactName(p.contacts, x, homeCc)) ? 'person-circle-outline' : AUDIENCE_ICON[n.share_with]}
                       expiresAt={n.expires_at}
                       toggleBusy={toggling === n.id}
                       onToggle={(v) => void toggle(n, v)}
@@ -271,12 +271,25 @@ export default function Notes() {
           )}
 
           {unusedIdeas.length ? (
-            <Section title="Ideas" grouped={false}>
-              <View style={styles.chips}>
-                {unusedIdeas.map((idea) => (
-                  <Chip key={idea.text} kind="suggestion" icon="add" label={idea.text} onPress={() => newFrom(idea)} />
-                ))}
-              </View>
+            <Section title="Ideas" grouped={false} testID="note-ideas">
+              {unusedIdeas.map((idea) => (
+                <Pressable
+                  key={idea.text}
+                  onPress={() => newFrom(idea)}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Use: ${idea.text}`}
+                  android_ripple={{ color: t.color.surface3 }}
+                  style={[styles.idea, { backgroundColor: t.color.surface2, borderRadius: t.radius.md }]}
+                >
+                  <View style={styles.flex}>
+                    <Text variant="subhead">{idea.text}</Text>
+                    <Text variant="caption" color="text2">
+                      For {(SHARE_WITH[idea.share_with] ?? idea.share_with).toLowerCase()}
+                    </Text>
+                  </View>
+                  <Icon name="add-circle-outline" size={22} color={t.color.primary} />
+                </Pressable>
+              ))}
             </Section>
           ) : null}
 
@@ -308,7 +321,7 @@ export default function Notes() {
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   list: { gap: 12 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  idea: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 12 },
   awayRow: { flexDirection: 'row', gap: 12, alignItems: 'flex-start' },
   awayActions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
 });

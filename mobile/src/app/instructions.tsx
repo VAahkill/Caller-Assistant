@@ -22,7 +22,7 @@ import { api } from '../lib/api';
 import { Icon } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
 import { APPLIES_TO, INSTRUCTION_CATEGORY, categoryLabel } from '../lib/labels';
-import { numbersLabel } from '../lib/phone';
+import { contactName, numbersLabel } from '../lib/phone';
 import { RULE_FILTERS, filterRules, instructionPreview, ruleCounts, type RuleFilter } from '../lib/rules';
 import type { AppliesTo, Instruction, InstructionInput, InstructionTemplate } from '../lib/types';
 
@@ -188,7 +188,7 @@ export default function Instructions() {
                   text={i.text}
                   enabled={i.enabled}
                   audience={i.applies_to === 'numbers' ? numbersLabel(i.numbers, p.contacts, homeCc) : (APPLIES_TO[i.applies_to] ?? i.applies_to)}
-                  audienceIcon={AUDIENCE_ICON[i.applies_to]}
+                  audienceIcon={i.applies_to === 'numbers' && i.numbers.some((n) => contactName(p.contacts, n, homeCc)) ? 'person-circle-outline' : AUDIENCE_ICON[i.applies_to]}
                   category={i.category && i.category !== 'general' ? categoryLabel(i.category) : undefined}
                   categoryIcon={INSTRUCTION_CATEGORY[i.category]?.icon}
                   expiresAt={i.expires_at}

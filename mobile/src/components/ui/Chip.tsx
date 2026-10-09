@@ -78,6 +78,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     overflow: 'hidden',
     alignSelf: 'flex-start',
+    // A long label shortens with an ellipsis instead of running off the screen.
+    maxWidth: '100%',
   },
   label: { flexShrink: 1 },
   count: { borderRadius: 999, minWidth: 20, height: 20, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
