@@ -3,12 +3,16 @@ import { StyleSheet, View } from 'react-native';
 
 import { errorMessage } from '../../hooks/useAsyncAction';
 import { useTokens } from '../../lib/design/theme';
+import { prettyNumber } from '../../lib/format';
+import { contactName, normalizeNumber, type NamedNumber } from '../../lib/phone';
 import { EXPIRY_LABEL, expiryFor, expiryText, parseNumbers, presetOf, type ExpiryPreset } from '../../lib/rules';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
+import { CalendarPicker } from '../ui/CalendarPicker';
 import { Chip } from '../ui/Chip';
 import { Text } from '../ui/Text';
 import { TextField } from '../ui/TextField';
+import { ContactPicker } from './ContactPicker';
 
 export interface RuleDraft {
   text: string;
@@ -28,6 +32,9 @@ export interface RuleEditorSheetProps {
   audiences: Record<string, string>;
   /** Category chips (instructions only). */
   categories?: Record<string, string>;
+  /** Saved contacts, to pick "specific numbers" from. */
+  contacts?: NamedNumber[];
+  homeCc?: string;
   /** Plain-English summary of what the rule does, shown live as you type. */
   preview: (d: RuleDraft) => string;
   onClose: () => void;
@@ -38,11 +45,28 @@ export interface RuleEditorSheetProps {
 
 const PRESETS: Exclude<ExpiryPreset, 'custom'>[] = ['never', 'today', 'week'];
 
-/** Edit one instruction or note: text, who it applies to, category and when it ends. */
-export function RuleEditorSheet({ visible, kind, draft, isNew, audiences, categories, preview, onClose, onSave, onDelete }: RuleEditorSheetProps) {
+/** Edit one instruction or note: text, who it applies to (with numbers picked
+ *  from contacts), category, and when it ends (a preset or a day on a calendar). */
+export function RuleEditorSheet({
+  visible,
+  kind,
+  draft,
+  isNew,
+  audiences,
+  categories,
+  contacts = [],
+  homeCc = '+91',
+  preview,
+  onClose,
+  onSave,
+  onDelete,
+}: RuleEditorSheetProps) {
   const t = useTokens();
   const [d, setD] = useState<RuleDraft>({ text: '', audience: 'everyone', numbers: [], category: 'general', expires_at: null });
+  // Numbers picked from contacts, and the ones typed in (comma separated).
+  const [picked, setPicked] = useState<string[]>([]);
   const [numbersText, setNumbersText] = useState('');
+  const [calendar, setCalendar] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -51,14 +75,24 @@ export function RuleEditorSheet({ visible, kind, draft, isNew, audiences, catego
   if (draft && draft !== source) {
     setSource(draft);
     setD(draft);
-    setNumbersText(draft.numbers.join(', '));
+    const saved = draft.numbers.map((n) => normalizeNumber(n, homeCc));
+    setPicked(saved.filter((n) => contactName(contacts, n, homeCc)));
+    setNumbersText(
+      saved
+        .filter((n) => !contactName(contacts, n, homeCc))
+        .map(prettyNumber)
+        .join(', '),
+    );
+    setCalendar(presetOf(draft.expires_at) === 'custom');
     setError(null);
   }
 
   const preset = presetOf(d.expires_at);
-  const numbers = parseNumbers(numbersText);
+  const numbers = [...new Set([...picked, ...parseNumbers(numbersText, homeCc)])];
   const needsNumbers = d.audience === 'numbers' && numbers.length === 0;
   const current = { ...d, numbers: d.audience === 'numbers' ? numbers : [] };
+
+  const togglePicked = (n: string) => setPicked((list) => (list.includes(n) ? list.filter((x) => x !== n) : [...list, n]));
 
   const save = async () => {
     setSaving(true);
@@ -102,6 +136,7 @@ export function RuleEditorSheet({ visible, kind, draft, isNew, audiences, catego
           maxLength={500}
           counter
           autoFocus={isNew && !draft?.text}
+          helper={kind === 'instruction' ? 'Write it as you would tell a person, in any language.' : 'A fact, in any language. Callers hear it in theirs.'}
           error={error}
         />
 
@@ -115,14 +150,28 @@ export function RuleEditorSheet({ visible, kind, draft, isNew, audiences, catego
             ))}
           </View>
           {d.audience === 'numbers' ? (
-            <TextField
-              label="Phone numbers"
-              value={numbersText}
-              onChangeText={setNumbersText}
-              keyboardType="phone-pad"
-              helper={numbers.length ? `${numbers.length} number${numbers.length === 1 ? '' : 's'}. Separate them with commas.` : 'Separate them with commas.'}
-              // STUB(B3): pick numbers from saved contacts instead of typing them.
-            />
+            <View style={styles.group} testID="rule-numbers">
+              {picked.length ? (
+                <View style={styles.chips}>
+                  {picked.map((n) => (
+                    <Chip key={n} kind="input" icon="person" label={contactName(contacts, n, homeCc) ?? prettyNumber(n)} onRemove={() => togglePicked(n)} />
+                  ))}
+                </View>
+              ) : null}
+              <ContactPicker contacts={contacts} homeCc={homeCc} selected={picked} multi onPick={(n) => togglePicked(n)} />
+              <TextField
+                label="Phone numbers"
+                value={numbersText}
+                onChangeText={setNumbersText}
+                keyboardType="phone-pad"
+                placeholder="+91 98480 12345"
+                helper={
+                  numbers.length
+                    ? `${numbers.length} number${numbers.length === 1 ? '' : 's'}. Separate them with commas.`
+                    : 'Pick from your contacts, or type numbers. Separate them with commas.'
+                }
+              />
+            </View>
           ) : null}
         </View>
 
@@ -145,18 +194,37 @@ export function RuleEditorSheet({ visible, kind, draft, isNew, audiences, catego
           </Text>
           <View style={styles.chips}>
             {PRESETS.map((p) => (
-              <Chip key={p} label={EXPIRY_LABEL[p]} selected={preset === p} onPress={() => setD((x) => ({ ...x, expires_at: expiryFor(p) }))} />
+              <Chip
+                key={p}
+                label={EXPIRY_LABEL[p]}
+                selected={!calendar && preset === p}
+                onPress={() => {
+                  setCalendar(false);
+                  setD((x) => ({ ...x, expires_at: expiryFor(p) }));
+                }}
+              />
             ))}
-            {preset === 'custom' ? <Chip label={expiryText(d.expires_at) ?? 'Custom'} selected /> : null}
-            {/* STUB(B3): a "Pick a date" chip with a date picker for custom expiry. */}
+            <Chip
+              label={calendar && d.expires_at != null ? (expiryText(d.expires_at) ?? 'Pick a date') : 'Pick a date'}
+              icon="calendar-outline"
+              selected={calendar}
+              onPress={() => setCalendar(true)}
+            />
           </View>
+          {calendar ? (
+            <View style={[styles.calendar, { backgroundColor: t.color.surface2, borderRadius: t.radius.md }]}>
+              <CalendarPicker value={d.expires_at} onChange={(expires_at) => setD((x) => ({ ...x, expires_at }))} testID="rule-calendar" />
+            </View>
+          ) : null}
         </View>
 
-        <View style={[styles.preview, { backgroundColor: t.color.surface2, borderRadius: t.radius.md }]} accessibilityLiveRegion="polite">
-          <Text variant="overline" color="text2">
-            What the assistant will do
+        <View style={[styles.preview, { backgroundColor: t.color.primaryContainer, borderRadius: t.radius.md }]} accessibilityLiveRegion="polite">
+          <Text variant="overline" color="onPrimaryContainer">
+            {kind === 'instruction' ? 'What the assistant will do' : 'Who hears this'}
           </Text>
-          <Text variant="subhead">{preview(current)}</Text>
+          <Text variant="subhead" color="onPrimaryContainer">
+            {preview(current)}
+          </Text>
         </View>
       </View>
     </BottomSheet>
@@ -167,6 +235,7 @@ const styles = StyleSheet.create({
   body: { gap: 20 },
   group: { gap: 8 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  calendar: { padding: 8 },
   preview: { padding: 14, gap: 6 },
   footer: { flexDirection: 'row', gap: 10 },
   flex: { flex: 1 },

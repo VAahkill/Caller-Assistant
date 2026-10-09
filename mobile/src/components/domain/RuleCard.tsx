@@ -2,7 +2,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import type { IconName } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
-import { expiryText, isExpired } from '../../lib/rules';
+import { endsSoon, expiryText, isExpired } from '../../lib/rules';
 import { Card } from '../ui/Card';
 import { StatusPill } from '../ui/StatusPill';
 import { Switch } from '../ui/Switch';
@@ -14,7 +14,9 @@ export interface RuleCardProps {
   audience: string;
   audienceIcon?: IconName;
   category?: string;
+  categoryIcon?: IconName;
   expiresAt: number | null;
+  /** Specific numbers it applies to; adds a count to the audience pill. */
   numbers?: string[];
   onToggle: (enabled: boolean) => void;
   onPress: () => void;
@@ -24,11 +26,26 @@ export interface RuleCardProps {
 
 /** One instruction or note: the text, who it is for, when it ends, and an on/off switch.
  *  The text opens the editor and the switch is its own control, so TalkBack reaches both. */
-export function RuleCard({ text, enabled, audience, audienceIcon, category, expiresAt, numbers, onToggle, onPress, toggleBusy, testID }: RuleCardProps) {
+export function RuleCard({
+  text,
+  enabled,
+  audience,
+  audienceIcon,
+  category,
+  categoryIcon,
+  expiresAt,
+  numbers,
+  onToggle,
+  onPress,
+  toggleBusy,
+  testID,
+}: RuleCardProps) {
   const t = useTokens();
   const ended = isExpired(expiresAt);
   const until = expiryText(expiresAt);
   const active = enabled && !ended;
+  // Ending within a day is worth a glance; already ended needs a decision.
+  const soon = active && endsSoon(expiresAt);
   const who = numbers?.length ? `${audience} (${numbers.length})` : audience;
   return (
     <Card padded={false} testID={testID}>
@@ -46,8 +63,15 @@ export function RuleCard({ text, enabled, audience, audienceIcon, category, expi
           </Text>
           <View style={styles.pills}>
             <StatusPill label={who} icon={audienceIcon ?? 'people-outline'} tone={active ? 'primary' : 'neutral'} />
-            {category ? <StatusPill label={category} tone="neutral" /> : null}
-            {until ? <StatusPill label={until} icon="time-outline" tone={ended ? 'warning' : 'neutral'} /> : null}
+            {category ? <StatusPill label={category} icon={categoryIcon} tone="neutral" /> : null}
+            {until ? (
+              <StatusPill
+                label={until}
+                icon={ended ? 'alert-circle-outline' : 'time-outline'}
+                tone={ended ? 'warning' : soon ? 'info' : 'neutral'}
+                testID={testID ? `${testID}-expiry` : undefined}
+              />
+            ) : null}
           </View>
         </Pressable>
         <View style={[styles.toggle, { paddingTop: t.space.lg, paddingRight: t.space.md }]}>

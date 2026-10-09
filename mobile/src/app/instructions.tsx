@@ -1,11 +1,14 @@
 import { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
+import { CallerPreview } from '../components/domain/CallerPreview';
 import { RuleCard } from '../components/domain/RuleCard';
 import { RuleEditorSheet, type RuleDraft } from '../components/domain/RuleEditorSheet';
 import { Banner } from '../components/ui/Banner';
 import { BottomSheet } from '../components/ui/BottomSheet';
 import { Button } from '../components/ui/Button';
+import { Chip } from '../components/ui/Chip';
+import { ChipRow } from '../components/ui/ChipRow';
 import { EmptyState } from '../components/ui/EmptyState';
 import { Screen } from '../components/ui/Screen';
 import { Section } from '../components/ui/Section';
@@ -19,8 +22,9 @@ import { api } from '../lib/api';
 import { Icon } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
 import { APPLIES_TO, INSTRUCTION_CATEGORY, categoryLabel } from '../lib/labels';
-import { instructionPreview, isExpired } from '../lib/rules';
-import type { AppliesTo, Instruction, InstructionInput, InstructionTemplate } from '../lib/types';
+import { displayNumber } from '../lib/phone';
+import { RULE_FILTERS, filterRules, instructionPreview, ruleCounts, type RuleFilter } from '../lib/rules';
+import type { AppliesTo, Contact, Instruction, InstructionInput, InstructionTemplate } from '../lib/types';
 
 const AUDIENCE_ICON = {
   everyone: 'people-outline',
@@ -50,7 +54,15 @@ const toDraft = (i: Pick<Instruction, 'text' | 'applies_to' | 'numbers' | 'categ
   expires_at: i.expires_at,
 });
 
-/** Instructions: rules for how calls are handled. On/off, who it applies to, when it ends. */
+/** "Amma", "Amma, Priya", "Amma, Priya +2": who a specific-numbers rule is for. */
+export function numbersLabel(numbers: string[], contacts: Contact[], homeCc: string): string {
+  if (!numbers.length) return APPLIES_TO.numbers;
+  const names = numbers.map((n) => displayNumber(contacts, n, homeCc));
+  return names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ');
+}
+
+/** Instructions: rules for how calls are handled. On/off, who it applies to,
+ *  when it ends, ideas to start from, and a preview by kind of caller. */
 export default function Instructions() {
   const t = useTokens();
   const toast = useToast();
@@ -59,15 +71,13 @@ export default function Instructions() {
   const [editing, setEditing] = useState<{ id: string | null; draft: RuleDraft } | null>(null);
   const [ideas, setIdeas] = useState(false);
   const [toggling, setToggling] = useState<string | null>(null);
+  const [filter, setFilter] = useState<RuleFilter>('all');
 
   const p = profile.data;
   const assistant = p?.assistant_name || 'Your assistant';
-  const list = useMemo(() => {
-    const items = [...(p?.instructions ?? [])];
-    // In use first, then off or ended; newest first within each.
-    const rank = (i: Instruction) => (i.enabled && !isExpired(i.expires_at) ? 0 : 1);
-    return items.sort((a, b) => rank(a) - rank(b) || b.created_at - a.created_at);
-  }, [p?.instructions]);
+  const all = useMemo(() => p?.instructions ?? [], [p?.instructions]);
+  const list = useMemo(() => filterRules(all, filter), [all, filter]);
+  const counts = ruleCounts(all);
 
   const setList = (update: (list: Instruction[]) => Instruction[]) =>
     profile.mutate((d) => (d ? { ...d, instructions: update(d.instructions) } : d));
@@ -78,6 +88,7 @@ export default function Instructions() {
     try {
       const saved = await api.updateInstruction(i.id, { enabled });
       setList((l) => l.map((x) => (x.id === i.id ? saved : x)));
+      toast.success(enabled ? 'Instruction on. It applies from the next call.' : 'Instruction off.');
     } catch (e) {
       setList((l) => l.map((x) => (x.id === i.id ? i : x)));
       toast.error(`Not changed. ${errorMessage(e)}`);
@@ -95,6 +106,7 @@ export default function Instructions() {
     } else {
       const saved = await api.addInstruction({ ...toInput(d), enabled: true });
       setList((l) => [saved, ...l]);
+      setFilter('all');
       toast.success('Instruction added. It applies from the next call.');
     }
     setEditing(null);
@@ -124,7 +136,8 @@ export default function Instructions() {
     setEditing({ id: null, draft: { ...BLANK, text: tpl.text, audience: tpl.applies_to, category: tpl.category } });
   };
 
-  const editingRule = editing?.id ? list.find((x) => x.id === editing.id) : undefined;
+  const editingRule = editing?.id ? all.find((x) => x.id === editing.id) : undefined;
+  const homeCc = p?.home_country_code ?? '+91';
 
   return (
     <Screen
@@ -140,13 +153,13 @@ export default function Instructions() {
       testID="instructions"
     >
       <Text variant="subhead" color="text2">
-        Rules {assistant} follows on every call. Turn one off to pause it, or give it an end date.
+        Rules {assistant} follows on your calls. Write them in your own words. Turn one off to pause it, or give it an end date.
       </Text>
       {profile.error && !p ? (
         <Banner tone="danger" title="Couldn't load your instructions" message={profile.error} action={{ label: 'Retry', onPress: () => void profile.reload() }} />
       ) : !p ? (
         <SkeletonRows rows={4} />
-      ) : list.length === 0 ? (
+      ) : all.length === 0 ? (
         <EmptyState
           icon="list-outline"
           title="No instructions yet"
@@ -154,24 +167,50 @@ export default function Instructions() {
           action={{ label: 'Browse ideas', icon: 'bulb-outline', onPress: () => setIdeas(true) }}
         />
       ) : (
-        <Section title={`${list.filter((i) => i.enabled && !isExpired(i.expires_at)).length} in use`} grouped={false}>
-          {list.map((i) => (
-            <RuleCard
-              key={i.id}
-              text={i.text}
-              enabled={i.enabled}
-              audience={APPLIES_TO[i.applies_to] ?? i.applies_to}
-              audienceIcon={AUDIENCE_ICON[i.applies_to]}
-              category={i.category && i.category !== 'general' ? categoryLabel(i.category) : undefined}
-              expiresAt={i.expires_at}
-              numbers={i.applies_to === 'numbers' ? i.numbers : undefined}
-              toggleBusy={toggling === i.id}
-              onToggle={(v) => void toggle(i, v)}
-              onPress={() => setEditing({ id: i.id, draft: toDraft(i) })}
-              testID={`instruction-${i.id}`}
+        <>
+          <ChipRow testID="instruction-filters">
+            {RULE_FILTERS.map((f) => (
+              <Chip
+                key={f.value}
+                label={f.label}
+                selected={filter === f.value}
+                count={f.value === 'all' ? undefined : counts[f.value] || undefined}
+                onPress={() => setFilter(f.value)}
+                testID={`filter-${f.value}`}
+              />
+            ))}
+          </ChipRow>
+          {list.length === 0 ? (
+            <EmptyState
+              compact
+              icon={filter === 'ended' ? 'time-outline' : 'pause-circle-outline'}
+              title={filter === 'ended' ? 'Nothing has ended' : filter === 'paused' ? 'Nothing is switched off' : 'Nothing in use'}
+              message="Rules you give an end date move here once it passes."
             />
-          ))}
-        </Section>
+          ) : (
+            <View style={styles.list} testID="instruction-list">
+              {list.map((i) => (
+                <RuleCard
+                  key={i.id}
+                  text={i.text}
+                  enabled={i.enabled}
+                  audience={i.applies_to === 'numbers' ? numbersLabel(i.numbers, p.contacts, homeCc) : (APPLIES_TO[i.applies_to] ?? i.applies_to)}
+                  audienceIcon={AUDIENCE_ICON[i.applies_to]}
+                  category={i.category && i.category !== 'general' ? categoryLabel(i.category) : undefined}
+                  categoryIcon={INSTRUCTION_CATEGORY[i.category]?.icon}
+                  expiresAt={i.expires_at}
+                  toggleBusy={toggling === i.id}
+                  onToggle={(v) => void toggle(i, v)}
+                  onPress={() => setEditing({ id: i.id, draft: toDraft(i) })}
+                  testID={`instruction-${i.id}`}
+                />
+              ))}
+            </View>
+          )}
+          <Section title="Preview: who's calling?" grouped={false} testID="instruction-preview">
+            <CallerPreview assistant={assistant} instructions={all} notes={p.knowledge} />
+          </Section>
+        </>
       )}
 
       <RuleEditorSheet
@@ -181,6 +220,8 @@ export default function Instructions() {
         isNew={!editing?.id}
         audiences={APPLIES_TO}
         categories={CATEGORIES}
+        contacts={p?.contacts ?? []}
+        homeCc={homeCc}
         preview={(d) => instructionPreview(d.text, d.audience as AppliesTo, assistant, d.expires_at)}
         onClose={() => setEditing(null)}
         onSave={save}
@@ -202,21 +243,27 @@ export default function Instructions() {
                     {categoryLabel(cat)}
                   </Text>
                 </View>
-                {items.map((tpl) => (
-                  <Pressable
-                    key={tpl.text}
-                    onPress={() => fromTemplate(tpl)}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Use: ${tpl.text}`}
-                    android_ripple={{ color: t.color.surface3 }}
-                    style={[styles.idea, { backgroundColor: t.color.surface2, borderRadius: t.radius.md }]}
-                  >
-                    <Text variant="subhead" style={styles.flex}>
-                      {tpl.text}
-                    </Text>
-                    <Icon name="add-circle-outline" size={20} color={t.color.primary} />
-                  </Pressable>
-                ))}
+                {items.map((tpl) => {
+                  const have = all.some((i) => i.text.trim().toLowerCase() === tpl.text.trim().toLowerCase());
+                  return (
+                    <Pressable
+                      key={tpl.text}
+                      onPress={() => fromTemplate(tpl)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Use: ${tpl.text}`}
+                      android_ripple={{ color: t.color.surface3 }}
+                      style={[styles.idea, { backgroundColor: t.color.surface2, borderRadius: t.radius.md }]}
+                    >
+                      <View style={styles.flex}>
+                        <Text variant="subhead">{tpl.text}</Text>
+                        <Text variant="caption" color="text2">
+                          {have ? 'You already have this one' : `For ${(APPLIES_TO[tpl.applies_to] ?? tpl.applies_to).toLowerCase()}`}
+                        </Text>
+                      </View>
+                      <Icon name={have ? 'checkmark-circle' : 'add-circle-outline'} size={22} color={have ? t.color.success : t.color.primary} />
+                    </Pressable>
+                  );
+                })}
               </View>
             ))}
           </View>
@@ -235,6 +282,7 @@ function groupByCategory(list: InstructionTemplate[]): [string, InstructionTempl
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   footer: { flexDirection: 'row', gap: 10 },
+  list: { gap: 12 },
   ideas: { gap: 20 },
   group: { gap: 8 },
   groupTitle: { flexDirection: 'row', alignItems: 'center', gap: 6 },
