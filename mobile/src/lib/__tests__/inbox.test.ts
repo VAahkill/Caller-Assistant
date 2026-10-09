@@ -90,6 +90,16 @@ describe('days', () => {
       [dayTitle(items[3], now), 1],
     ]);
   });
+
+  test('a list out of order still gives each day once, newest first', () => {
+    // Shortly after midnight, a call from late last night can arrive between two from today.
+    const items = [new Date(2026, 9, 8, 0, 40), new Date(2026, 9, 7, 23, 30), new Date(2026, 9, 8, 1, 5), new Date(2026, 9, 7, 21)].map(at);
+    const groups = groupByDay(items, (x) => x, now);
+    expect(groups.map((g) => g.title)).toEqual(['Today', 'Yesterday']);
+    expect(new Set(groups.map((g) => g.key)).size).toBe(2);
+    expect(groups[0].items).toEqual([items[2], items[0]]);
+    expect(groups[1].items).toEqual([items[1], items[3]]);
+  });
 });
 
 test('filter values from a link are checked', () => {

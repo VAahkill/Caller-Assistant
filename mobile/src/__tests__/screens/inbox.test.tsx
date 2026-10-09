@@ -12,6 +12,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react-nativ
 import { router, useLocalSearchParams } from 'expo-router';
 
 import Inbox from '../../app/(tabs)/inbox';
+import { dayTitle } from '../../lib/inbox';
 import type { MockServer } from '../../lib/mock/server';
 import { getTransport, setTransport } from '../../lib/transport';
 import { resetApi, useMockServer } from '../../test/mockApi';
@@ -99,8 +100,10 @@ describe('Calls', () => {
     expect(callNames()).toEqual(['+91 14012 34567']);
     await fireEvent.press(screen.getByRole('button', { name: 'Delivery, 2' }));
     expect(callNames()).toEqual(['+91 97001 12233', '+91 95500 11223']);
-    expect(screen.getByText('Today')).toBeTruthy();
-    expect(screen.getByText('Yesterday')).toBeTruthy();
+    // The fixtures are hours before "now", so which days they fall on depends on the time the test runs.
+    const days = server.state.calls.filter((c) => ['+919700112233', '+919550011223'].includes(c.number)).map((c) => dayTitle(c.started_at));
+    expect(days).toHaveLength(2);
+    for (const day of new Set(days)) expect(screen.getByText(day)).toBeTruthy();
   });
 
   test('search reads summaries too', async () => {

@@ -77,15 +77,18 @@ export function dayTitle(ts: number, now: Date = new Date()): string {
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'long', ...(d.getFullYear() !== now.getFullYear() ? { year: 'numeric' } : {}) });
 }
 
-/** Groups items (already newest first) into consecutive days. */
+/** Groups items by day, newest day first and newest first within a day.
+ *  Each day appears once even when the list arrives out of order, so the
+ *  group keys stay unique. */
 export function groupByDay<T>(items: T[], at: (item: T) => number, now: Date = new Date()): DayGroup<T>[] {
-  const groups: DayGroup<T>[] = [];
-  for (const item of items) {
+  const byKey = new Map<string, DayGroup<T>>();
+  const sorted = [...items].sort((a, b) => at(b) - at(a));
+  for (const item of sorted) {
     const ts = at(item);
     const key = String(dayStart(new Date(ts * 1000)));
-    const last = groups[groups.length - 1];
-    if (last && last.key === key) last.items.push(item);
-    else groups.push({ key, title: dayTitle(ts, now), items: [item] });
+    const group = byKey.get(key);
+    if (group) group.items.push(item);
+    else byKey.set(key, { key, title: dayTitle(ts, now), items: [item] });
   }
-  return groups;
+  return [...byKey.values()];
 }
