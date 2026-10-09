@@ -1,10 +1,10 @@
 import { awayMessage, spokenTime, untilFor } from '../away';
 import { dialerName } from '../format';
-import { callerName, engineName, greetingLine } from '../labels';
+import { callerName, engineName, greetingLine, ownName } from '../labels';
 import { moveLanguage, toggleLanguage } from '../languages';
 import { directionsText, geocodeLine, locationChanged } from '../location';
 import { emptyLocation } from '../normalize';
-import { ONBOARDING_STEPS, nextStep, stepHref } from '../onboarding';
+import { NEEDS_SERVER, ONBOARDING_STEPS, nextStep, stepHref } from '../onboarding';
 import { expiryFor, expiryText, instructionPreview, isExpired, notePreview, parseNumbers, presetOf } from '../rules';
 
 // 8 Oct 2026, 14:10 local time.
@@ -158,12 +158,25 @@ describe('onboarding', () => {
     expect(stepHref('index')).toBe('/onboarding');
     expect(stepHref('names')).toBe('/onboarding/names');
   });
+
+  test('only the steps that save something need the server', () => {
+    expect([...NEEDS_SERVER].sort()).toEqual(['contacts', 'names', 'region', 'voice']);
+  });
 });
 
 describe('greeting', () => {
   test('matches the opening line the server speaks', () => {
     expect(greetingLine('arjun', 'Ava')).toBe("Hi, this is Ava, arjun's assistant. Arjun can't take the call right now. How can I help?");
     expect(greetingLine(' ', '')).toBe("Hi, this is the assistant, the owner's assistant. The owner can't take the call right now. How can I help?");
+  });
+});
+
+describe('own name', () => {
+  test("the server's stand-in name reads as empty, real names are kept", () => {
+    expect(ownName('the user')).toBe('');
+    expect(ownName(' The User ')).toBe('');
+    expect(ownName('Arjun')).toBe('Arjun');
+    expect(ownName('the user friendly')).toBe('the user friendly');
   });
 });
 

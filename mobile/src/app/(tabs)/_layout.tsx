@@ -4,9 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Icon, TAB_ICONS, tabBarOptions } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
-import { loadConfig } from '../../lib/api';
 import { useLive } from '../../lib/live';
-import { onboardingSkipped } from '../../lib/onboarding';
+import { shouldShowOnboarding } from '../../lib/onboarding';
 
 type TabName = keyof typeof TAB_ICONS;
 
@@ -24,6 +23,8 @@ export default function TabsLayout() {
   const { questions, alerts } = useLive();
   const needsSetup = useNeedsSetup();
 
+  // Wait for the saved settings (a few ms) so the first run never flashes Today.
+  if (needsSetup === null) return null;
   if (needsSetup) return <Redirect href="/onboarding" />;
 
   const needsYou = questions.length + alerts.length;
@@ -47,14 +48,17 @@ export default function TabsLayout() {
   );
 }
 
-/** First run: no server yet and onboarding not skipped. */
-function useNeedsSetup(): boolean {
-  const [needs, setNeeds] = useState(false);
+/** First run: no server yet and setup never finished or put off. */
+function useNeedsSetup(): boolean | null {
+  const [needs, setNeeds] = useState<boolean | null>(null);
   useEffect(() => {
     let alive = true;
-    Promise.all([loadConfig(), onboardingSkipped()])
-      .then(([cfg, skipped]) => alive && setNeeds(!cfg && !skipped))
-      .catch((e: unknown) => console.warn("Couldn't read the saved settings", e));
+    shouldShowOnboarding()
+      .then((show) => alive && setNeeds(show))
+      .catch((e: unknown) => {
+        console.warn("Couldn't read the saved settings", e);
+        if (alive) setNeeds(false);
+      });
     return () => {
       alive = false;
     };

@@ -63,6 +63,10 @@ export const INSTRUCTION_CATEGORY: Record<string, { label: string; icon: IconNam
 
 export const categoryLabel = (c: string) => INSTRUCTION_CATEGORY[c]?.label ?? c.charAt(0).toUpperCase() + c.slice(1);
 
+/** The owner's name as typed, or '' for the server's stand-in ("the user")
+ *  so a form starts empty instead of showing it as if it were a name. */
+export const ownName = (n: string): string => (/^\s*the user\s*$/i.test(n) ? '' : n);
+
 /** The line callers hear first (matches the server's opening_line). */
 export function greetingLine(userName: string, assistantName: string): string {
   const user = userName.trim() || 'the owner';

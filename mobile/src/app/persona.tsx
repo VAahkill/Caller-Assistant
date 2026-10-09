@@ -12,7 +12,7 @@ import { Text } from '../components/ui/Text';
 import { TextField } from '../components/ui/TextField';
 import { useProfile } from '../hooks/useProfile';
 import { api } from '../lib/api';
-import { greetingLine } from '../lib/labels';
+import { greetingLine, ownName } from '../lib/labels';
 
 /** Your name and your assistant's name, and the greeting callers hear. */
 export default function Persona() {
@@ -28,7 +28,7 @@ export default function Persona() {
 
   if (p && !loaded) {
     setLoaded(true);
-    setUser(p.user_name);
+    setUser(ownName(p.user_name));
     setAssistant(p.assistant_name);
   }
 

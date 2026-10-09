@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
 
+import { ProgressLine, VoiceLanguageGroup, demoSources, sampleKey } from '../components/domain/VoicePicker';
 import { VoiceRecorderSheet } from '../components/domain/VoiceRecorderSheet';
 import { AsyncContent } from '../components/ui/AsyncContent';
 import { Banner } from '../components/ui/Banner';
@@ -18,15 +19,14 @@ import { errorMessage, useAsyncAction } from '../hooks/useAsyncAction';
 import { useDemoPlayer, usePreloadedSources, type DemoPlayer } from '../hooks/useDemoPlayer';
 import { useProfile } from '../hooks/useProfile';
 import { useResource } from '../hooks/useResource';
-import { api, type MediaSource } from '../lib/api';
+import { api } from '../lib/api';
 import { Icon } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
 import { duration, timeAgo } from '../lib/format';
-import { engineName } from '../lib/labels';
 import { languageName } from '../lib/languages';
 import { useLive } from '../lib/live';
 import type { VoiceInfo, VoiceStatus } from '../lib/types';
-import { STATUS_LABEL, choosePatch, chosenVoiceId, samplePathFor, statusChanges, suggestName, voiceGroups, type VoiceGroup } from '../lib/voices';
+import { STATUS_LABEL, choosePatch, chosenVoiceId, samplePathFor, statusChanges, suggestName, voiceGroups } from '../lib/voices';
 
 /** How long Undo is offered before a deleted voice is really removed. */
 export const DELETE_AFTER_MS = 6000;
@@ -34,7 +34,6 @@ export const DELETE_AFTER_MS = 6000;
 export const POLL_MS = 4000;
 const POLL_FOR_MS = 3 * 60_000;
 
-const sampleKey = (id: string, lang: string) => `${id}@${lang}`;
 const originalKey = (id: string) => `${id}#original`;
 
 /** Voices: your recorded voices first, then the voice for each language your
@@ -65,16 +64,7 @@ export default function Voices() {
   const demoLang = useCallback((v: VoiceInfo) => callerLanguages.find((l) => v.languages.includes(l)) ?? v.languages[0] ?? 'en', [callerLanguages]);
 
   // Every demo on the screen, fetched with the server token as soon as the list is known.
-  const sources = useMemo(() => {
-    const out = new Map<string, MediaSource>();
-    const add = (v: VoiceInfo, lang: string) => {
-      const s = api.voiceSample({ sample_url: samplePathFor(v, lang) });
-      if (s && v.status === 'ready') out.set(s.uri, s);
-    };
-    for (const g of groups) for (const v of g.voices) add(v, g.lang);
-    for (const v of mine) add(v, demoLang(v));
-    return [...out.values()];
-  }, [groups, mine, demoLang]);
+  const sources = useMemo(() => demoSources([...groups, ...mine.map((v) => ({ lang: demoLang(v), voices: [v] }))]), [groups, mine, demoLang]);
   usePreloadedSources(sources);
 
   // Getting ready: check again every few seconds (and whenever voice_status arrives).
@@ -206,7 +196,7 @@ export default function Voices() {
         {() => (
           <>
             {primary.map((g) => (
-              <LanguageGroup key={g.lang} group={g} chosen={p ? chosenVoiceId(p, g.lang) : undefined} demo={demo} onChoose={(v) => void choose(v, g.lang)} />
+              <VoiceLanguageGroup key={g.lang} group={g} chosen={p ? chosenVoiceId(p, g.lang) : undefined} demo={demo} onChoose={(v) => void choose(v, g.lang)} />
             ))}
             {others.length ? (
               <>
@@ -218,7 +208,7 @@ export default function Voices() {
                 />
                 {more
                   ? others.map((g) => (
-                      <LanguageGroup key={g.lang} group={g} chosen={p ? chosenVoiceId(p, g.lang) : undefined} demo={demo} onChoose={(v) => void choose(v, g.lang)} />
+                      <VoiceLanguageGroup key={g.lang} group={g} chosen={p ? chosenVoiceId(p, g.lang) : undefined} demo={demo} onChoose={(v) => void choose(v, g.lang)} />
                     ))
                   : null}
               </>
@@ -243,74 +233,6 @@ export default function Voices() {
         }}
       />
     </Screen>
-  );
-}
-
-function LanguageGroup({ group, chosen, demo, onChoose }: { group: VoiceGroup; chosen?: string; demo: DemoPlayer; onChoose: (v: VoiceInfo) => void }) {
-  const name = languageName(group.lang);
-  const picked = group.voices.some((v) => v.id === chosen);
-  return (
-    <Section
-      // English name only: the overline's letter spacing breaks Indic scripts apart.
-      title={name}
-      footer={
-        group.voices.length === 0
-          ? undefined
-          : picked
-            ? `Used when callers speak ${name}.`
-            : `Not picked yet: your server uses its default ${name} voice.`
-      }
-      testID={`voices-${group.lang}`}
-    >
-      {group.voices.length === 0 ? (
-        <View style={styles.none}>
-          <Text variant="subhead" color="text2">
-            No {name} voice on your server yet. Callers who speak {name} hear the closest voice it has.
-          </Text>
-        </View>
-      ) : (
-        group.voices.map((v) => <VoiceRow key={v.id} voice={v} lang={group.lang} chosen={chosen === v.id} demo={demo} onChoose={() => onChoose(v)} />)
-      )}
-    </Section>
-  );
-}
-
-function VoiceRow({ voice: v, lang, chosen, demo, onChoose }: { voice: VoiceInfo; lang: string; chosen: boolean; demo: DemoPlayer; onChoose: () => void }) {
-  const t = useTokens();
-  const key = sampleKey(v.id, lang);
-  const phase = demo.phaseOf(key);
-  const mine = v.kind === 'clone';
-  const meta = mine
-    ? ['Your voice', v.seconds ? `${duration(v.seconds)} recording` : null]
-    : [v.gender && v.gender.charAt(0).toUpperCase() + v.gender.slice(1), v.engine && engineName(v.engine)];
-  return (
-    <View testID={`voice-${v.id}-${lang}`}>
-      <Pressable
-        onPress={onChoose}
-        accessibilityRole="radio"
-        accessibilityState={{ checked: chosen }}
-        accessibilityLabel={`${v.name}${mine ? ', your voice' : v.gender ? `, ${v.gender}` : ''}, for ${languageName(lang)}`}
-        android_ripple={{ color: t.color.surface3 }}
-        style={[styles.voiceRow, { paddingHorizontal: t.space.lg }]}
-      >
-        <Icon name={chosen ? 'radio-button-on' : 'radio-button-off'} size={22} color={chosen ? t.color.primary : t.color.text3} />
-        <View style={styles.flex}>
-          <Text variant="headline">{v.name}</Text>
-          <Text variant="footnote" color={phase === 'error' ? 'danger' : 'text2'}>
-            {phase === 'playing' ? 'Playing…' : phase === 'loading' ? 'Loading…' : phase === 'error' ? "Couldn't play. Tap to try again." : meta.filter(Boolean).join(' · ')}
-          </Text>
-        </View>
-        <IconButton
-          icon={phase === 'playing' || phase === 'loading' ? 'stop' : phase === 'error' ? 'refresh' : 'play'}
-          label={phase === 'playing' || phase === 'loading' ? `Stop ${v.name}` : `Play ${v.name}`}
-          variant="tonal"
-          loading={phase === 'loading'}
-          onPress={() => demo.toggle(key, api.voiceSample({ sample_url: samplePathFor(v, lang) }))}
-          testID={`play-${v.id}-${lang}`}
-        />
-      </Pressable>
-      {phase === 'playing' ? <ProgressLine value={demo.progress} /> : null}
-    </View>
   );
 }
 
@@ -400,20 +322,6 @@ function MyVoiceCard({
   );
 }
 
-function ProgressLine({ value }: { value: number }) {
-  const t = useTokens();
-  return (
-    <View
-      style={[styles.progress, { backgroundColor: t.color.surface3 }]}
-      accessible
-      accessibilityRole="progressbar"
-      accessibilityValue={{ min: 0, max: 100, now: Math.round(value * 100) }}
-    >
-      <View style={[styles.progressFill, { width: `${Math.round(value * 100)}%`, backgroundColor: t.color.primary }]} />
-    </View>
-  );
-}
-
 function RenameSheet({ voice, onClose, onRenamed }: { voice: VoiceInfo | null; onClose: () => void; onRenamed: (v: VoiceInfo) => void }) {
   const [name, setName] = useState('');
   const [forVoice, setForVoice] = useState<VoiceInfo | null>(null);
@@ -436,12 +344,8 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   addIcon: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  voiceRow: { flexDirection: 'row', alignItems: 'center', gap: 14, minHeight: 64, paddingVertical: 8 },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' },
   used: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   meta: { flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 4 },
-  none: { padding: 16 },
   sheet: { gap: 16 },
-  progress: { height: 3, borderRadius: 2, overflow: 'hidden', marginHorizontal: 16, marginBottom: 6 },
-  progressFill: { height: 3, borderRadius: 2 },
 });
