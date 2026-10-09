@@ -288,7 +288,7 @@ class VoxLinguaLID:
             audio = np.pad(audio, (0, RATE // 4 - len(audio)))
         with torch.inference_mode():
             logp = classifier(ecapa(self.features(audio)))[0].numpy()
-        return {lang: float(lp) for lang, lp in zip(self.labels, logp)}
+        return {lang: float(lp) for lang, lp in zip(self.labels, logp, strict=True)}
 
 
 class WhisperLID:
