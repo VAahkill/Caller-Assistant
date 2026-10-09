@@ -51,8 +51,12 @@ async def test_plain_turn():
     llm = CheckedLLM(lambda m: "May I know who's calling?")
     conv = inbound(llm)
     await drain(conv.respond("Hi, is Rahul there?", "en"))
-    assert [m["role"] for m in llm.calls[-1]] == ["system", "user"]
-    assert "Reply only in English." in llm.calls[-1][0]["content"]
+    sent = llm.calls[-1]
+    # The turns start with the greeting the caller heard, as the assistant's own turn.
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
+    assert sent[1]["content"].startswith("[Private note") and sent[2]["content"] == conv.opening_line()
+    assert sent[3]["content"] == "Hi, is Rahul there?"
+    assert "Reply only in English." in sent[0]["content"]
 
 
 async def test_delivery_context_lives_in_the_system_message():
@@ -60,12 +64,12 @@ async def test_delivery_context_lives_in_the_system_message():
     conv = inbound(llm)
     await drain(conv.respond("నాకు స్విగ్గీ ఆర్డర్ ఉంది, ఎక్కడికి రావాలి?", "te"))
     sent = llm.calls[-1]
-    assert [m["role"] for m in sent] == ["system", "user"]
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
     assert "Opposite Apollo Pharmacy" in sent[0]["content"]
     assert "the caller is speaking Telugu. Reply only in Telugu, written in Telugu script." in sent[0]["content"]
     # Still there on the next turn, and still before the turns.
     await drain(conv.respond("నేను అపోలో ఫార్మసీ దగ్గర ఉన్నాను", "te"))
-    assert [m["role"] for m in llm.calls[-1]] == ["system", "user", "assistant", "user"]
+    assert [m["role"] for m in llm.calls[-1]] == ["system", "user", "assistant", "user", "assistant", "user"]
     assert "DELIVERY:" in llm.calls[-1][0]["content"]
 
 
@@ -113,8 +117,9 @@ async def test_turns_stay_alternating_after_interruptions():
     await drain(conv.respond("Hello? Are you there?", "en"))
     await drain(conv.respond("Okay, thanks", "en"))
     sent = llm.calls[-1]
-    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user", "assistant", "user"]
-    assert sent[2]["content"] == "Hi!\nRahul says he'll call back."
+    assert [m["role"] for m in sent] == ["system", "user", "assistant", "user", "assistant", "user", "assistant",
+                                         "user"]
+    assert sent[4]["content"] == "Hi!\nRahul says he'll call back."
 
 
 async def test_reply_cut_short_is_kept_in_history():

@@ -194,8 +194,8 @@ def inbound_system_prompt(
                 f" helpful, HOLD for anything {user} should decide, and say {user} has been told they"
                 " called.\n") if vip else ""
     speak = ", ".join(LANG_NAMES.get(code, code) for code in speakable)
-    greeted = (f'You have already answered the call with: "{opening_line}" Never greet the caller or'
-               ' introduce yourself again; just answer them.\n') if opening_line else ""
+    greeted = ("You have already answered the call and greeted the caller. Never greet them or introduce"
+               " yourself again; just answer what they say.\n") if opening_line else ""
     nothing_known = "" if (rules.general_facts or rules.caller_facts) else (
         f"You know nothing else about {user}'s plans. Anything else -> HOLD.\n")
     for_caller = (_instructions(profile, rules.caller, f"{user.upper()}'S INSTRUCTIONS FOR THIS CALLER")
@@ -335,6 +335,11 @@ def hold_timeout_note(user: str) -> str:
         f"{PRIVATE_NOTE.format(user=user)} {user} isn't available right now. Apologise briefly for the wait,"
         f" offer to take a message and say {user} will get back to them. Then take the message."
     )
+
+
+def call_answered_note(user: str) -> str:
+    """Starts an answered call's turns, before the greeting (see Conversation)."""
+    return f"{PRIVATE_NOTE.format(user=user)} A call has come in. Answer it."
 
 
 def outbound_kickoff_note(user: str) -> str:

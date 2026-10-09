@@ -210,7 +210,9 @@ class Conversation:
     prompt plus this turn's context: delivery details, reply language) followed by
     alternating user/assistant turns, and it always ends with a user turn. Notes from
     the user's side (a hold answer, "the call just connected") are user turns marked
-    as private notes, never trailing system messages.
+    as private notes, never trailing system messages. An answered call's turns start
+    with the greeting the caller heard, as the assistant's own first turn: told about
+    it only in the system message, small models said it again as their first reply.
     """
 
     profile: Profile
@@ -221,6 +223,7 @@ class Conversation:
     outbound: bool = False
     category: str = "unknown"
     history: list[Message] = field(default_factory=list)
+    opening: str = ""  # the greeting the caller heard, in English (answered calls)
     can_text: bool = False  # whether this phone line can send the caller an SMS
     language: str = ""  # the caller's language; empty until they speak
     vip: bool = False  # the caller is on the user's VIP list
@@ -245,7 +248,7 @@ class Conversation:
                                                english=english)
         return cls(profile, llm, prompt, caller_number=number, is_contact=bool(contact_name),
                    category="contact" if contact_name else "unknown", can_text=can_text, vip=vip,
-                   english=english)
+                   english=english, opening=opening_line(profile, english))
 
     @classmethod
     def for_task(cls, profile: Profile, llm: LLM, task: Task, speakable: list[str],
@@ -281,11 +284,15 @@ class Conversation:
         parts.append(prompts.language_note(self.language, self.pivot))
         return "\n\n".join(parts)
 
-    def _messages(self) -> list[Message]:
+    def _messages(self, history: list[Message] | None = None) -> list[Message]:
         """System message first, then strictly alternating turns ending with a user turn
         (strict chat templates such as Gemma's reject anything else)."""
         turns: list[Message] = []
-        for m in self.history[-30:]:
+        greeting: list[Message] = [
+            {"role": "user", "content": prompts.call_answered_note(self.profile.user_name)},
+            {"role": "assistant", "content": self.opening},
+        ] if self.opening else []
+        for m in greeting + (self.history if history is None else history)[-30:]:
             if m["role"] not in ("user", "assistant") or not m["content"].strip():
                 continue
             if turns and turns[-1]["role"] == m["role"]:
@@ -301,7 +308,7 @@ class Conversation:
     def warm_up_messages(self) -> list[Message]:
         """A request shaped like a real first turn, so a local LLM loads the model and
         caches the prompt before the first call."""
-        return [{"role": "system", "content": self.system_message()}, {"role": "user", "content": "Hello?"}]
+        return self._messages([{"role": "user", "content": "Hello?"}])
 
     def opening_line(self) -> str:
         return opening_line(self.profile, self.english)
