@@ -2,7 +2,7 @@
 // per API contract v2, and the reducer that turns them into app state.
 
 import { normalizeCall, normalizeLine } from './normalize';
-import type { AssistantState, CallRecord, CallerMessage, Task, TranscriptLine } from './types';
+import type { AssistantState, CallRecord, CallerMessage, Task, TranscriptLine, VoiceStatus } from './types';
 
 interface CallEventBase {
   call_id: string;
@@ -33,6 +33,8 @@ export type ServerEvent =
   | { event: 'message_taken'; message: CallerMessage; call_id: string; who: string }
   | { event: 'task_update'; task: Task; task_id: string; title: string }
   | { event: 'profile_updated' }
+  /** A recorded voice finished preparing (ready) or could not be made (failed, with why). */
+  | { event: 'voice_status'; voice_id: string; status: VoiceStatus; detail: string }
   /** A request the server couldn't act on; on /ws/events it names the call. */
   | { event: 'error'; detail: string; call_id?: string };
 
@@ -67,6 +69,7 @@ const REQUIRED: Record<AnyEvent['event'], string[]> = {
   message_taken: ['message'],
   task_update: ['task'],
   profile_updated: [],
+  voice_status: ['voice_id', 'status'],
   error: [],
   started: ['call_id'],
   rejected: [],
@@ -120,6 +123,10 @@ export function parseEvent(data: unknown): ParseResult {
     ev.task_id = s(ev.task_id) || null;
   }
   if (name === 'hold_resolved') ev.answered = !!ev.answered;
+  if (name === 'voice_status') {
+    ev.status = ['ready', 'preparing', 'failed'].includes(s(ev.status)) ? ev.status : 'ready';
+    ev.detail = s(ev.detail);
+  }
   if (name === 'rejected') ev.reason = s(ev.reason);
   return { ok: true, event: ev as unknown as AnyEvent };
 }
@@ -252,9 +259,11 @@ export interface LiveData {
   /** Bumps when stored lists (calls, messages, tasks, profile) may have changed. */
   refreshKey: number;
   profileKey: number;
+  /** Bumps when a recorded voice changes status (voice_status). */
+  voicesKey: number;
 }
 
-export const initialLive: LiveData = { calls: {}, questions: [], alerts: [], tasks: {}, refreshKey: 0, profileKey: 0 };
+export const initialLive: LiveData = { calls: {}, questions: [], alerts: [], tasks: {}, refreshKey: 0, profileKey: 0, voicesKey: 0 };
 
 export type LiveAction =
   | { type: 'event'; event: ServerEvent; now?: number }
@@ -294,7 +303,8 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
     };
   }
   if (action.type === 'dismissAlert') return { ...state, alerts: state.alerts.filter((a) => a.id !== action.id) };
-  if (action.type === 'invalidate') return { ...state, refreshKey: state.refreshKey + 1, profileKey: state.profileKey + 1 };
+  if (action.type === 'invalidate')
+    return { ...state, refreshKey: state.refreshKey + 1, profileKey: state.profileKey + 1, voicesKey: state.voicesKey + 1 };
   if (action.type === 'restoreAlert') {
     if (state.alerts.some((a) => a.id === action.alert.id)) return state;
     return { ...state, alerts: [...state.alerts, action.alert].sort((a, b) => b.at - a.at) };
@@ -384,6 +394,8 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
       return { ...state, tasks: { ...state.tasks, [ev.task.id]: ev.task }, refreshKey: state.refreshKey + 1 };
     case 'profile_updated':
       return { ...state, profileKey: state.profileKey + 1 };
+    case 'voice_status':
+      return { ...state, voicesKey: state.voicesKey + 1 };
     case 'error':
       return ev.call_id ? withCall(state, ev.call_id, ev, now) : state;
     default:

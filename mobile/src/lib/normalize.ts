@@ -179,6 +179,7 @@ export function normalizeVoice(raw: unknown): VoiceInfo {
     seconds: numOrNull(v.seconds),
     created_at: numOrNull(v.created_at),
     status: (['ready', 'preparing', 'failed'].includes(str(v.status)) ? v.status : 'ready') as VoiceInfo['status'],
+    ...(str(v.detail) ? { detail: str(v.detail) } : {}),
   };
 }
 

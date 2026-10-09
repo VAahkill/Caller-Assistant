@@ -46,6 +46,7 @@ describe('parseEvent', () => {
       { event: 'message_taken', message: fx.messages[0], call_id: 'x', who: 'Amma' },
       { event: 'task_update', task: fx.tasks[0], task_id: fx.tasks[0].id, title: 'Calling' },
       { event: 'profile_updated' },
+      { event: 'voice_status', voice_id: 'clone:dad-91b2e0', status: 'ready', detail: '' },
       { event: 'error', detail: 'That call is no longer live.', call_id: 'x' },
       { event: 'started', call_id: 'p1' },
       { event: 'rejected', reason: 'international' },
@@ -144,8 +145,20 @@ describe('liveReducer', () => {
     expect(s.refreshKey).toBe(withLive.refreshKey);
     expect(apply(s, ev({ event: 'message_taken', message: fx.messages[0], call_id: 'x', who: 'Amma' })).refreshKey).toBe(s.refreshKey + 1);
     expect(apply(s, ev({ event: 'profile_updated' })).profileKey).toBe(s.profileKey + 1);
+    const v = apply(s, ev({ event: 'voice_status', voice_id: 'clone:dad-91b2e0', status: 'ready', detail: '' }));
+    expect(v.voicesKey).toBe(s.voicesKey + 1);
+    expect(v.calls).toBe(s.calls);
     const t = apply(s, ev({ event: 'task_update', task: fx.tasks[0], task_id: fx.tasks[0].id, title: 'x' }));
     expect(t.tasks[fx.tasks[0].id]).toEqual(fx.tasks[0]);
+  });
+
+  test('voice_status needs the voice and its status; the reason is kept', () => {
+    expect(parseEvent({ event: 'voice_status', status: 'ready' })).toEqual({ ok: false, reason: 'voice_status without voice_id' });
+    expect(parseEvent({ event: 'voice_status', voice_id: 'clone:a-1', status: 'failed', detail: 'Too quiet' })).toEqual({
+      ok: true,
+      event: { event: 'voice_status', voice_id: 'clone:a-1', status: 'failed', detail: 'Too quiet' },
+    });
+    expect(parseEvent({ event: 'voice_status', voice_id: 'clone:a-1', status: 'ready' })).toMatchObject({ ok: true, event: { detail: '' } });
   });
 
   test('events for unknown calls change nothing', () => {

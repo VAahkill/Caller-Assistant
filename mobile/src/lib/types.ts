@@ -193,6 +193,8 @@ export interface VoiceInfo {
   seconds: number | null;
   created_at: number | null;
   status: VoiceStatus;
+  /** Why a recorded voice failed, when the server says (not in every server version). */
+  detail?: string;
 }
 
 export interface ReadyFlags {

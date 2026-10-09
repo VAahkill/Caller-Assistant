@@ -74,6 +74,10 @@ export class MockServer {
   readonly checkToken: boolean;
   /** Open /ws/events sockets: REST actions on a live call show up on them. */
   readonly liveSockets = new Set<{ push: (ev: Record<string, unknown>, after: number) => void }>();
+  /** How many GET /voices answers a recorded voice stays "preparing" for
+   *  before it turns ready (null: it stays preparing). */
+  readyAfterPolls: number | null = 2;
+  private polls = new Map<string, number>();
 
   constructor({ latencyMs = 0, state, checkToken = false }: MockOptions = {}) {
     this.state = state ?? createFixtures();
@@ -270,6 +274,7 @@ export class MockServer {
       case 'POST /assistant/voice':
         return ok({ heard: 'Who called while I was in the meeting?', ...chatReply('who called', s) });
       case 'GET /voices':
+        this.advanceVoices();
         return ok([...s.voices.filter((v) => v.kind === 'clone'), ...s.voices.filter((v) => v.kind !== 'clone')]);
       case 'PATCH /voices/:id': {
         const v = s.voices.find((x) => x.id === id);
@@ -278,10 +283,14 @@ export class MockServer {
         v.name = String(body.label ?? v.name);
         return ok(v);
       }
-      case 'DELETE /voices/:id':
+      case 'DELETE /voices/:id': {
+        if (!s.voices.some((v) => v.id === id && v.kind === 'clone')) return { status: 404, body: { detail: 'No such recorded voice.' } };
         s.voices = s.voices.filter((v) => v.id !== id);
-        if (s.profile.voice === id) s.profile = { ...s.profile, voice: 'kokoro:af_heart' };
+        // Like the server: wherever the voice was in use, the default takes over.
+        const byLang = Object.fromEntries(Object.entries(s.profile.voices_by_language).filter(([, v]) => v !== id));
+        s.profile = { ...s.profile, voice: s.profile.voice === id ? 'kokoro:af_heart' : s.profile.voice, voices_by_language: byLang };
         return ok({ ok: true });
+      }
       case 'POST /pair/start':
         return ok({ ok: true, expires_in: 300 });
       case 'POST /pair/finish':
@@ -290,6 +299,21 @@ export class MockServer {
           : { status: 403, body: { detail: "That code didn't match. Check the server log for the latest one." } };
       default:
         return notFound();
+    }
+  }
+
+  /** Each list of voices brings preparing ones closer to ready, and says so on
+   *  the events socket (voice_status), like the server does when it finishes. */
+  private advanceVoices() {
+    if (this.readyAfterPolls == null) return;
+    for (const v of this.state.voices) {
+      if (v.status !== 'preparing') continue;
+      const seen = (this.polls.get(v.id) ?? 0) + 1;
+      this.polls.set(v.id, seen);
+      if (seen <= this.readyAfterPolls - 1) continue;
+      v.status = 'ready';
+      this.polls.delete(v.id);
+      this.liveSockets.forEach((sk) => sk.push({ event: 'voice_status', voice_id: v.id, status: 'ready', detail: '' }, 0));
     }
   }
 

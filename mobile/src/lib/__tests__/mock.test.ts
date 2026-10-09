@@ -116,3 +116,36 @@ describe('owner actions over REST reach the live events socket', () => {
     expect(server.state.calls.find((c) => c.id === 'call-live-swiggy')!.transcript.some((l) => l.speaker === 'user')).toBe(false);
   });
 });
+
+describe('recorded voices in the mock', () => {
+  const call = (server: MockServer, method: string, path: string) =>
+    server.handle({ method, path, query: new URLSearchParams(), body: {}, form: null }, null);
+  const dad = (server: MockServer) => server.state.voices.find((v) => v.id === 'clone:dad-91b2e0');
+
+  test('a preparing voice turns ready on the second list, and says so on the events socket', () => {
+    const server = new MockServer({ state: createFixtures() });
+    const pushed: Record<string, unknown>[] = [];
+    server.liveSockets.add({ push: (ev) => pushed.push(ev) });
+    call(server, 'GET', '/voices');
+    expect(dad(server)?.status).toBe('preparing');
+    call(server, 'GET', '/voices');
+    expect(dad(server)?.status).toBe('ready');
+    expect(pushed).toEqual([{ event: 'voice_status', voice_id: 'clone:dad-91b2e0', status: 'ready', detail: '' }]);
+  });
+
+  test('readyAfterPolls null keeps it preparing', () => {
+    const server = new MockServer({ state: createFixtures() });
+    server.readyAfterPolls = null;
+    for (let i = 0; i < 5; i++) call(server, 'GET', '/voices');
+    expect(dad(server)?.status).toBe('preparing');
+  });
+
+  test('deleting a voice clears it wherever it was picked', () => {
+    const server = new MockServer({ state: createFixtures() });
+    server.state.profile = { ...server.state.profile, voice: 'clone:my-voice-3f2a1c', voices_by_language: { en: 'clone:my-voice-3f2a1c', hi: 'clone:my-voice-3f2a1c', te: 'piper:te_IN-padmavathi-medium' } };
+    expect(call(server, 'DELETE', '/voices/clone:my-voice-3f2a1c').status).toBe(200);
+    expect(server.state.profile.voice).toBe('kokoro:af_heart');
+    expect(server.state.profile.voices_by_language).toEqual({ te: 'piper:te_IN-padmavathi-medium' });
+    expect(call(server, 'DELETE', '/voices/kokoro:af_heart').status).toBe(404);
+  });
+});
