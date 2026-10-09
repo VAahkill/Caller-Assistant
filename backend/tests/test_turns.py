@@ -110,6 +110,46 @@ async def test_slow_reply_gets_a_spoken_filler(engine, settings):
     await task
 
 
+async def test_the_filler_is_timed_from_when_the_caller_stops(engine, settings):
+    """Slow speech recognition counts towards the wait: "one moment" comes while the
+    words are still being transcribed, in the caller's language, and only once."""
+    settings.filler_after_s = 0.05
+    settings.filler_again_s = 0
+
+    async def slow_transcribe(pcm, language_hint=None):
+        await asyncio.sleep(0.3)
+        return Transcription("నాకు స్విగ్గీ ఆర్డర్ ఉంది", language_hint or "en")
+
+    engine.stt.transcribe = slow_transcribe
+    llm = SlowLLM(0.3, "సరే, గేట్ దగ్గరకు రండి.")
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = llm
+    await s.submit_recording(b"\x01\x00" * 16000, "te")
+    said = assistant_lines(s)
+    assert said[1:] == [phrase("filler", "te"), "సరే, గేట్ దగ్గరకు రండి."]
+    caller = next(l for l in s.record.transcript if l.speaker == "caller")
+    filler = next(l for l in s.record.transcript if l.text == phrase("filler", "te"))
+    assert filler.at < caller.at  # said before the words were transcribed
+    await bridge.hangup()
+    await task
+
+
+async def test_no_filler_when_no_words_were_heard(engine, settings):
+    settings.filler_after_s = 0.05
+
+    async def slow_nothing(pcm, language_hint=None):
+        await asyncio.sleep(0.01)
+        return Transcription("", "en")
+
+    engine.stt.transcribe = slow_nothing
+    bridge, s, task = await start_call(engine)
+    await s.submit_recording(b"\x01\x00" * 16000, "en")
+    await asyncio.sleep(0.15)
+    assert phrase("filler", "en") not in assistant_lines(s)
+    await bridge.hangup()
+    await task
+
+
 async def test_quick_reply_gets_no_filler(engine, settings):
     settings.filler_after_s = 0.3
     bridge, s, task = await start_call(engine)

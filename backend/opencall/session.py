@@ -299,16 +299,26 @@ class CallSession:
     async def _handle_utterance(self, pcm: bytes, language_hint: str | None = None, origin: str = "live") -> None:
         await self._set_status("transcribing")
         language = await self._spoken_language(pcm, language_hint or self.language_hint)
-        result = await self.engine.stt.transcribe(pcm, language)
-        text = result.text.strip()
-        if not text:
-            if origin == "recording":
-                await self._publish("turn_error", detail="Couldn't make out any words in that recording. Please try again.")
-            return
-        if language is None:  # no language ID: Whisper's guess for this turn
-            language = result.language or self._language
-            await self._language_heard(self.tracker.choose(language, confidence=0.0))
-        await self._caller_turn(text, language)
+        if language:
+            self._language = language  # a filler during transcription is said in it
+        # The wait the caller notices starts when they stop talking: "One moment,
+        # please" is timed from here, not from when their words are understood.
+        fill = self._start_fillers()
+        try:
+            result = await self.engine.stt.transcribe(pcm, language)
+            text = result.text.strip()
+            if not text:
+                if origin == "recording":
+                    await self._publish("turn_error",
+                                        detail="Couldn't make out any words in that recording. Please try again.")
+                return
+            if language is None:  # no language ID: Whisper's guess for this turn
+                language = result.language or self._language
+                await self._language_heard(self.tracker.choose(language, confidence=0.0))
+            await self._caller_turn(text, language, fill)
+        finally:
+            if fill:
+                fill.cancel()
 
     async def _spoken_language(self, pcm: bytes, chosen: str | None) -> str | None:
         """The call's language, updated with this utterance: chosen in the app, or
@@ -329,8 +339,11 @@ class CallSession:
             self.record.language = heard.language
             await self._publish("call_language", language=heard.language, confidence=round(heard.confidence, 2))
 
-    async def _caller_turn(self, text: str, language: str) -> None:
+    async def _caller_turn(self, text: str, language: str, fill: asyncio.Task | None = None) -> None:
+        """Answers what the caller said. ``fill``: the filler timer, when it was started
+        earlier (when they stopped talking)."""
         self._language = language
+        fill = fill or self._start_fillers()
         self.record.language = language
         line = await self._line("caller", text, lang=language)
         # The model works in English: the caller's words go to it translated (and are
@@ -340,7 +353,7 @@ class CallSession:
             line.english = english
         self._translate_for_user(line)
         await self._set_status("thinking")
-        await self._run_actions(self.conv.respond(text, language, english), filler=True)
+        await self._run_actions(self.conv.respond(text, language, english), fill=fill)
 
     def _typed_language(self, text: str) -> str:
         # The script says it for Telugu, Tamil, Hindi...; English letters could be
@@ -371,8 +384,15 @@ class CallSession:
             "recorded turn")
 
     # ------------------------------------------------------------ actions
-    async def _run_actions(self, actions: AsyncIterator[Action], filler: bool = False) -> None:
-        fill = self.spawn(self._fillers(), "filler") if filler and self.engine.settings.filler_after_s > 0 else None
+    def _start_fillers(self) -> asyncio.Task | None:
+        return self.spawn(self._fillers(), "filler") if self.engine.settings.filler_after_s > 0 else None
+
+    async def _run_actions(self, actions: AsyncIterator[Action], filler: bool = False,
+                           fill: asyncio.Task | None = None) -> None:
+        """Carries out the model's reply. A filler is said if the first words are slow
+        to come: ``fill`` is one already timing, or ``filler`` starts one now."""
+        if fill is None and filler:
+            fill = self._start_fillers()
         self._reply_task = asyncio.current_task()
         try:
             async with contextlib.aclosing(actions) as stream:  # type: ignore[type-var]
