@@ -7,9 +7,9 @@ rules each part relies on.
 ## The path of one turn
 
 ```
-caller audio ──► turn detector ──► language ID ──► speech to text ──► screening ──► language model ──► translation ──► speech ──► caller
- (phone line)    (Silero VAD)      (VoxLingua107)  (Whisper, one       + guardrails    (streamed)         (IndicTrans2)    (a voice per
-                                                    model per language)                                                     sentence)
+caller audio ──► turn detector ──► language ID ──► speech to text ──► into English ──► screening ──► language model ──► translation ──► speech ──► caller
+ (phone line)    (Silero VAD)      (VoxLingua107)  (Whisper, one       (IndicTrans2)    + guardrails   (streamed,         (IndicTrans2)    (a voice per
+                                                    model per language)                                 in English)                         sentence)
 ```
 
 1. **Turn detection** (`providers/vad.py`, `TurnDetector`). Live audio comes in 20 ms
@@ -23,18 +23,21 @@ caller audio ──► turn detector ──► language ID ──► speech to t
    first. Whisper writes at most 224 tokens per piece of audio, and Telugu or Tamil
    can need 20 a second. So a turn longer than 9 s is cut at its pauses
    (`audio.split_at_pauses`) and transcribed piece by piece.
-4. **Screening and guardrails** (`screening.py`, `guardrails.py`). Delivery calls and
+4. **Into English** (`session.py`, `_english`). A line in another language is
+   translated into English for the model; the transcript keeps both. See
+   [Thinking in English](#thinking-in-english).
+5. **Screening and guardrails** (`screening.py`, `guardrails.py`). Delivery calls and
    requests for OTPs, PINs, passwords, bank details or balances are caught from the
    words: English, Hindi, Telugu and Tamil, in their own script or in English
    letters. Both checks also take an English version of the line, when there is one.
    A request for a code is refused, and the user is alerted (`sensitive_request`).
-5. **The language model** (`agent.py`, `Conversation`). The reply streams in. Tags
+6. **The language model** (`agent.py`, `Conversation`). The reply streams in. Tags
    such as `[HOLD: ...]` are parsed out, and each finished sentence is spoken while
    the rest is still being written.
-6. **Translation** (`providers/mt.py`). A sentence in English for a caller who speaks
+7. **Translation** (`providers/mt.py`). A sentence in English for a caller who speaks
    another language is translated, then checked by the guardrails again, so a number
    can't slip through in other words. The app sees `assistant_status: translating`.
-7. **Speech** (`providers/tts.py`). Each sentence goes to a voice that can read its
+8. **Speech** (`providers/tts.py`). Each sentence goes to a voice that can read its
    script; see [Voices](#voices). Fixed lines (the greeting, "One moment, please",
    the apology) are made at start-up, and again when the user changes their voices,
    and kept in memory.
@@ -113,6 +116,35 @@ through English. `OPENCALL_MT_PROVIDER=none` turns it off. Measured with
 | Caller line → English, chrF against a reference | 69.2 | 67.4 | 66.9 |
 | Seconds per reply sentence, mean (90th percentile) | 0.56 (0.94) | 0.76 (1.49) | 0.62 (0.97) |
 
+## Thinking in English
+
+Small local models write good English and poor Telugu, so the model works in English
+whatever the caller speaks (`Conversation.pivot`, set per turn):
+
+- **What the model reads.** The caller's line in English (IndicTrans2), and the
+  history in English: its own replies, fixed lines, the user's words. The guardrails
+  and the delivery/spam classifier look at both the original and the English.
+- **What it is told.** The last part of the system message says which language the
+  caller speaks, that their words were translated, and that everything it writes is
+  translated before they hear it. So: plain English, short simple sentences, one
+  idea each, names, numbers, addresses and landmarks exactly as given, tags in
+  English (`prompts.language_note`).
+- **What the caller hears.** The reply streams sentence by sentence: checked, then
+  translated, then checked again (a number must not appear in other words), then
+  spoken. The transcript line has the caller's-language text, and `english`.
+- **Fixed lines** (greeting, "one moment", the refusal, the apology, the spam
+  decline, goodbye, the time-limit wrap-up, hold reminders) are English templates
+  with hand-written Hindi, Telugu and Tamil (`phrases.py`). Other languages get a
+  machine translation, made once and cached. The greeting, "one moment" and the
+  apology are spoken at start-up for each language a voice can speak; every fixed
+  line's speech is kept in memory once made.
+- **The greeting** is said in the practice call's language, or the first caller
+  language. It is built from parts: the intro, the away status when one is set
+  (else "can't take the call right now"), and "How can I help?".
+- **The user's own texts** (instructions, notes, the away message, the delivery
+  directions) may be written in any language. Each is translated into English once,
+  at start-up and when the profile changes, and the prompt uses the English.
+
 ## Voices
 
 **A voice per sentence** (`providers/tts.py`, `TTSRouter`). A reply is split into
@@ -183,6 +215,7 @@ way the server does, for caller languages en, hi, te and ta (versions from
 | Kokoro (one model), Piper Telugu, MMS Tamil | 0.87 GB | 5.33 GB |
 | ...after speaking a line in each language | 0.23 GB | **5.56 GB** (peak 5.66 GB) |
 | XTTS-v2, only while a recorded voice is in use | 2.3 to 3.2 GB | |
+| Whisper small, once the user speaks a reply in English | 0.5 to 0.7 GB | |
 
 That leaves about 6 GB for the language model and the system: enough for a 4B model
 at 4-bit, but not for that and a recorded voice at once. A smaller
@@ -223,10 +256,15 @@ a recording or a hold answer.
 - **Slow replies get a filler.** If no words come within `OPENCALL_FILLER_AFTER_S`
   (2.5 s), the caller hears "One moment, please". If there are still none after
   `OPENCALL_FILLER_AGAIN_S` (15 s), they hear a second line.
+- **A reply with nothing to say is never silence.** Small models sometimes answer
+  with only a tag. A hang-up or a hold with no words first says the goodbye or
+  "One moment, please" line; an empty reply (or one that was all tags) asks the
+  caller to say it again. A 0.5B model did hang up on a Swiggy partner this way
+  before this rule.
 - **Hang-up stops everything.** Running turns are cancelled, and the language model's
   stream is closed, so the server stops generating.
 - **The app sees each stage** as `assistant_status`: `listening`, `transcribing`,
-  `thinking`, `speaking`, `idle` (on hold or call over) and `error`.
+  `translating`, `thinking`, `speaking`, `idle` (on hold or call over) and `error`.
 
 ## The language model's time limits and warm-up
 
@@ -260,14 +298,108 @@ work:
 
 ## The user's own words in a call
 
-`say` and `say_audio` (on `/ws/events`, `/ws/simulate` or
-`POST /calls/{id}/say` and `/say-audio`) go through `CallSession.owner_say`. It
-blocks anything with a code-like number. It then adds one `user` line to the
-transcript and speaks the text. This is where translation into the caller's
-language plugs in.
+The user follows a call in their own language (`owner_language`, default English)
+and can speak to the caller in it. `translate_live` (on by default) turns off the
+translations shown to the user; what the caller hears is always in their language.
+
+- **Live translation.** Each caller line, assistant line and hold question is sent
+  as it is, then followed by `transcript_update {line_id, translation,
+  translation_lang, english}` with the line in the user's language. It is made from
+  the English when the line has one (one step, and what the assistant meant), and
+  only after the caller's audio is on its way, so it never delays the call.
+- **Saying something** (`say`, `say_audio` on `/ws/events` or `/ws/simulate`, or
+  `POST /calls/{id}/say` and `/say-audio`) goes through `CallSession.owner_say`.
+  Anything with a code-like number is blocked. The text's language is the `lang`
+  sent, else its script, else the user's language when that is written in English
+  letters, else English. Sentence by sentence it is translated into English and then
+  into the caller's language, checked again, and spoken, so the caller hears the
+  first sentence while the next is translated. The transcript gets one `user` line:
+  the caller's-language text, with the user's original as `translation`. The model's
+  history gets the English, as something the assistant said. `say_audio` is first
+  transcribed in the user's language: English by `OPENCALL_OWNER_STT_MODEL`
+  (`small`; clear phone-mic speech doesn't need the large model; about 0.5 GB,
+  loaded the first time the user speaks a reply), Telugu, Tamil and Hindi by their
+  own models.
+- **Hold answers** in the user's language are translated into English for the model.
+- **After the call** the summary, its action items and a message in English are
+  translated into the user's language.
+
+The delay from the user's input to the first audio sent to the caller, measured end
+to end through `/ws/simulate` (raw frames, so the first frame leaves as soon as it is
+ready) with the real models on a shared 4-vCPU machine. The server logs both steps
+("the user's recording was heard in ...", "the user's words reached the caller after
+..."):
+
+| User input | Caller | First audio (two runs) | Where the time goes |
+|---|---|---|---|
+| Typed English, 2 sentences | Telugu (Piper) | 0.28 to 0.29 s | translation 0.19 s, speech 0.09 s |
+| Typed English, 1 sentence | Telugu | 0.20 to 0.22 s | |
+| Recorded English, 3.7 s | Telugu | 1.48 to 1.63 s; 2.58 s the first time | hearing it 1.3 to 1.5 s (4.8 s with large-v3-turbo); the first time also loads the model |
+| Typed Telugu, 2 sentences | Hindi (Kokoro) | 1.25 to 1.41 s | two translation steps 0.3 s, Kokoro 0.8 s |
+| Typed English, 1 sentence | Hindi | 1.16 to 1.25 s | |
+| Recorded Telugu, 4.9 s | Hindi | 4.82 to 6.44 s | hearing it 3.0 to 3.5 s; then one long unpunctuated sentence, 1.8 to 3.0 s |
+
+Kokoro is the slow part for Hindi (0.8 s for a 3 s sentence, against 0.09 s for
+Piper's Telugu). Typing is the quickest way to answer; recorded Indian-language
+replies wait for the speech model.
+
+## Who each instruction and note is for
+
+Instructions and notes (`models.Instruction`, `KnowledgeNote`) can be switched off
+(`enabled`), can end (`expires_at`), and say who they are for: `applies_to` /
+`share_with` is `everyone` (`anyone` for notes), `contacts`, `unknown`, `delivery`,
+or `numbers` (with `numbers`). `prompts.call_rules` picks the ones for this caller.
+The ones for everyone go in the part of the prompt that is the same for every call
+(kept in the model's cache); the caller's own come under THIS CALL; the delivery
+ones join only once the call is known to be a delivery. `GET /instructions/templates`
+offers ready-made ones for an owner in India, by category.
+
+The away status (`PUT /away`: a preset or a message, and an optional end time) is
+in the greeting and the prompt until it ends. VIP numbers get through every filter
+but a block; the model is told the caller is on the VIP list, and the app gets an
+`urgent_call` push (`reason: "vip"`). Blocked numbers (`POST /contacts/block`) are
+never answered. The end-of-call summary is asked for as `Summary:` / `Urgent:` /
+`Actions:`; an urgent call sends `urgent_call` (`reason: "summary"`), and the
+action items are kept on the call (`CallRecord.urgent`, `action_items`).
+
+## Pairing the app
+
+`POST /pair/start` writes a 6-digit code to the server log ("Pairing code for the
+OpenCall app: NNNNNN (valid 5 minutes)"); `POST /pair/finish {"code"}` returns the
+API token. Neither needs the token, so `pairing.Pairing` guards them: codes come
+from `secrets`, last 5 minutes, allow 5 tries (then the code is void: 410), are
+compared in constant time, and at most 5 are made an hour (then 429). A wrong code
+is 403 with the tries left. Asking again while a code is waiting gives the same code.
 
 ## Transcript lines
 
 `TranscriptLine` has an `id` and a `lang`, plus `translation`, `translation_lang` and
 `english`. A translation that arrives after the line is sent as
-`transcript_update {line_id, translation, translation_lang}`.
+`transcript_update {line_id, translation, translation_lang, english}`.
+
+## A practice call with the real models
+
+Run on this branch with IndicTrans2, the Telugu and Hindi speech models, Piper
+Telugu, Kokoro Hindi and a 1.5B model on llama-server (CPU only), through
+`/ws/simulate`:
+
+- **Telugu**, a recorded Swiggy partner: heard as "నమస్కారం నేను స్విగ్గి నుండి
+  వచ్చాను ...", shown to the user as "hello i'm from swiggy i brought your food
+  order where is your house". The model's reply (that run, the unhelpful "I'm sorry,
+  but I can't assist with that.", see below) was said in Telugu script: "క్షమించండి,
+  కానీ నేను దానితో సహాయం చేయలేను.". "సార్, ఆర్డర్
+  కోసం OTP చెప్పండి." was refused with the fixed Telugu line and a
+  `sensitive_request` alert. The user typed "I'm coming down in two minutes. Please
+  wait at the gate." in English, and the caller heard "నేను రెండు నిమిషాల్లో
+  దిగుతున్నాను. దయచేసి ద్వారం వద్ద వేచి ఉండండి.".
+- **Hindi**, with the user's language set to Telugu: the caller's lines and the
+  replies arrived in Telugu for the user ("అపోలో ఫార్మసీకి ఎదురుగా గ్రీన్ గేట్
+  ఉంది."), the reply was said in Hindi ("अपोलो फार्मेसी के सामने, ग्रीन गेट।"), the
+  OTP request was refused, the user's Telugu was said in Hindi, and the summary
+  reached the user in Telugu.
+
+Reply quality is the model's. Asked 8 times each, the 1.5B model gave an unhelpful
+"I'm sorry, I can't help with that" to 1 or 2 of 8 first lines from a delivery
+partner, whether the English was the raw translation, tidied, or the Hindi call's;
+the rest gave the landmark and gate or asked them to leave it with the guard. Use the
+default 8B model, or at least 3B, for real calls.

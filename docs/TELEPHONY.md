@@ -142,15 +142,24 @@ Press Ctrl+C to hang up. What you can send:
 | `{"text": "...", "lang": "te"}` | The caller says this (`lang` is optional; the script or the `lang=` in the URL is used otherwise) |
 | `{"audio_b64": "<base64 of any audio file>", "lang": "te"}` | A finished recording. The silence around it is cut and it is answered as one utterance |
 | binary 16 kHz PCM16 frames | A live microphone stream, cut into turns by the voice detector |
-| `{"action": "say", "text": "...", "lang": "en"}` / `{"action": "say_audio", "audio_b64": "..."}` | You speak to the caller yourself |
+| `{"action": "say", "text": "...", "lang": "en"}` | You speak to the caller yourself: typed in your language (`lang` is optional), said in theirs |
+| `{"action": "say_audio", "audio_b64": "...", "lang": "te"}` | The same, recorded: transcribed in your language (`lang`, else `owner_language`), then translated and said |
+| `{"action": "answer", "hold_id": "...", "text": "..."}` | Your answer to a hold question, in your language |
 | `{"hangup": true}` | Ends the call |
 
 Every message gets an `ack` or an `error` back, never silence. You also receive
 every event of the call: `transcript`, `transcript_update`, `assistant_status`
-(`listening`, `transcribing`, `thinking`, `speaking`, `idle`, `error`), `call_category`,
-`hold_question`, `sensitive_request`, `turn_error` and `call_ended`. Add `&lang=te` to the
-URL to say which language the caller speaks. Without `wav=1` the speech comes as
-real-time 16 kHz PCM16 frames.
+(`listening`, `transcribing`, `translating`, `thinking`, `speaking`, `idle`, `error`),
+`call_language`, `call_category`, `hold_question`, `sensitive_request`, `urgent_call`,
+`turn_error` and `call_ended`. Add `&lang=te` to the URL to say which language the
+caller speaks; the greeting is then in that language too. Without `wav=1` the speech
+comes as real-time 16 kHz PCM16 frames.
+
+With live translation on (`translate_live`, the default), every caller and assistant
+line is followed by a `transcript_update {line_id, translation, translation_lang,
+english}` with the line in your `owner_language`. The same `say`, `say_audio` and
+`answer` actions work on `/ws/events` (with a `call_id`) and over REST
+(`POST /calls/{id}/say`, `/say-audio`, `/answer`), for real calls.
 
 Watch the live transcript appear in the app while it runs.
 
@@ -164,3 +173,17 @@ Watch the live transcript appear in the app while it runs.
   temporary `trycloudflare.com` address (it changes on every restart).
 
 Always set a long random `OPENCALL_API_TOKEN`.
+
+**Pairing instead of typing the token.** The app can ask the server for a pairing
+code (`POST /pair/start`, no token needed). The server writes it to its log:
+
+```bash
+docker compose logs opencall | grep "Pairing code"
+# ... Pairing code for the OpenCall app: 482913 (valid 5 minutes)
+```
+
+Type the 6 digits into the app, which trades them for the token
+(`POST /pair/finish {"code": "482913"}`). A code lasts 5 minutes and allows 5 tries;
+after that it is void and you ask for a new one. Asking again while a code is
+waiting gives the same code, and at most 5 codes are made an hour. Only someone who
+can read the server's log can pair, so keep the log private.
