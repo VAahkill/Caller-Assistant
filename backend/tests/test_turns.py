@@ -348,3 +348,72 @@ async def test_a_reply_that_speaks_gets_no_extra_line(engine):
     await s.handle_text("That's all, thanks.", "en")
     assert assistant_lines(s)[1:] == ["Okay, bye!"]
     await task
+
+
+class LoudVAD:
+    """Any frame that isn't silent is speech."""
+
+    def is_speech(self, frame: bytes) -> bool:
+        return any(frame)
+
+
+def speech(value: int, seconds: float) -> bytes:
+    return value.to_bytes(2, "little") * int(16000 * seconds)
+
+
+QUIET = b"\x00\x00" * int(16000 * 0.8)  # longer than the end-of-turn silence
+
+
+def words_in(pcm: bytes) -> str:
+    """What a fake speech model hears: fragments are told apart by their samples."""
+    found = [text for value, text in ((1000, "Hello, Amazon delivery."), (2000, "I'm at your gate."))
+             if value.to_bytes(2, "little") * 4 in pcm]
+    return " ".join(found)
+
+
+async def test_a_caller_who_pauses_mid_sentence_is_heard_whole(engine):
+    """The turn detector ends a turn at the caller's pause; when they go on before
+    the first part was understood, it is heard again with the rest, not dropped."""
+    heard = []
+
+    async def slow_transcribe(pcm, language_hint=None):
+        heard.append(words_in(pcm))
+        await asyncio.sleep(0.2)
+        return Transcription(words_in(pcm), "en")
+
+    engine.stt.transcribe = slow_transcribe
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = SlowLLM(0.0, "Please wait there, I'll tell Rahul.")
+    s.turns.vad = LoudVAD()
+    bridge.feed(speech(1000, 0.5) + QUIET + speech(2000, 0.5) + QUIET)
+    while not [l for l in s.record.transcript if l.speaker == "caller"] or s._turn_active:
+        await asyncio.sleep(0.01)
+    caller = [l.text for l in s.record.transcript if l.speaker == "caller"]
+    assert caller == ["Hello, Amazon delivery. I'm at your gate."]
+    assert s.conv.llm.calls[-1][-1]["content"] == "Hello, Amazon delivery. I'm at your gate."
+    await bridge.hangup()
+    await task
+
+
+async def test_words_the_model_already_has_are_not_heard_twice(engine):
+    heard = []
+
+    async def transcribe(pcm, language_hint=None):
+        heard.append(words_in(pcm))
+        return Transcription(words_in(pcm), "en")
+
+    engine.stt.transcribe = transcribe
+    bridge, s, task = await start_call(engine)
+    llm = s.conv.llm = SlowLLM(5.0, "Please wait there.")  # still thinking when the caller goes on
+    s.turns.vad = LoudVAD()
+    bridge.feed(speech(1000, 0.5) + QUIET)
+    await llm.started.wait()
+    llm.delay = 0.0
+    bridge.feed(speech(2000, 0.5) + QUIET)
+    while len(llm.calls) < 2 or s._turn_active:
+        await asyncio.sleep(0.01)
+    assert heard == ["Hello, Amazon delivery.", "I'm at your gate."]
+    # Both reach the model, once each (two caller turns in a row become one message).
+    assert llm.calls[-1][-1] == {"role": "user", "content": "Hello, Amazon delivery.\nI'm at your gate."}
+    await bridge.hangup()
+    await task

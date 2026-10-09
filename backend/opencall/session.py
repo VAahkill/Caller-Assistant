@@ -63,6 +63,10 @@ class CallSession:
         self._turn_active = False
         self._tasks: set[asyncio.Task] = set()  # turns, fillers, kickoff: cancelled at hang-up
         self._respond_task: asyncio.Task | None = None  # the spoken turn a barge-in cancels
+        # The caller's audio from turns whose words haven't reached the model yet. A
+        # caller who pauses mid-sentence ends a turn; when they go on, that turn is
+        # cancelled, and its audio is heard again with the rest instead of being lost.
+        self._unheard = b""
         self._reply_task: asyncio.Task | None = None  # the turn whose reply is being made and said
         self._queued_by = "assistant"  # who the audio waiting to be played is from
         self._ending = False
@@ -253,8 +257,9 @@ class CallSession:
             if self.record.status == CallStatus.on_hold:
                 return  # caller chatter while on hold is recorded but not answered
             await self._interrupt(cancel_response=True)
+            pcm = self._unheard = self._unheard + utterance
             self._respond_task = self.spawn(
-                self._turn("speech", lambda: self._handle_utterance(utterance)), "caller turn")
+                self._turn("speech", lambda: self._handle_utterance(pcm)), "caller turn")
 
     async def _interrupt(self, cancel_response: bool = False) -> None:
         drained = False
@@ -308,6 +313,8 @@ class CallSession:
             result = await self.engine.stt.transcribe(pcm, language)
             text = result.text.strip()
             if not text:
+                if origin == "live":
+                    self._unheard = b""
                 if origin == "recording":
                     await self._publish("turn_error",
                                         detail="Couldn't make out any words in that recording. Please try again.")
@@ -353,6 +360,7 @@ class CallSession:
             line.english = english
         self._translate_for_user(line)
         await self._set_status("thinking")
+        self._unheard = b""  # the words reach the model now (respond() adds them to the history first)
         await self._run_actions(self.conv.respond(text, language, english), fill=fill)
 
     def _typed_language(self, text: str) -> str:
