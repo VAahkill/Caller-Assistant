@@ -74,6 +74,12 @@ test('Avatar initials', async () => {
   expect(initials('Ravi Kumar')).toBe('RK');
   expect(initials('+91 98765 00001')).toBe('');
   expect(initials('శ్రీను')).toBe('శ');
+  // One Indic letter with its vowel signs; two would read as a word.
+  expect(initials('వెంకటలక్ష్మి నరసింహారావు')).toBe('వెం');
+  expect(initials('श्रीनिवास राव')).toBe('श');
+  expect(initials('सुनीता')).toBe('सु');
+  expect(initials('தமிழ்செல்வி')).toBe('த');
+  expect(initials('Ravi')).toBe('R');
   await renderUI(<Avatar name="Ravi Kumar" />);
   expect(screen.getByText('RK', { includeHiddenElements: true })).toBeTruthy();
 });

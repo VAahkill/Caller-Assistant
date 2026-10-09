@@ -159,6 +159,58 @@ export default function Gallery() {
         </Card>
       </Section>
 
+      <Section title="Long Telugu, Hindi and Tamil">
+        <ListRow
+          leading={<Avatar name="వెంకటలక్ష్మి నరసింహారావు" />}
+          title="వెంకటలక్ష్మి నరసింహారావు గారి కార్యాలయం"
+          subtitle="ఆదివారం భోజనానికి వస్తాడా అని అడుగు. ఫ్రీ అయ్యాక ఫోన్ చేయమను. గేట్ 2 దగ్గర ఉన్నాను."
+          value="2 నిమిషాల క్రితం"
+          chevron
+          onPress={() => undefined}
+        />
+        <ListRow
+          icon="language-outline"
+          title="हिन्दी में बात करने वाले कॉलर"
+          subtitle="कॉल करने वाले से हिन्दी में बात करेगी, और आपको अंग्रेज़ी में अनुवाद दिखाएगी।"
+          value="श्रीनिवास"
+          chevron
+          onPress={() => undefined}
+        />
+        <ListRow
+          icon="volume-high-outline"
+          title="தமிழ் அழைப்பாளர்களுக்கு பதில் சொல்லும் குரல்"
+          subtitle="வணக்கம், நான் அர்ஜுனின் உதவியாளர். எப்படி உதவ முடியும்?"
+          switchValue={on}
+          onSwitchChange={setOn}
+        />
+      </Section>
+
+      <Section title="Indic in controls" grouped={false}>
+        <View style={styles.wrap}>
+          <Chip label="ఆర్డర్ ఎక్కడ ఉంది?" kind="suggestion" icon="add" />
+          <Chip label="पार्सल गेट पर छोड़ दीजिए" />
+          <Chip label="சரி, நன்றி" selected />
+          <StatusPill label="తెలుగు" tone="info" />
+          <StatusPill label="हिन्दी" tone="primary" />
+          <StatusPill label="தமிழ்" tone="success" />
+        </View>
+        <Button title="గేట్ 2 దగ్గర సెక్యూరిటీకి ఇవ్వమని చెప్పండి" icon="send" fullWidth />
+        <Banner
+          tone="warning"
+          title="அழைப்பாளர் OTP கேட்டார்"
+          message="உங்கள் உதவியாளர் மறுத்துவிட்டார். இந்த எண்ணைத் தடுக்கவா?"
+          action={{ label: 'தடு', onPress: () => undefined }}
+        />
+        <TextField label="పేరు" value="వెంకటలక్ష్మి నరసింహారావు" onChangeText={() => undefined} helper="కాలర్లు ఈ పేరు వింటారు." />
+        <Card>
+          <Text variant="title2">రాజేష్ కుమార్ రెడ్డి</Text>
+          <Text variant="body">मैं बैंक से बोल रहा हूँ। आपका KYC अपडेट करना है, फ़ोन पर जो OTP आया है वो बताइए।</Text>
+          <Text variant="footnote" color="text2">
+            நான் வங்கியிலிருந்து பேசுகிறேன். உங்கள் KYC புதுப்பிக்க வேண்டும்.
+          </Text>
+        </Card>
+      </Section>
+
       <Section title="Chat" grouped={false}>
         {LINES.map((l) => (
           <ChatBubble key={l.id} line={l} assistantLabel="Ava" showTranslation ownerLanguage="en" />

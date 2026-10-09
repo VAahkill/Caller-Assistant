@@ -5,6 +5,23 @@ import { useTokens } from '../../lib/design/theme';
 import { accentFor } from '../../lib/design/tokens';
 import { Text } from './Text';
 
+// Indic scripts (Devanagari to Sinhala): a letter carries its vowel signs.
+const INDIC = /^[\u0900-\u0DFF]/;
+// Virama/halant, which joins a consonant to the next one (Devanagari .. Malayalam).
+const VIRAMA = /[\u094D\u09CD\u0A4D\u0ACD\u0B4D\u0BCD\u0C4D\u0CCD\u0D4D]/;
+
+/** The first letter as it is written: "వెం" from వెంకట, with its vowel signs,
+ *  and a bare "శ" from శ్రీను rather than a dangling halant. */
+function firstLetter(word: string): string {
+  const chars = [...word];
+  let out = chars[0] ?? '';
+  for (const ch of chars.slice(1)) {
+    if (!/\p{M}/u.test(ch) || VIRAMA.test(ch)) break;
+    out += ch;
+  }
+  return out;
+}
+
 export function initials(name: string): string {
   const words = name
     .replace(/[^\p{L}\p{M}\p{N}\s]/gu, ' ')
@@ -13,6 +30,8 @@ export function initials(name: string): string {
     .filter(Boolean);
   if (words.length === 0) return '';
   if (/^\+?\d/.test(words[0])) return '';
+  // Two Indic letters read as a word ("వన"), so Indic names get one.
+  if (INDIC.test(words[0])) return firstLetter(words[0]);
   const first = [...words[0]][0] ?? '';
   const last = words.length > 1 ? ([...words[words.length - 1]][0] ?? '') : '';
   return (first + last).toUpperCase();
