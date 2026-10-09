@@ -162,3 +162,14 @@ def test_the_delivery_details_dont_carry_the_long_map_link():
     text = delivery_context(p, can_text=True)
     assert "http" not in text and "Opposite Apollo Pharmacy" in text and "Map pin: saved" in text
     assert "hasn't pinned" not in delivery_context(Profile(location=Location(lat=17.41, lng=78.44)))
+
+
+def test_a_delivery_partner_is_told_what_they_ask_and_replies_start_with_the_answer():
+    from opencall.models import Location, Profile
+    from opencall.prompts import delivery_context
+
+    text = delivery_context(Profile(location=Location(lat=17.41, lng=78.44, floor_unit="4th floor, flat 402")))
+    assert "Answer exactly what they ask" in text and "the floor" in text
+    assert "give the address and the main landmark" in text
+    system = Conversation.inbound(Profile(), None, "+919876500101", "", ["en"]).system_message()
+    assert 'Start with the answer itself, not\n  "Hello!"' in system

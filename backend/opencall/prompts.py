@@ -20,8 +20,9 @@ STYLE = """\
 HOW YOU SOUND
 - You are on a live phone call. Talk like a warm, relaxed human receptionist, not a robot.
 - Keep every reply short: one or two sentences, about 25 words at most. Say one thing
-  at a time; the caller will ask if they need more. Use contractions and small natural
-  phrases ("Sure", "Got it", "Ah, okay") but don't overdo them.
+  at a time; the caller will ask if they need more. Start with the answer itself, not
+  "Hello!" or "Great!". Use contractions and small natural phrases ("Sure", "Got it")
+  but don't overdo them.
 - Never use lists, markdown, emojis or read out URLs. Say numbers the way people say them.
 - If you didn't catch something, ask them to repeat it, like a person would.
 - Reply only in the language named under LANGUAGE at the end. Never add a translation,
@@ -239,8 +240,9 @@ def delivery_context(profile: Profile, can_text: bool = False, instructions: lis
     parts = [
         f"DELIVERY: this caller is a delivery partner. {texting} Delivery details you may share with them:\n"
         f"{loc}\n"
-        "Guide them from where they are now: give only the next one or two steps (landmark first),"
-        " then let them ask for the rest, or ask where they are."
+        "Answer exactly what they ask: the area, the building, the floor or the flat. Asked where the"
+        " house is, give the address and the main landmark. After that, guide them from where they are"
+        " now, one or two steps at a time."
     ]
     if instructions:
         parts.append(f"{profile.user_name.upper()}'S INSTRUCTIONS FOR DELIVERIES\n{_bullets(instructions)}")
