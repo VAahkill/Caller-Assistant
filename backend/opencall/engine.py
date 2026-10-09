@@ -8,18 +8,18 @@ import threading
 import time
 from collections import OrderedDict
 
-from .agent import Conversation, opening_line
+from .agent import Conversation, greeting_parts
 from .config import Settings
 from .events import EventBus
-from .languages import needs_translation
+from .languages import guess_language, needs_translation
 from .models import CallDirection, CallerMessage, CallRecord, CallStatus
-from .phrases import phrase
+from .phrases import fill, has_phrase, phrase
 from .providers import build_lid, build_llm, build_stt, make_vad
 from .providers.llm import LLM, LLMError
 from .providers.mt import TranslationService, build_translator
 from .providers.stt import STT
 from .providers.tts import TTSRouter
-from .screening import ScreenDecision, find_contact, normalize_number, screen_number
+from .screening import ScreenDecision, find_contact, is_vip, normalize_number, screen_number
 from .session import CallSession
 from .store import Store
 from .tasks import TaskManager
@@ -63,9 +63,14 @@ class Engine:
         self._speech_cache: OrderedDict[tuple[str, ...], bytes] = OrderedDict()
         self._speech_lock = threading.Lock()
         self._background: set[asyncio.Task] = set()
+        self._loop: asyncio.AbstractEventLoop | None = None
         self._llm_warming: asyncio.Task | None = None
         self._warm_again = False
         self._changed_during_call = False
+        # The English of what the user wrote in another language (instructions, notes,
+        # away message, directions): the model reads English. Filled at warm-up and
+        # whenever the profile changes; see owner_english.
+        self._owner_english: dict[str, str] = {}
         self.store.on_profile_saved.append(self.profile_changed)
 
     # ------------------------------------------------------------ warm-up
@@ -82,9 +87,12 @@ class Engine:
             self.lid.warm_up()
             self.ready["lid"] = self.lid.available
             log.info("Language identification: %s", self.lid.name)
-        self.mt.warm_up([lang for lang in self.store.profile.caller_languages if lang != "en"])
+        p = self.store.profile
+        self.mt.warm_up(list(dict.fromkeys(lang for lang in [*p.caller_languages, p.owner_language] if lang != "en")))
         self.ready["mt"] = self.mt.available
         log.info("Translation: %s", self.mt.name)
+        if self.translate_owner_texts():
+            self._call_soon(self.refresh_llm_cache)  # the prompt now has them in English
         vad = self.make_vad()
         log.info("Voice activity detection: %s", getattr(vad, "name", type(vad).__name__))
         self.tts.warm_up(self.store.profile.voice, self._speech_languages())
@@ -99,9 +107,11 @@ class Engine:
         the voices now chosen. Lines already in memory aren't made again."""
         voice = self.store.profile.voice
         supported = self.tts.supported_languages(voice)
-        self._prerender(opening_line(self.store.profile), voice, "en")
-        for lang in ["en", *self._speech_languages()]:
+        self._prerender(self.greeting("en"), voice, "en")
+        for lang in dict.fromkeys(["en", *self._speech_languages()]):
             if lang in supported:
+                if lang != "en":
+                    self._prerender(self.greeting(lang), voice, lang)
                 for key in ("filler", "fallback"):
                     self._prerender(self.fixed_line(key, lang), voice, lang)
 
@@ -127,10 +137,72 @@ class Engine:
     def fixed_line(self, key: str, lang: str) -> str:
         """A fixed line (see phrases.py) in ``lang``: written by hand for the languages
         callers use most, translated from English (and cached) for the rest."""
-        text = phrase(key, lang)
+        p = self.store.profile
+        text = fill(phrase(key, lang), p.user_name, p.assistant_name)
         if lang != "en" and needs_translation(text, lang):
             return self.mt.translate_sync(text, "en", lang)
         return text
+
+    async def fixed_line_async(self, key: str, lang: str) -> str:
+        if lang == "en" or has_phrase(key, lang):
+            return self.fixed_line(key, lang)
+        return await asyncio.to_thread(self.fixed_line, key, lang)
+
+    def greeting(self, lang: str) -> str:
+        """The greeting (with the away status, if one is set) in ``lang``: the
+        hand-written parts where there are some, the rest translated."""
+        p = self.store.profile
+        out = []
+        for key, english in greeting_parts(p, self.owner_english):
+            if lang == "en":
+                out.append(english)
+            elif key and has_phrase(key, lang):
+                out.append(fill(phrase(key, lang), p.user_name, p.assistant_name))
+            else:
+                out.append(self.mt.translate_sync(english, "en", lang))
+        return " ".join(out)
+
+    async def greeting_async(self, lang: str) -> str:
+        if lang == "en":
+            return self.greeting(lang)
+        return await asyncio.to_thread(self.greeting, lang)
+
+    # ------------------------------------------------------------ the user's own texts
+    def _owner_texts(self) -> list[str]:
+        p = self.store.profile
+        texts = [i.text for i in p.instructions] + [n.text for n in p.knowledge] + p.location.texts()
+        if p.away is not None:
+            texts.append(p.away.message)
+        return [t for t in texts if t.strip()]
+
+    def owner_english(self, text: str) -> str:
+        """``text`` (written by the user) in English, if it has been translated; as it
+        is otherwise (English already, or not translated yet)."""
+        return self._owner_english.get(text, text)
+
+    def translate_owner_texts(self) -> int:
+        """Translates into English whatever the user wrote in another script, once per
+        text (blocking: run it in a thread). Returns how many were translated."""
+        done = 0
+        for text in self._owner_texts():
+            lang = guess_language(text, default="en")
+            if lang == "en" or text in self._owner_english or not self.mt.can_translate(lang, "en"):
+                continue
+            english = self.mt.translate_sync(text, lang, "en").strip()
+            if english and english != text:
+                self._owner_english[text] = english
+                done += 1
+        return done
+
+    def _untranslated_owner_texts(self) -> bool:
+        return any(guess_language(t, default="en") != "en" and t not in self._owner_english
+                   and self.mt.can_translate(guess_language(t, default="en"), "en") for t in self._owner_texts())
+
+    def _call_soon(self, fn) -> None:
+        """Runs ``fn`` on the server's event loop (from the warm-up thread)."""
+        loop = self._loop
+        if loop is not None and not loop.is_closed():
+            loop.call_soon_threadsafe(fn)
 
     def profile_changed(self) -> None:
         """The user changed something the call prompt or the greeting is made from
@@ -144,13 +216,36 @@ class Engine:
             self._changed_during_call = True  # the caller is using the model; prepare when the call ends
             return
         self._changed_during_call = False
+        if self._untranslated_owner_texts():
+            self._spawn(self._translate_then_prepare())
+            return
+        self._prepare_for_calls()
+
+    def _prepare_for_calls(self) -> None:
         self.refresh_llm_cache()
         self.release_unused_voice_model()
         if self.ready["tts"]:
             self._spawn(asyncio.to_thread(self._prerender_phrases))
 
+    async def _translate_then_prepare(self) -> None:
+        """New text in another language: in English first, then the prompt with it."""
+        await asyncio.to_thread(self.translate_owner_texts)
+        self._prepare_for_calls()
+
+    async def translate_owner_text(self, text: str) -> str:
+        """The English of one text the user just wrote (kept for the prompt)."""
+        lang = guess_language(text, default="en")
+        if lang == "en" or not self.mt.can_translate(lang, "en"):
+            return text
+        if text not in self._owner_english:
+            english = (await self.mt.translate(text, lang, "en")).strip()
+            if english and english != text:
+                self._owner_english[text] = english
+        return self.owner_english(text)
+
     async def warm_up_all(self) -> None:
         """Speech models (in a thread) and the LLM at the same time."""
+        self._loop = asyncio.get_running_loop()
         llm = asyncio.create_task(self.warm_up_llm())
         try:
             await asyncio.to_thread(self.warm_up)
@@ -165,7 +260,8 @@ class Engine:
         if warm is None:
             self.ready["llm"] = True
             return
-        messages = Conversation.inbound(self.store.profile, self.llm, "", "", self._speakable()).warm_up_messages()
+        messages = Conversation.inbound(self.store.profile, self.llm, "", "", self._speakable(),
+                                        english=self.owner_english).warm_up_messages()
         delay = 15.0
         while True:
             started = time.monotonic()
@@ -301,14 +397,16 @@ class Engine:
         if task:
             rec = CallRecord(id=bridge.call_id, direction=CallDirection.outbound, number=task.number,
                              contact_name=task.target_name, category="task", task_id=task.id)
-            conv = Conversation.for_task(profile, self.llm, task, self._speakable())
+            conv = Conversation.for_task(profile, self.llm, task, self._speakable(), self.owner_english)
         else:
             contact = find_contact(profile, bridge.number)
             number = normalize_number(bridge.number, profile.home_country_code)
+            vip = is_vip(profile, number)
             rec = CallRecord(id=bridge.call_id, number=number, contact_name=contact.name if contact else "",
-                             category="contact" if contact else "unknown")
+                             category="contact" if contact else "unknown", urgent=vip)
             conv = Conversation.inbound(profile, self.llm, number, rec.contact_name, self._speakable(),
-                                        can_text=getattr(bridge, "can_sms", False))
+                                        can_text=getattr(bridge, "can_sms", False), vip=vip,
+                                        english=self.owner_english)
         session = CallSession(self, bridge, rec, conv)
         self.sessions[rec.id] = session
         return session

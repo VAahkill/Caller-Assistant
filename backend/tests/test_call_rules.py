@@ -6,7 +6,9 @@ VIPs are part of the call too, and blocked numbers are never answered."""
 import time
 
 from opencall import prompts
+from opencall.agent import Conversation, opening_line, parse_summary
 from opencall.models import Away, Contact, Instruction, KnowledgeNote, Location, Profile
+from opencall.providers.llm import ScriptedLLM
 from opencall.screening import screen_number
 
 LANGS = ["en", "hi", "te", "ta"]
@@ -70,11 +72,31 @@ def test_the_part_that_is_the_same_for_every_caller_comes_first():
     assert b.startswith(head)  # a local LLM keeps this part cached between calls
 
 
+def test_delivery_rules_join_once_the_call_is_a_delivery():
+    p = rules_profile()
+    conv = Conversation.inbound(p, ScriptedLLM(), "+919833333333", "", LANGS)
+    assert "Leave parcels with the guard." not in conv.system_message()
+    conv._enter_delivery_mode()
+    system = conv.system_message()
+    assert "RAHUL'S INSTRUCTIONS FOR DELIVERIES\n- Leave parcels with the guard." in system
+    assert "You may also tell them:\n- The guard's name is Ramesh." in system
+    assert system.index("DELIVERY:") > system.index("THIS CALL")  # after the cached part
+
+
 def test_nothing_known_means_hold():
     p = profile()
     assert "You know nothing else about Rahul's plans. Anything else -> HOLD." in prompt_for(p, "+919833333333")
     p.knowledge = [KnowledgeNote(text="Back on Monday.", share_with="anyone")]
     assert "You know nothing else" not in prompt_for(p, "+919833333333")
+
+
+def test_the_away_status_is_in_the_prompt_and_the_greeting_until_it_ends():
+    p = profile(away=Away(preset="meeting", message="In a meeting until 3 PM"))
+    text = prompt_for(p, "+919833333333")
+    assert 'Rahul set this status for callers: "Rahul is in a meeting until 3 PM."' in text
+    assert "Rahul is in a meeting until 3 PM." in opening_line(p)
+    p.away = Away(preset="meeting", message="In a meeting until 3 PM", until=time.time() - 1)
+    assert "meeting" not in prompt_for(p, "+919833333333") and "meeting" not in opening_line(p)
 
 
 def test_away_messages_read_naturally():
@@ -96,6 +118,14 @@ def test_a_vip_is_flagged_to_the_model_and_gets_through_screening():
     assert not screen_number(p, "9833333333").answer
 
 
+async def test_a_vip_is_never_hung_up_on_as_spam():
+    p = profile()
+    llm = ScriptedLLM(lambda m: "Sure, I'll let Rahul know right away.")
+    conv = Conversation.inbound(p, llm, "+919844444444", "", LANGS, vip=True)
+    actions = [a async for a in conv.respond("I have an insurance policy question about my mutual fund", "en")]
+    assert conv.category != "spam" and llm.calls and not any(type(a).__name__ == "EndCall" for a in actions)
+
+
 def test_blocked_numbers_are_never_answered():
     p = profile(blocked_numbers=["+919855555555"])
     decision = screen_number(p, "09855555555")
@@ -111,9 +141,14 @@ def test_location_details_written_in_another_language_go_to_the_model_in_english
     assert "- Landmarks: Opposite Apollo" in text and "అపోలో" not in text
 
 
-def test_the_away_status_is_in_the_prompt_until_it_ends():
-    p = profile(away=Away(preset="meeting", message="In a meeting until 3 PM"))
-    text = prompt_for(p, "+919833333333")
-    assert 'Rahul set this status for callers: "Rahul is in a meeting until 3 PM."' in text
-    p.away = Away(preset="meeting", message="In a meeting until 3 PM", until=time.time() - 1)
-    assert "meeting" not in prompt_for(p, "+919833333333")
+def test_the_end_of_call_summary_has_urgency_and_action_items():
+    s = parse_summary("Summary: Priya called about dinner.\nUrgent: no\nActions:\n- Call Priya back\n- Book a table")
+    assert (s.text, s.urgent) == ("Priya called about dinner.", False)
+    assert s.action_items == ["Call Priya back", "Book a table"]
+    s = parse_summary("**Summary:** The bank called about a blocked card.\n**Urgent:** Yes\n**Actions:** none")
+    assert (s.text, s.urgent, s.action_items) == ("The bank called about a blocked card.", True, [])
+    s = parse_summary("Here's the summary: Ankit called to say hi.")  # a model that ignores the format
+    assert (s.text, s.urgent, s.action_items) == ("Ankit called to say hi.", False, [])
+    s = parse_summary("Summary:\nA courier came.\nHe left it with the guard.\nUrgent: no\n"
+                      "Action items:\n1. Collect the parcel")
+    assert s.text == "A courier came. He left it with the guard." and s.action_items == ["Collect the parcel"]

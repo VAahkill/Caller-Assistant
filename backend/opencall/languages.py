@@ -53,6 +53,12 @@ def guess_language(text: str, default: str = "en") -> str:
     return max(counts, key=counts.__getitem__) if counts else default
 
 
+def written_in_latin(lang: str) -> bool:
+    """Whether ``lang`` is written in Latin letters (English, and languages without an
+    Indian script here)."""
+    return lang == "en" or lang not in LANGUAGE_NAMES
+
+
 def needs_translation(text: str, lang: str) -> bool:
     """Whether English-looking ``text`` should be translated before it is said to a
     caller speaking ``lang``: it has no letters of any Indian script, and ``lang``

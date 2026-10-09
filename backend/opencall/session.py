@@ -23,10 +23,11 @@ from .agent import (
 )
 from .audio import FRAME_BYTES, FRAME_MS, StereoRecorder, frames
 from .guardrails import scrub_outgoing
-from .languages import LanguageTracker, guess_language, needs_translation
+from .languages import LanguageTracker, guess_language, needs_translation, written_in_latin
 from .models import CallRecord, CallStatus, HoldQuestion, TranscriptLine
-from .phrases import phrase
+from .phrases import fill, phrase
 from .providers.llm import LLMError
+from .providers.mt import split_sentences
 from .providers.vad import TurnDetector
 from .telephony.base import CallBridge
 
@@ -103,7 +104,62 @@ class CallSession:
         if english is not None:
             line.english = english
         await self._publish("transcript_update", line_id=line.id, translation=line.translation,
-                            translation_lang=line.translation_lang)
+                            translation_lang=line.translation_lang, english=line.english)
+
+    # ------------------------------------------------------------ translation
+    @property
+    def owner_language(self) -> str:
+        return self.engine.store.profile.owner_language or "en"
+
+    def _owner_text_language(self, text: str, lang: str | None) -> str:
+        """The language the user wrote ``text`` in: as given, else its script says it.
+        Latin letters are read as English (rather than romanised Telugu, say) unless the
+        user's own language is written in them."""
+        if lang:
+            return lang
+        script = guess_language(text, default="")
+        if script:
+            return script
+        return self.owner_language if written_in_latin(self.owner_language) else "en"
+
+    async def _translate(self, text: str, src: str, tgt: str) -> str | None:
+        """``text`` in ``tgt``, or None if it can't be translated (no engine for these
+        languages, or it failed and came back unchanged)."""
+        if src == tgt:
+            return text
+        if not text.strip() or not self.engine.mt.can_translate(src, tgt):
+            return None
+        out = (await self.engine.mt.translate(text, src, tgt)).strip()
+        return out if out and out != text.strip() else None
+
+    async def _english(self, text: str, lang: str) -> str | None:
+        """What the caller said, in English for the model (None: the model gets it as said)."""
+        if lang == "en" or not self.engine.mt.can_translate(lang, "en"):
+            return None
+        await self._set_status("translating")
+        return await self._translate(text, lang, "en")
+
+    def _translate_for_user(self, line: TranscriptLine) -> None:
+        """Shows the line in the user's own language too (the caller's words, the
+        assistant's, a hold question), when live translation is on. From English when
+        the line has it: that is one step, and what the assistant actually meant."""
+        profile = self.engine.store.profile
+        target = self.owner_language
+        if not profile.translate_live or line.lang == target or not line.text.strip():
+            return
+        text, src = (line.english, "en") if line.english else (line.text, line.lang or "en")
+        if src == target:
+            self.spawn(self.update_line(line, translation=text, translation_lang=target), "show translation")
+            return
+        if not self.engine.mt.can_translate(src, target):
+            return
+
+        async def translate() -> None:
+            out = await self._translate(text, src, target)
+            if out:
+                await self.update_line(line, translation=out, translation_lang=target)
+
+        self.spawn(translate(), "translate for the user")
 
     async def _set_status(self, state: str, detail: str = "") -> None:
         if state == self._status and not detail:
@@ -139,11 +195,15 @@ class CallSession:
         self.record.status = CallStatus.active
         self._save()
         await self._publish("call_started", call=self.record.model_dump(mode="json"))
+        if self.conv.vip:
+            await self._publish("urgent_call", reason="vip", title=f"VIP {self.who} is calling")
         player = asyncio.create_task(self._player())
         limit = asyncio.create_task(self._time_limit())
         try:
             if not self.conv.outbound:
-                await self._speak(self.conv.opening_line(), cached=True)
+                # In the language chosen for a practice call, else the one callers speak most.
+                self._language = self.language_hint or self.tracker.language
+                await self._greet()
             else:
                 self.spawn(self._outbound_kickoff(), "outbound kickoff")
             self._greeted.set()
@@ -176,7 +236,7 @@ class CallSession:
 
     async def _time_limit(self) -> None:
         await asyncio.sleep(self.engine.settings.max_call_minutes * 60)
-        await self._speak("I'm sorry, I have to wrap up now. I'll pass everything on. Goodbye!")
+        await self._say(self.conv.fixed_say("wrap_up"))
         await self._end_after_playback()
 
     async def _on_frame(self, frame: bytes) -> None:
@@ -232,9 +292,7 @@ class CallSession:
             detail = f"Something went wrong while answering ({error.__class__.__name__}: {error})"[:300]
         await self._set_status("error", detail)
         await self._publish("turn_error", detail=detail)
-        line = phrase("fallback", self._language)
-        self.conv.history.append({"role": "assistant", "content": line})
-        await self._speak(line, cached=True)
+        await self._say(self.conv.fixed_say("fallback"))
 
     async def _handle_utterance(self, pcm: bytes, language_hint: str | None = None, origin: str = "live") -> None:
         await self._set_status("transcribing")
@@ -269,10 +327,16 @@ class CallSession:
             self.record.language = heard.language
             await self._publish("call_language", language=heard.language, confidence=round(heard.confidence, 2))
 
-    async def _caller_turn(self, text: str, language: str, english: str | None = None) -> None:
+    async def _caller_turn(self, text: str, language: str) -> None:
         self._language = language
         self.record.language = language
-        await self._line("caller", text, lang=language)
+        line = await self._line("caller", text, lang=language)
+        # The model works in English: the caller's words go to it translated (and are
+        # checked for credential requests in both languages).
+        english = await self._english(text, language)
+        if english is not None:
+            line.english = english
+        self._translate_for_user(line)
         await self._set_status("thinking")
         await self._run_actions(self.conv.respond(text, language, english), filler=True)
 
@@ -314,7 +378,7 @@ class CallSession:
                         fill.cancel()
                         fill = None
                     if isinstance(action, Say):
-                        await self._speak(action.text, already_scrubbed=True)
+                        await self._say(action)
                     elif isinstance(action, Hold):
                         await stream.aclose()  # stop the model before waiting for the user
                         await self._hold(action.question)
@@ -342,13 +406,40 @@ class CallSession:
         """'One moment, please' when the reply is slow to start."""
         s = self.engine.settings
         await asyncio.sleep(s.filler_after_s)
-        await self._speak(phrase("filler", self._language), cached=True)
+        await self._say_fixed("filler")
         if s.filler_again_s > 0:
             await asyncio.sleep(s.filler_again_s)
-            await self._speak(phrase("filler_again", self._language), cached=True)
+            await self._say_fixed("filler_again")
+
+    async def _greet(self) -> None:
+        lang = self._language
+        text = await self.engine.greeting_async(lang)
+        english = self.conv.opening_line()
+        await self._speak(text, english="" if text == english else english, lang=lang, cached=True,
+                          translated=True)
+
+    async def _say(self, say: Say) -> None:
+        if say.fixed:
+            await self._say_fixed(say.fixed)
+        else:
+            await self._speak(say.text, already_scrubbed=True)
+
+    async def _say_fixed(self, key: str) -> None:
+        """A fixed line in the caller's language: hand-written, or translated once and
+        kept; its speech comes from memory after the first time."""
+        lang = self._language
+        profile = self.engine.store.profile
+        english = fill(phrase(key, "en"), profile.user_name, profile.assistant_name)
+        text = await self.engine.fixed_line_async(key, lang)
+        await self._speak(text, english="" if text == english else english, lang=lang, cached=True,
+                          translated=True, already_scrubbed=True)
 
     async def _speak(self, text: str, already_scrubbed: bool = False, cached: bool = False,
-                     lang: str | None = None, record: bool = True) -> None:
+                     lang: str | None = None, record: bool = True, english: str = "",
+                     translated: bool = False) -> None:
+        """Says ``text`` to the caller. English is translated into the caller's language
+        first (unless ``translated``: it is in that language already, and ``english`` is
+        its English)."""
         if not already_scrubbed:
             res = scrub_outgoing(text, self.conv.allowed_numbers())
             if res.blocked:
@@ -356,8 +447,7 @@ class CallSession:
                 return
             text = res.text
         lang = lang or self._language
-        english = ""
-        if needs_translation(text, lang) and self.engine.mt.can_translate("en", lang):
+        if not translated and needs_translation(text, lang) and self.engine.mt.can_translate("en", lang):
             # The assistant's English, said in the caller's language. The translation is
             # checked again: a number must not slip through in other words.
             await self._set_status("translating")
@@ -367,8 +457,13 @@ class CallSession:
                 await self._security_alert(SecurityAlert("blocked_output", text))
                 return
             text = res.text
-        if record:
-            await self._line("assistant", text, lang=lang, english=english)
+        line = await self._line("assistant", text, lang=lang, english=english) if record else None
+        await self._voice(text, lang, cached)
+        if line is not None:
+            self._translate_for_user(line)  # after the caller's audio is on its way
+
+    async def _voice(self, text: str, lang: str, cached: bool = False) -> bool:
+        """Synthesises ``text`` (in ``lang``) and queues it for the phone line."""
         voice = self.engine.store.profile.voice
         try:
             # Each sentence is said by a voice that reads its script (see TTSRouter).
@@ -376,13 +471,14 @@ class CallSession:
         except Exception as e:
             log.exception("TTS failed for %r", text)
             await self._publish("turn_error", detail=f"Couldn't speak a reply ({e.__class__.__name__}: {e})"[:300])
-            return
+            return False
         if not pcm:
             log.warning("TTS made no audio for %r (%s)", text, lang)
-            return
+            return False
         await self._set_status("speaking")
         for f in frames(pcm):
             self._play_q.put_nowait(f)
+        return True
 
     async def _player(self) -> None:
         """Sends queued speech to the phone line at real-time pace."""
@@ -453,7 +549,8 @@ class CallSession:
         self._save()
         fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
         self._hold_waiters[hold.id] = fut
-        await self._line("caller", question, kind="hold_question", lang="en")
+        line = await self._line("caller", question, kind="hold_question", lang="en", english=question)
+        self._translate_for_user(line)
         event = "task_needs_decision" if self.conv.outbound else "hold_question"
         await self._publish(event, hold_id=hold.id, question=question,
                             title=f"{self.who}: {question}", task_id=self.record.task_id)
@@ -474,7 +571,7 @@ class CallSession:
                 break
             except asyncio.TimeoutError:
                 if deadline - time.monotonic() > 2:
-                    await self._speak(phrase("hold_reminder", self._language), cached=True)
+                    await self._say_fixed("hold_reminder")
         self._hold_waiters.pop(hold.id, None)
         hold.answer = answer
         hold.answered_at = time.time() if answer else None
@@ -485,15 +582,19 @@ class CallSession:
         await self._set_status("thinking")
         await self._run_actions(self.conv.resume_after_hold(answer), filler=True)
 
-    async def answer_hold(self, hold_id: str | None, text: str) -> bool:
-        """The user typed an answer in the app."""
+    async def answer_hold(self, hold_id: str | None, text: str, lang: str | None = None) -> bool:
+        """The user typed an answer in the app, in their own language: the model gets
+        it in English."""
         if hold_id is None and self._hold_waiters:
             hold_id = next(iter(self._hold_waiters))
         fut = self._hold_waiters.get(hold_id or "")
         if not fut or fut.done():
             return False
-        await self._line("user", text, lang=guess_language(text))
-        fut.set_result(text)
+        src = self._owner_text_language(text, lang)
+        english = await self._translate(text, src, "en") if src != "en" else None
+        await self._line("user", text, lang=src, english=english or "")
+        if not fut.done():  # it may have timed out while the answer was being translated
+            fut.set_result(english or text)
         return True
 
     def can_say(self, text: str) -> bool:
@@ -503,44 +604,82 @@ class CallSession:
     async def owner_answer(self, hold_id: str | None, text: str, lang: str | None = None) -> None:
         """The user's reply in the app: the answer to a pending hold question, or else
         words to say to the caller right away."""
-        if not await self.answer_hold(hold_id, text):
+        if not await self.answer_hold(hold_id, text, lang):
             await self.owner_say(text, lang)
 
     async def owner_say(self, text: str, lang: str | None = None) -> bool:
-        """Says the user's own words to the caller right away (typed, or spoken and
-        transcribed, in the app). Translating them into the caller's language plugs
-        in here; until then they are said as written. Returns False if nothing was
-        said (empty, or blocked because it contained a code-like number)."""
+        """Says the user's own words (typed or spoken in the app, in their language) to
+        the caller right away, in the caller's language. A sentence at a time, so the
+        caller hears the first one while the next is being translated. Returns False
+        if nothing was said (empty, or blocked because it had a code-like number)."""
         text = text.strip()
         if not text:
             return False
-        lang = lang or guess_language(text)
-        res = scrub_outgoing(text, self.conv.allowed_numbers())
-        if res.blocked:
+        started = time.monotonic()
+        src = self._owner_text_language(text, lang)
+        caller = self._language
+        allowed = self.conv.allowed_numbers()
+        if scrub_outgoing(text, allowed).blocked:
             await self._security_alert(SecurityAlert("blocked_output", text))
             return False
-        await self._line("user", res.text, kind="note", lang=lang)
-        self.conv.history.append({"role": "assistant", "content": res.text})
-        await self._speak(res.text, already_scrubbed=True, lang=lang, record=False)
+        said, english, first_audio = [], [], None
+        for sentence in split_sentences(text) or [text]:
+            if src != caller:
+                await self._set_status("translating")
+            in_english = sentence if src == "en" else (await self._translate(sentence, src, "en") or sentence)
+            if src == caller:
+                out = sentence
+            elif caller == "en":
+                out = in_english
+            else:
+                out = await self._translate(in_english, "en", caller) or in_english
+            res = scrub_outgoing(out, allowed)
+            if res.blocked:  # the translation came out with a code in it
+                await self._security_alert(SecurityAlert("blocked_output", out))
+                continue
+            if await self._voice(res.text, caller) and first_audio is None:
+                first_audio = time.monotonic() - started
+            said.append(res.text)
+            english.append(in_english)
+        if not said:
+            return False
+        log.info("call %s: the user's words reached the caller after %.2f s", self.record.id,
+                 first_audio if first_audio is not None else -1)
+        spoken, in_english = " ".join(said), " ".join(english)
+        await self._line("user", spoken, kind="note", lang=caller,
+                         translation=text if text != spoken else "", translation_lang=src if text != spoken else "",
+                         english=in_english if in_english != spoken else "")
+        self.conv.history.append({"role": "assistant", "content": in_english})
         return True
 
     async def owner_say_audio(self, pcm16k: bytes, lang: str | None = None) -> str:
-        """The user's spoken reply: transcribed, then said to the caller. Returns what was heard."""
-        heard = await self.engine.stt.transcribe(pcm16k, lang)
+        """The user's spoken reply, in their language: transcribed, then said to the
+        caller in theirs. Returns what was heard."""
+        heard = await self.engine.stt.transcribe(pcm16k, lang or self.owner_language)
         text = heard.text.strip()
         if not text:
             await self._publish("turn_error", detail="Couldn't make out any words in your recording.")
             return ""
-        await self.owner_say(text, lang or heard.language)
+        await self.owner_say(text, lang or guess_language(text, default="") or heard.language or None)
         return text
 
-    async def say_now(self, text: str) -> None:
+    async def say_now(self, text: str, lang: str | None = None) -> None:
         """The user typed something to be said right away, outside a hold."""
-        await self.owner_say(text)
+        await self.owner_say(text, lang)
 
     async def end(self) -> None:
-        await self._speak(f"I have to go now. I'll let {self.engine.store.profile.user_name} know. Bye!")
+        await self._say(self.conv.fixed_say("goodbye"))
         await self._end_after_playback()
+
+    async def _summary_for_user(self) -> None:
+        """The summary, action items and message in the user's own language."""
+        rec, target = self.record, self.owner_language
+        if target == "en" or not self.engine.store.profile.translate_live:
+            return
+        rec.summary = await self._translate(rec.summary, "en", target) or rec.summary
+        rec.action_items = [await self._translate(a, "en", target) or a for a in rec.action_items]
+        if rec.message and guess_language(rec.message, default="en") == "en":
+            rec.message = await self._translate(rec.message, "en", target) or rec.message
 
     # ------------------------------------------------------------ teardown
     async def _finish(self) -> None:
@@ -559,9 +698,16 @@ class CallSession:
             name = f"{rec.id}.wav"
             (self.engine.settings.recordings_dir / name).write_bytes(self.recorder.wav())
             rec.recording = name
-        transcript = "\n".join(f"{l.speaker}: {l.text}" for l in rec.transcript if l.kind != "alert")
+        # The model reads the call in English where it went through English.
+        transcript = "\n".join(f"{line.speaker}: {line.english or line.text}" for line in rec.transcript
+                               if line.kind != "alert")
         if rec.category != "spam" and len(rec.transcript) > 2:
-            rec.summary = await self.conv.summarize(transcript)
+            summary = await self.conv.summarize(transcript)
+            rec.summary, rec.action_items = summary.text, summary.action_items
+            await self._summary_for_user()
+            if summary.urgent and not rec.urgent:
+                await self._publish("urgent_call", reason="summary", title=f"Urgent: {self.who}: {rec.summary}")
+            rec.urgent = rec.urgent or summary.urgent
             self.engine.refresh_llm_cache()
         self._save()
         await self.engine.on_call_finished(self)

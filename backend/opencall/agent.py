@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from dataclasses import dataclass, field
 
 from . import prompts
-from .guardrails import detect_sensitive_request, published_numbers, refusal, scrub_outgoing
+from .guardrails import detect_sensitive_request, published_numbers, scrub_outgoing
 from .models import Profile, Task
+from .phrases import fill, phrase
 from .providers.llm import LLM, Message
 from .screening import classify_utterance
 
@@ -25,7 +26,12 @@ log = logging.getLogger("opencall.agent")
 # ---------------------------------------------------------------- actions
 @dataclass
 class Say:
+    """Words for the other party. ``fixed`` names a fixed line (see phrases.py): ``text``
+    is then its English, and the call says it in the caller's language from the
+    hand-written or cached translation."""
+
     text: str
+    fixed: str = ""
 
 
 @dataclass
@@ -184,22 +190,37 @@ class Conversation:
     history: list[Message] = field(default_factory=list)
     can_text: bool = False  # whether this phone line can send the caller an SMS
     language: str = ""  # the caller's language; empty until they speak
+    vip: bool = False  # the caller is on the user's VIP list
+    # The English of what the user wrote in another language (instructions, notes,
+    # directions), from the engine's translation cache.
+    english: Callable[[str], str] = field(default=lambda t: t, repr=False)
+    # Whether this turn goes through English: the caller's words were translated into
+    # English for the model, and its English reply is translated back for the caller.
+    pivot: bool = False
+    heard: list[str] = field(default_factory=list)  # the other party's own words
     _delivery: bool = False
     _turns: int = 0
 
     @classmethod
     def inbound(cls, profile: Profile, llm: LLM, number: str, contact_name: str, speakable: list[str],
-                can_text: bool = False) -> "Conversation":
+                can_text: bool = False, vip: bool = False,
+                english: Callable[[str], str] | None = None) -> "Conversation":
         can_text = can_text and bool(number)
+        english = english or (lambda t: t)
         prompt = prompts.inbound_system_prompt(profile, number, contact_name, speakable, can_text,
-                                               opening_line=opening_line(profile))
+                                               opening_line=opening_line(profile, english), vip=vip,
+                                               english=english)
         return cls(profile, llm, prompt, caller_number=number, is_contact=bool(contact_name),
-                   category="contact" if contact_name else "unknown", can_text=can_text)
+                   category="contact" if contact_name else "unknown", can_text=can_text, vip=vip,
+                   english=english)
 
     @classmethod
-    def for_task(cls, profile: Profile, llm: LLM, task: Task, speakable: list[str]) -> "Conversation":
-        prompt = prompts.outbound_system_prompt(profile, task, speakable)
-        return cls(profile, llm, prompt, caller_number=task.number, outbound=True, category="task")
+    def for_task(cls, profile: Profile, llm: LLM, task: Task, speakable: list[str],
+                 english: Callable[[str], str] | None = None) -> "Conversation":
+        english = english or (lambda t: t)
+        prompt = prompts.outbound_system_prompt(profile, task, speakable, english)
+        return cls(profile, llm, prompt, caller_number=task.number, outbound=True, category="task",
+                   english=english)
 
     # What the assistant is allowed to say out loud, number-wise.
     def allowed_numbers(self) -> set[str]:
@@ -207,6 +228,7 @@ class Conversation:
         texts = [p.location.address, p.location.building, p.location.floor_unit, p.location.landmarks,
                  p.location.gate_instructions, p.location.geocoded_hint, self.caller_number]
         texts += [n.text for n in p.knowledge]
+        texts += self.heard
         for m in self.history:
             if m["role"] != "user":
                 continue
@@ -219,8 +241,11 @@ class Conversation:
     def system_message(self) -> str:
         parts = [self.system_prompt.rstrip()]
         if self._delivery:
-            parts.append(prompts.delivery_context(self.profile, self.can_text))
-        parts.append(prompts.language_note(self.language))
+            rules = prompts.call_rules(self.profile, prompts.Caller(self.caller_number, self.is_contact, self.vip),
+                                       self.english)
+            parts.append(prompts.delivery_context(self.profile, self.can_text, rules.delivery, rules.delivery_facts,
+                                                  self.english))
+        parts.append(prompts.language_note(self.language, self.pivot))
         return "\n\n".join(parts)
 
     def _messages(self) -> list[Message]:
@@ -246,31 +271,38 @@ class Conversation:
         return [{"role": "system", "content": self.system_message()}, {"role": "user", "content": "Hello?"}]
 
     def opening_line(self) -> str:
-        return opening_line(self.profile)
+        return opening_line(self.profile, self.english)
+
+    def fixed_say(self, key: str) -> Say:
+        """A fixed line; the history keeps it in the language the model is working in."""
+        english = fill(phrase(key, "en"), self.profile.user_name, self.profile.assistant_name)
+        said = english if self.pivot else fill(phrase(key, self.language), self.profile.user_name,
+                                                self.profile.assistant_name)
+        self.history.append({"role": "assistant", "content": said})
+        return Say(english, fixed=key)
 
     async def respond(self, text: str, language: str = "en", english: str | None = None) -> AsyncIterator[Action]:
         """Handle one turn from the other party. ``english`` is the same words in
-        English when they were translated; the safety checks look at both."""
+        English when they were translated: the model then works in English (history
+        included) and its reply is translated back. The safety checks look at both."""
         self._turns += 1
         self.language = language or self.language
-        self.history.append({"role": "user", "content": text})
+        self.pivot = english is not None and self.language != "en"
+        self.heard.append(text)
+        self.history.append({"role": "user", "content": english if self.pivot else text})
 
         match = detect_sensitive_request(text, english)
         if match:
-            line = refusal(self.language, self.profile.user_name)
-            self.history.append({"role": "assistant", "content": line})
             yield SecurityAlert(match.kind, text)
-            yield Say(line)
+            yield self.fixed_say("refusal")
             return
 
         if not self.outbound and self.category in ("unknown", "contact"):
             hint = classify_utterance(text, english)
-            if hint == "spam" and not self.is_contact:
+            if hint == "spam" and not self.is_contact and not self.vip:
                 self.category = "spam"
-                line = "Thanks, but we're not interested. Please remove this number from your list. Bye!"
-                self.history.append({"role": "assistant", "content": line})
                 yield Category("spam")
-                yield Say(line)
+                yield self.fixed_say("spam_decline")
                 yield EndCall()
                 return
             if hint == "delivery":
@@ -282,6 +314,8 @@ class Conversation:
                 yield action
 
     async def resume_after_hold(self, answer: str | None) -> AsyncIterator[Action]:
+        """``answer``: what the user replied, in English (or the caller's language when
+        the call doesn't go through English)."""
         note = (
             prompts.hold_answer_note(self.profile.user_name, answer)
             if answer
@@ -347,9 +381,9 @@ class Conversation:
             if spoken:
                 self.history.append({"role": "assistant", "content": " ".join(spoken)})
 
-    async def summarize(self, transcript: str) -> str:
+    async def summarize(self, transcript: str) -> "CallSummary":
         msgs: list[Message] = [
-            {"role": "system", "content": prompts.SUMMARY_PROMPT},
+            {"role": "system", "content": prompts.SUMMARY_PROMPT.format(user=self.profile.user_name)},
             {"role": "user", "content": transcript[-6000:]},
         ]
         out = []
@@ -358,14 +392,67 @@ class Conversation:
                 out.append(chunk)
         except Exception as e:  # a summary is nice to have; the transcript is kept anyway
             log.warning("call summary failed: %s", e)
-            return ""
-        text = re.sub(r"\[[^\]]*\]", "", "".join(out)).strip()
-        return re.sub(r"^(here is|here's)[^:\n]*:\s*", "", text, flags=re.I).strip()
+            return CallSummary("")
+        return parse_summary("".join(out))
 
 
-def opening_line(profile: Profile) -> str:
-    user = profile.user_name[:1].upper() + profile.user_name[1:]  # starts a sentence below
-    return (
-        f"Hi, this is {profile.assistant_name}, {profile.user_name}'s assistant. "
-        f"{user} can't take the call right now. How can I help?"
-    )
+@dataclass
+class CallSummary:
+    text: str
+    urgent: bool = False
+    action_items: list[str] = field(default_factory=list)
+
+
+_LABEL = re.compile(r"^\s*[*_#]*\s*(summary|urgent|action items?|actions?|to ?dos?|next steps?)\s*[*_]*\s*:"
+                    r"\s*[*_]*\s*(.*)$", re.I)
+_NOTHING = ("none", "no", "nothing", "-", "n/a")
+
+
+def parse_summary(raw: str) -> CallSummary:
+    """Reads the model's "Summary: / Urgent: / Actions:" answer. A model that ignores
+    the format still gives a summary: its whole answer."""
+    text = re.sub(r"\[[^\]]*\]", "", raw).strip()
+    text = re.sub(r"^(here is|here's)[^:\n]*:\s*", "", text, flags=re.I).strip()
+    summary: list[str] = []
+    urgent = False
+    actions: list[str] = []
+    section = ""
+    labelled = False
+    for line in text.splitlines():
+        m = _LABEL.match(line)
+        if m:
+            labelled = True
+            label, item = m.group(1).lower(), m.group(2).strip()
+            section = label if label in ("summary", "urgent") else "actions"
+            if section == "urgent":
+                urgent = item.lower().startswith(("yes", "true"))
+                continue
+        else:
+            item = line.strip()
+        if not item:
+            continue
+        if section == "actions":
+            item = re.sub(r"^([-*•]|\d+[.)])\s*", "", item).strip()
+            if item and item.lower().rstrip(".") not in _NOTHING:
+                actions.append(item)
+        elif section in ("summary", ""):
+            summary.append(item)
+    if not labelled:
+        return CallSummary(text)
+    return CallSummary(" ".join(summary).strip(), urgent, actions[:5])
+
+
+def greeting_parts(profile: Profile, english: Callable[[str], str] = lambda t: t) -> list[tuple[str, str]]:
+    """The greeting as (fixed line key or "" for the away status, its English)."""
+    def line(key: str) -> tuple[str, str]:
+        return key, fill(phrase(key, "en"), profile.user_name, profile.assistant_name)
+
+    away = prompts.away_sentence(profile, english)
+    middle = ("", away) if away else line("greeting_busy")
+    return [line("greeting_intro"), middle, line("greeting_help")]
+
+
+def opening_line(profile: Profile, english: Callable[[str], str] = lambda t: t) -> str:
+    """The English greeting, e.g. "Hi, this is Ava, Rahul's assistant. Rahul is in a
+    meeting until 3 PM. How can I help?" """
+    return " ".join(text for _, text in greeting_parts(profile, english))

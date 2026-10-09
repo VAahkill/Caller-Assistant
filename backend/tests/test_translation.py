@@ -213,7 +213,11 @@ async def test_a_reply_already_in_the_callers_language_is_not_translated(engine,
     llm.responder = lambda m: "సరే, గేటు దగ్గరకు రండి."
     bridge, s, task = await start_call(engine)
     await s.handle_text("హలో", "te")
-    assert fake.calls == []
+    # The caller's words go to the model in English, but a reply the model already
+    # wrote in Telugu is said as it is.
+    assert fake.calls == [("హలో", "te", "en")]
+    line = [x for x in s.record.transcript if x.speaker == "assistant"][-1]
+    assert line.text == "సరే, గేటు దగ్గరకు రండి." and line.english == ""
     await bridge.hangup()
     await task
 
