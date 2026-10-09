@@ -2,6 +2,7 @@ import { Contact, ContactField, requestPermissionsAsync } from 'expo-contacts';
 
 import { api } from './api';
 import { cleanNumber } from './format';
+import { isDialable, normalizeNumber } from './phone';
 import { storage } from './storage';
 
 export interface PhoneContact {
@@ -22,15 +23,22 @@ export { cleanNumber };
 
 const LAST_SYNC_KEY = 'contacts_sync';
 
-
-/** Names and numbers only, one entry per number. */
-export function flattenContacts(list: { fullName?: string | null; phones?: { number?: string | null }[] | null }[]): PhoneContact[] {
+/** Names and numbers only, one entry per number, in the server's form
+ *  ("+919848012345"), so "098480 12345" and "+91 98480 12345" are one contact. */
+export function flattenContacts(
+  list: { fullName?: string | null; phones?: { number?: string | null }[] | null }[],
+  homeCc = '+91',
+): PhoneContact[] {
   const seen = new Map<string, PhoneContact>();
   for (const c of list) {
     for (const p of c.phones ?? []) {
-      const number = cleanNumber(p.number ?? '');
-      if (number.replace('+', '').length < 5 || seen.has(number)) continue;
-      seen.set(number, { number, name: (c.fullName ?? '').trim() });
+      const raw = p.number ?? '';
+      if (!isDialable(raw)) continue;
+      const number = normalizeNumber(raw, homeCc);
+      const name = (c.fullName ?? '').trim();
+      const before = seen.get(number);
+      // The same number saved twice: keep the entry that has a name.
+      if (!before || (!before.name && name)) seen.set(number, { number, name });
     }
   }
   return [...seen.values()];
@@ -41,7 +49,7 @@ export function flattenContacts(list: { fullName?: string | null; phones?: { num
  * contacts always get through. A refused permission comes back as a result
  * the screen explains, with a link to Settings when Android won't ask again.
  */
-export async function syncContacts(): Promise<SyncResult> {
+export async function syncContacts(homeCc?: string): Promise<SyncResult> {
   const perm = await requestPermissionsAsync();
   if (!perm.granted) {
     return {
@@ -53,8 +61,10 @@ export async function syncContacts(): Promise<SyncResult> {
         : 'Contacts access is off for OpenCall. Turn it on in Settings, then sync again.',
     };
   }
+  // The new contacts API: SDK 57's old getContactsAsync always throws.
   const details = await Contact.getAllDetails([ContactField.FULL_NAME, ContactField.PHONES]);
-  const list = flattenContacts(details);
+  const cc = homeCc ?? (await api.profile()).home_country_code;
+  const list = flattenContacts(details, cc);
   const { count } = await api.putContacts(list);
   const at = Date.now() / 1000;
   await storage.set(LAST_SYNC_KEY, JSON.stringify({ at, count } satisfies LastSync));
