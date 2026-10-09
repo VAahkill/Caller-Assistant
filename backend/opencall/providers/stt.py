@@ -132,8 +132,9 @@ class FasterWhisperSTT:
 
     def __init__(self, model: str = "large-v3-turbo", device: str = "auto", languages: list[str] | None = None,
                  models: dict[str, str] | None = None, models_dir: Path | None = None, cpu_threads: int = 0,
-                 owner_english: str = ""):
+                 owner_english: str = "", beam_size: int = 1):
         self.model_name = model
+        self.beam_size = max(1, beam_size)
         self.device = device
         # Only used when no language is given (language ID turned off): speech is then
         # only ever recognised as one of these. Whisper often mistakes Telugu for Tamil
@@ -243,7 +244,7 @@ class FasterWhisperSTT:
 
     def _once(self, model, pcm16k: bytes, language_hint: str | None) -> Transcription:
         audio = pcm16_to_float(pcm16k)
-        options = dict(beam_size=1, vad_filter=False, condition_on_previous_text=False)
+        options = dict(beam_size=self.beam_size, vad_filter=False, condition_on_previous_text=False)
         segments, info = model.transcribe(audio, language=language_hint, **options)
         if not language_hint and self.languages and info.language not in self.languages:
             # Segments are lazy, so nothing was transcribed yet; redo it in the most

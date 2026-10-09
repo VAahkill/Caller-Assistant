@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     # The main speech model: English, and any language without a model of its own.
     whisper_model: str = "large-v3-turbo"
     whisper_device: str = "auto"
+    # Beam search width for callers' speech: 1 (greedy) is quickest; wider is a bit
+    # more accurate and slower (see docs/ARCHITECTURE.md for both measured).
+    whisper_beam_size: int = 1
     # Per-language speech models on top of the built-in ones (Telugu, Tamil and Hindi
     # fine-tunes, see providers/stt.py), e.g. "te=org/model,hi=off"; off = main model.
     stt_models: str = ""

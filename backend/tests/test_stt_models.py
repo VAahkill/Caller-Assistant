@@ -92,9 +92,10 @@ class FakeModel:
         self.name = name
         self.calls = []
 
-    def transcribe(self, audio, language=None, **_):
+    def transcribe(self, audio, language=None, **options):
         self.calls.append(language)
         self.audio = audio
+        self.options = options
         return iter([SimpleNamespace(text=f" {self.name}")]), SimpleNamespace(language=language or "en",
                                                                              all_language_probs=[])
 
@@ -195,3 +196,15 @@ def test_the_server_loads_the_model_for_the_users_replies(engine):
     engine.store.profile.owner_language = "te"
     engine.warm_up()
     assert loaded == ["te"]
+
+
+def test_the_beam_width_setting_reaches_every_model(monkeypatch, tmp_path):
+    stt, _ = fake_stt(monkeypatch)
+    pcm = b"\x01\x00" * 16000
+    stt._run(pcm, "te")
+    assert stt._extra["org/telugu"].options["beam_size"] == 1  # greedy unless asked
+    built = build_stt(Settings(data_dir=tmp_path, whisper_beam_size=5))
+    assert built.beam_size == 5
+    stt.beam_size = 5
+    stt._run(pcm, "en")
+    assert stt._model.options["beam_size"] == 5
