@@ -21,7 +21,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from ..audio import pcm16_to_float, split_at_pauses, trim_silence
+import numpy as np
+
+from ..audio import RATE, pcm16_to_float, split_at_pauses, trim_silence
 
 log = logging.getLogger("opencall.stt")
 
@@ -125,6 +127,12 @@ def resolve_model(spec: str, ct2_dir: Path) -> str:
     if "model.bin" in list_repo_files(repo, revision=revision or None):
         return repo  # already a CTranslate2 model
     return str(convert_to_ct2(repo, revision or None, ct2_dir))
+
+
+# Silence put before the words for the model. Given audio that starts right at the
+# first sound, the fine-tuned models often skipped the first word or the whole first
+# sentence ("Hello, Amazon delivery." of "Hello, Amazon delivery. I'm at your gate.").
+LEAD_SILENCE_S = 0.5
 
 
 class FasterWhisperSTT:
@@ -243,7 +251,7 @@ class FasterWhisperSTT:
         return Transcription(text=text, language=heard.language)
 
     def _once(self, model, pcm16k: bytes, language_hint: str | None) -> Transcription:
-        audio = pcm16_to_float(pcm16k)
+        audio = np.concatenate([np.zeros(int(RATE * LEAD_SILENCE_S), dtype=np.float32), pcm16_to_float(pcm16k)])
         options = dict(beam_size=self.beam_size, vad_filter=False, condition_on_previous_text=False)
         segments, info = model.transcribe(audio, language=language_hint, **options)
         if not language_hint and self.languages and info.language not in self.languages:

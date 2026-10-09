@@ -112,10 +112,14 @@ def make_vad(kind: str) -> VAD:
 class TurnDetector:
     """Turns per-frame speech flags into "caller started" / "caller finished"."""
 
-    def __init__(self, vad: VAD, end_silence_ms: int = 650, start_ms: int = 120):
+    def __init__(self, vad: VAD, end_silence_ms: int = 650, start_ms: int = 120, preroll_ms: int = 500):
         self.vad = vad
         self.end_frames = max(1, end_silence_ms // FRAME_MS)
         self.start_frames = max(1, start_ms // FRAME_MS)
+        # Each turn keeps this much audio from before speech was detected: the detector
+        # needs a moment to be sure, and the first sound of a word ("h" of "hello") is
+        # soft. Cut, the speech models often skip the whole first word.
+        self.preroll_frames = max(self.start_frames, preroll_ms // FRAME_MS)
         self.speaking = False
         self._voiced = 0
         self._silent = 0
@@ -126,7 +130,7 @@ class TurnDetector:
         """Returns ("start", b"") | ("end", utterance_pcm) | (None, b"")."""
         speech = self.vad.is_speech(frame)
         if not self.speaking:
-            self._preroll = (self._preroll + [frame])[-self.start_frames - 5 :]
+            self._preroll = (self._preroll + [frame])[-self.preroll_frames :]
             self._voiced = self._voiced + 1 if speech else 0
             if self._voiced >= self.start_frames:
                 self.speaking = True

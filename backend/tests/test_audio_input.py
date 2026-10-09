@@ -130,3 +130,29 @@ def test_float_wav_is_read(tmp_path):
 def test_unreadable_audio_is_an_error():
     with pytest.raises(ValueError, match="Could not read that audio file"):
         decode_audio(b"definitely not audio" * 50)
+
+
+class LevelVAD:
+    """Speech is anything at least as loud as a sample value of 1000."""
+
+    def is_speech(self, frame: bytes) -> bool:
+        return int(np.abs(np.frombuffer(frame, dtype=np.int16)).max()) >= 1000
+
+
+def test_a_turn_keeps_half_a_second_from_before_speech_was_detected():
+    """The first sound of a word is soft and the detector needs a moment to be sure;
+    cut, the speech models skip the whole first word."""
+    from opencall.audio import FRAME_BYTES
+    from opencall.providers.vad import TurnDetector
+
+    det = TurnDetector(LevelVAD(), end_silence_ms=200)
+    soft = np.full(16000, 300, dtype=np.int16).tobytes()  # 1 s of a quiet start
+    loud = np.full(16000, 3000, dtype=np.int16).tobytes()
+    audio = soft + loud + b"\x00\x00" * 8000
+    utterances = [u for i in range(0, len(audio), FRAME_BYTES)
+                  for ev, u in [det.push(audio[i:i + FRAME_BYTES])] if ev == "end"]
+    assert len(utterances) == 1
+    samples = np.frombuffer(utterances[0], dtype=np.int16)
+    before = int(np.argmax(samples >= 1000))  # where the loud part starts in the turn
+    # 500 ms are kept from before the detector was sure, the last 120 ms of them speech.
+    assert before == 16000 * (500 - 120) // 1000

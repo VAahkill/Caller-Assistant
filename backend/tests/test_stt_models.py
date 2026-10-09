@@ -12,7 +12,7 @@ import pytest
 from opencall.config import Settings
 from opencall.providers import build_stt
 from opencall.providers import stt as stt_mod
-from opencall.providers.stt import DEFAULT_MODELS, FasterWhisperSTT, parse_models, resolve_model
+from opencall.providers.stt import DEFAULT_MODELS, LEAD_SILENCE_S, FasterWhisperSTT, parse_models, resolve_model
 
 
 def test_the_indian_language_models_are_on_by_default():
@@ -131,10 +131,24 @@ def test_only_the_speech_reaches_the_model_not_the_silence_around_it(monkeypatch
     speech = (np.sin(2 * np.pi * 200 * t) * 8000).astype(np.int16).tobytes()
     silence = b"\x00\x00" * rate
     stt._run(silence + speech + silence * 2, "te")
-    heard = stt._extra["org/telugu"].audio
+    heard = stt._extra["org/telugu"].audio[int(rate * LEAD_SILENCE_S):]  # after the silence put first
     assert 1.0 <= len(heard) / rate <= 1.6  # the second of speech and a little padding
     stt._run(silence, "te")  # nothing but silence: passed on as it is, not dropped here
-    assert len(stt._extra["org/telugu"].audio) == rate
+    assert len(stt._extra["org/telugu"].audio) == rate + int(rate * LEAD_SILENCE_S)
+
+
+def test_the_model_hears_half_a_second_of_silence_before_the_words(monkeypatch):
+    """Audio that starts right at the first sound made the fine-tuned models skip the
+    first word or sentence."""
+    stt, _ = fake_stt(monkeypatch)
+    rate = 16000
+    t = np.arange(rate) / rate
+    speech = (np.sin(2 * np.pi * 200 * t) * 8000).astype(np.int16)
+    stt._run(speech.tobytes(), "te")
+    heard = stt._extra["org/telugu"].audio
+    lead = int(rate * LEAD_SILENCE_S)
+    assert LEAD_SILENCE_S == 0.5 and not heard[:lead].any()
+    assert np.allclose(heard[lead:], speech / 32768.0, atol=1e-4)
 
 
 def test_a_model_that_cannot_load_falls_back_to_the_main_one(monkeypatch, caplog):
