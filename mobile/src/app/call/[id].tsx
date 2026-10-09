@@ -479,12 +479,12 @@ function CallActions({ call, profile }: { call: CallRecord; profile: ProfileReso
   };
 
   const actions: ActionTile[] = [
-    { icon: 'call', label: 'Call back', accessibilityLabel: `Call ${name} back`, onPress: () => void open(`tel:${call.number}`, 'the dialler') },
+    { icon: 'call', label: 'Call back', accessibilityLabel: `Call back ${name}`, onPress: () => void open(`tel:${call.number}`, 'the dialler') },
     { icon: 'logo-whatsapp', label: 'WhatsApp', tone: 'success', onPress: () => void open(`https://wa.me/${digits}`, 'WhatsApp') },
     {
       icon: vip ? 'star' : 'star-outline',
       label: vip ? 'VIP' : 'Save as VIP',
-      accessibilityLabel: vip ? `Remove ${name} from VIPs` : `Save ${name} as a VIP`,
+      accessibilityLabel: vip ? `VIP: remove ${name} from VIPs` : `Save as VIP: ${name}`,
       tone: 'warning',
       active: vip,
       loading: vipAction.busy,

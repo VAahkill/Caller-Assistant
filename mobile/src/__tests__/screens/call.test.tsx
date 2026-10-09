@@ -148,7 +148,7 @@ describe('a finished call', () => {
     const open = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
     params.mockReturnValue({ id: 'call-amma' });
     await renderScreen(<CallScreen />);
-    await fireEvent.press(await screen.findByRole('button', { name: 'Call Amma back' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Call back Amma' }));
     expect(open).toHaveBeenCalledWith(`tel:${AMMA}`);
     await fireEvent.press(screen.getByRole('button', { name: 'WhatsApp' }));
     expect(open).toHaveBeenCalledWith(`https://wa.me/${AMMA.replace('+', '')}`);
@@ -166,10 +166,10 @@ describe('a finished call', () => {
   test('VIP toggles with a toast', async () => {
     params.mockReturnValue({ id: 'call-amma' });
     await renderScreen(<CallScreen />);
-    await fireEvent.press(await screen.findByRole('button', { name: 'Remove Amma from VIPs' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'VIP: remove Amma from VIPs' }));
     expect(await screen.findByText('Amma is no longer a VIP.')).toBeTruthy();
     expect(server.state.profile.vip_numbers).not.toContain(AMMA);
-    expect(await screen.findByRole('button', { name: 'Save Amma as a VIP' })).toBeTruthy();
+    expect(await screen.findByRole('button', { name: 'Save as VIP: Amma' })).toBeTruthy();
   });
 
   test('block asks first, then offers Undo', async () => {

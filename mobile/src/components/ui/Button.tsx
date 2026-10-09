@@ -96,7 +96,7 @@ export function Button({
       <Pressable
         testID={testID}
         accessibilityRole="button"
-        accessibilityLabel={accessibilityLabel ?? title}
+        accessibilityLabel={accessibilityLabel ?? label}
         accessibilityHint={accessibilityHint}
         accessibilityState={a11yState}
         disabled={inactive}

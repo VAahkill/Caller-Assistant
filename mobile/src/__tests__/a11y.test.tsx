@@ -88,6 +88,24 @@ function accessibleName(el: Instance): string {
   return parts.join('').trim();
 }
 
+const norm = (x: string) => x.toLowerCase().replace(/\s+/g, ' ').trim();
+
+/** The first piece of visible text inside an element (a title, a button label). */
+function firstVisibleText(el: Instance): string {
+  let found = '';
+  const walk = (node: Instance | string) => {
+    if (found) return;
+    if (typeof node === 'string') {
+      if (node.trim()) found = node.trim();
+      return;
+    }
+    if (node.props.accessibilityElementsHidden || node.props.importantForAccessibility === 'no-hide-descendants') return;
+    node.children.forEach((c) => walk(c as Instance | string));
+  };
+  el.children.forEach((c) => walk(c as Instance | string));
+  return found;
+}
+
 const ROLES = new Set(['button', 'link', 'switch', 'checkbox', 'radio', 'tab', 'menuitem', 'togglebutton', 'adjustable', 'combobox', 'search']);
 
 /** Host elements a finger or TalkBack can act on. */
@@ -153,6 +171,14 @@ test.each(SCREENS.map(([name, Screen, params]) => ({ name, Screen, params })))('
   expect(controls.length).toBeGreaterThan(0);
   const unnamed = controls.filter((el) => !accessibleName(el)).map(describeEl);
   expect(unnamed).toEqual([]);
+  // What TalkBack says starts from what is on screen (WCAG 2.5.3, label in
+  // name), so "Tap Record your voice" works with voice access too.
+  const mismatched = controls
+    .filter((el) => typeof el.props.accessibilityLabel === 'string' && el.props.accessibilityLabel.trim())
+    .map((el) => ({ el, visible: firstVisibleText(el) }))
+    .filter(({ el, visible }) => visible && !norm(el.props.accessibilityLabel).includes(norm(visible)))
+    .map(({ el, visible }) => `${describeEl(el)}: label "${el.props.accessibilityLabel}" but shows "${visible}"`);
+  expect(mismatched).toEqual([]);
   await view.unmount();
 });
 

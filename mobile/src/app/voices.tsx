@@ -169,7 +169,7 @@ export default function Voices() {
             onRecordAgain={openRecorder}
           />
         ))}
-        <Card onPress={openRecorder} accessibilityLabel="Record a new voice" testID="record-voice">
+        <Card onPress={openRecorder} accessibilityLabel={mine.length ? 'Record another voice' : 'Record your voice'} testID="record-voice">
           <View style={styles.row}>
             <View style={[styles.addIcon, { backgroundColor: t.color.primaryContainer }]}>
               <Icon name="mic" size={22} color={t.color.onPrimaryContainer} />

@@ -169,7 +169,7 @@ describe('choosing', () => {
 
 describe('recording', () => {
   async function recordFor(seconds: number) {
-    await fireEvent.press(screen.getByRole('button', { name: 'Record a new voice' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Record another voice' }));
     await fireEvent.press(await screen.findByRole('button', { name: 'Start recording' }));
     expect(recorder.record).toHaveBeenCalledTimes(1);
     for (let i = 1; i <= 6; i++) {
@@ -225,7 +225,7 @@ describe('recording', () => {
     const settings = jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
     (requestRecordingPermissionsAsync as jest.Mock).mockResolvedValueOnce({ granted: false, status: 'denied' });
     await open();
-    await fireEvent.press(screen.getByRole('button', { name: 'Record a new voice' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Record another voice' }));
     await fireEvent.press(await screen.findByRole('button', { name: 'Start recording' }));
     expect(await screen.findByText('Microphone access is off for OpenCall. Allow it in Settings to record your voice.')).toBeTruthy();
     expect(recorder.record).not.toHaveBeenCalled();
