@@ -95,16 +95,16 @@ def fetch(config: str, n: int, out_dir: Path, split: str = "test", max_seconds: 
     """Writes up to ``n`` clips (16 kHz WAV, one per distinct sentence, at most
     ``max_seconds`` long) and ``meta.json`` to ``out_dir/config``. Already-fetched
     clips are reused."""
-    import numpy as np
-    import pyarrow.parquet as pq
-    import soundfile as sf
-
     folder = out_dir / config
     meta_path = folder / "meta.json"
     if meta_path.exists():
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         if len(meta) >= n:
             return meta[:n]
+    import numpy as np  # only needed to fetch clips, not to reuse them
+    import pyarrow.parquet as pq
+    import soundfile as sf
+
     folder.mkdir(parents=True, exist_ok=True)
     remote = HTTPRangeFile(URL.format(config=config, split=split))
     parquet = pq.ParquetFile(remote)

@@ -101,6 +101,7 @@ def main() -> None:
     ap.add_argument("--bands", default="16k,8k@20")
     ap.add_argument("--beam", type=int, default=1, help="beam search width (the server's OPENCALL_WHISPER_BEAM_SIZE)")
     ap.add_argument("--no-lid", action="store_true")
+    ap.add_argument("--no-stt", action="store_true", help="language ID only")
     ap.add_argument("--lid-dir", type=Path, default=None, help="the language-ID model (default: Hugging Face cache)")
     ap.add_argument("--out", type=Path, default=Path("stt_lid_report.json"))
     args = ap.parse_args()
@@ -112,7 +113,9 @@ def main() -> None:
     candidates = [lang.strip() for lang in args.candidates.split(",") if lang.strip()]
     bands = [b.strip() for b in args.bands.split(",") if b.strip()]
     pairs: list[tuple[str, str]] = []
-    if args.models:
+    if args.no_stt:
+        pass
+    elif args.models:
         for item in args.models.split(","):
             lang, _, model = item.partition("=")
             pairs.append((lang.strip(), model.strip()))
