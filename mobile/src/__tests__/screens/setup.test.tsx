@@ -100,10 +100,27 @@ describe('Today and the Assistant hub', () => {
 
   test('the hub summarises every area and opens it', async () => {
     await renderScreen(<AssistantHub />);
-    expect(await screen.findByText('Ava answers for Arjun')).toBeTruthy();
+    expect(await screen.findByText(/^Ava answers for Arjun: "Hi, this is Ava, Arjun's assistant\./)).toBeTruthy();
     expect(screen.getByText('4 rules in use')).toBeTruthy();
+    expect(await screen.findByText('Telugu: Padmavathi · English: Heart +1')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: /^Delivery location/ }));
     expect(router.push).toHaveBeenCalledWith('/location');
+  });
+
+  test('the hub lists what is left to set up, and hides it once done', async () => {
+    await renderScreen(<AssistantHub />);
+    const card = within(await screen.findByTestId('setup-checklist'));
+    expect(card.getByText('3 of 4 done')).toBeTruthy();
+    expect(card.queryByText('Sync your contacts')).toBeNull();
+    await fireEvent.press(card.getByRole('button', { name: /^Pick a voice for each language\. Not picked yet: Tamil\./ }));
+    expect(router.push).toHaveBeenCalledWith('/voices');
+  });
+
+  test('with everything set up, there is no checklist', async () => {
+    server.state.profile = { ...server.state.profile, voices_by_language: { ...server.state.profile.voices_by_language, ta: 'mms:ta' } };
+    await renderScreen(<AssistantHub />);
+    await screen.findByText('4 rules in use');
+    expect(screen.queryByTestId('setup-checklist')).toBeNull();
   });
 });
 
