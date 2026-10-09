@@ -391,3 +391,83 @@ async def test_the_summary_is_in_the_users_language_with_action_items(engine, ll
     assert rec.summary == "ప్రియ డిన్నర్ గురించి కాల్ చేశారు." and rec.action_items == ["ప్రియకు తిరిగి కాల్ చేయండి"]
     assert rec.urgent and events(engine, "urgent_call")[-1]["reason"] == "summary"
     assert "Summarise this phone call for Rahul" in llm.calls[-1][0]["content"]
+
+
+class PausingLLM:
+    """Says one sentence, then takes its time over the next (like a slow CPU model)."""
+
+    def __init__(self):
+        self.calls, self.closed = [], 0
+        self.first_sentence_out = asyncio.Event()
+
+    async def stream(self, messages):
+        self.calls.append(messages)
+        try:
+            yield "Please come to the green gate. "
+            self.first_sentence_out.set()
+            await asyncio.sleep(5)
+            yield "Then take the lift to the fourth floor."
+        finally:
+            self.closed += 1
+
+
+async def test_the_user_speaking_stops_the_assistants_reply(engine):
+    engine.store.profile.voice = "kokoro:af_heart"
+    llm = PausingLLM()
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = llm
+    turn = s.submit_text("Where should I come?", "en")
+    await asyncio.wait_for(llm.first_sentence_out.wait(), 5)
+    await asyncio.sleep(0.05)
+    assert await s.owner_say("I'm coming down myself.", "en")
+    await asyncio.sleep(0.05)
+    assert turn.cancelled() and llm.closed == 1  # the model was stopped, not left writing
+    assert not events(engine, "turn_error")  # stopping it isn't a failure
+    said = [(line.speaker, line.text) for line in s.record.transcript if line.speaker in ("assistant", "user")]
+    assert said[-2:] == [("assistant", "Please come to the green gate."), ("user", "I'm coming down myself.")]
+    assert {"role": "assistant", "content": "I'm coming down myself."} in s.conv.history
+    # The call goes on: the next caller line is answered.
+    s.conv.llm = engine.llm
+    engine.llm.responder = lambda m: "Okay."
+    await s.handle_text("Okay, I'm waiting.", "en")
+    assert lines(s, "assistant")[-1].text == "Okay."
+    await bridge.hangup()
+    await task
+
+
+async def test_the_users_words_are_not_cut_off_by_their_next_ones(engine):
+    bridge, s, task = await start_call(engine)
+    await s.wait_playback()
+    cleared = []
+    original = bridge.clear_audio
+
+    async def clear_audio():
+        cleared.append(True)
+        await original()
+
+    bridge.clear_audio = clear_audio
+    assert await s.owner_say("I'm coming down.", "en")
+    assert await s.owner_say("Two minutes.", "en")
+    assert cleared == []
+    assert [line.text for line in lines(s, "user")] == ["I'm coming down.", "Two minutes."]
+    await bridge.hangup()
+    await task
+
+
+async def test_a_hold_is_left_alone_when_the_user_speaks(engine, settings):
+    settings.hold_timeout_s = 5
+    replies = iter(["One moment. [HOLD: Can the parcel be left with the guard?]", "Okay, leave it with the guard."])
+    engine.llm.responder = lambda m: next(replies, "Okay.")
+    bridge, s, task = await start_call(engine)
+    turn = s.submit_text("Can I leave it with the guard?", "en")
+    for _ in range(300):
+        if s.record.holds:
+            break
+        await asyncio.sleep(0.01)
+    assert await s.owner_say("Hold on, please.", "en")
+    assert not turn.done()  # still waiting for the answer
+    assert await s.answer_hold(None, "Yes")
+    await turn
+    assert lines(s, "assistant")[-1].text == "Okay, leave it with the guard."
+    await bridge.hangup()
+    await task

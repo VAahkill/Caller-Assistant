@@ -63,6 +63,8 @@ class CallSession:
         self._turn_active = False
         self._tasks: set[asyncio.Task] = set()  # turns, fillers, kickoff: cancelled at hang-up
         self._respond_task: asyncio.Task | None = None  # the spoken turn a barge-in cancels
+        self._reply_task: asyncio.Task | None = None  # the turn whose reply is being made and said
+        self._queued_by = "assistant"  # who the audio waiting to be played is from
         self._ending = False
         self._hangup_after_playback = False
         self._hold_waiters: dict[str, asyncio.Future[str]] = {}
@@ -371,6 +373,7 @@ class CallSession:
     # ------------------------------------------------------------ actions
     async def _run_actions(self, actions: AsyncIterator[Action], filler: bool = False) -> None:
         fill = self.spawn(self._fillers(), "filler") if filler and self.engine.settings.filler_after_s > 0 else None
+        self._reply_task = asyncio.current_task()
         try:
             async with contextlib.aclosing(actions) as stream:  # type: ignore[type-var]
                 async for action in stream:
@@ -400,6 +403,8 @@ class CallSession:
         finally:
             if fill:
                 fill.cancel()
+            if self._reply_task is asyncio.current_task():
+                self._reply_task = None
         self._save()
 
     async def _fillers(self) -> None:
@@ -462,8 +467,9 @@ class CallSession:
         if line is not None:
             self._translate_for_user(line)  # after the caller's audio is on its way
 
-    async def _voice(self, text: str, lang: str, cached: bool = False) -> bool:
-        """Synthesises ``text`` (in ``lang``) and queues it for the phone line."""
+    async def _voice(self, text: str, lang: str, cached: bool = False, by: str = "assistant") -> bool:
+        """Synthesises ``text`` (in ``lang``) and queues it for the phone line. ``by``:
+        whose words they are (the user's aren't cut off when they speak again)."""
         voice = self.engine.store.profile.voice
         try:
             # Each sentence is said by a voice that reads its script (see TTSRouter).
@@ -476,6 +482,7 @@ class CallSession:
             log.warning("TTS made no audio for %r (%s)", text, lang)
             return False
         await self._set_status("speaking")
+        self._queued_by = by
         for f in frames(pcm):
             self._play_q.put_nowait(f)
         return True
@@ -622,6 +629,7 @@ class CallSession:
         if scrub_outgoing(text, allowed).blocked:
             await self._security_alert(SecurityAlert("blocked_output", text))
             return False
+        await self._take_over()
         said, english, first_audio = [], [], None
         for sentence in split_sentences(text) or [text]:
             if src != caller:
@@ -637,7 +645,7 @@ class CallSession:
             if res.blocked:  # the translation came out with a code in it
                 await self._security_alert(SecurityAlert("blocked_output", out))
                 continue
-            if await self._voice(res.text, caller) and first_audio is None:
+            if await self._voice(res.text, caller, by="user") and first_audio is None:
                 first_audio = time.monotonic() - started
             said.append(res.text)
             english.append(in_english)
@@ -651,6 +659,20 @@ class CallSession:
                          english=in_english if in_english != spoken else "")
         self.conv.history.append({"role": "assistant", "content": in_english})
         return True
+
+    async def _take_over(self) -> None:
+        """The user is speaking to the caller themselves, like picking up the extension:
+        the assistant stops the reply it is making and stops talking, so the user's
+        words go out at once instead of taking turns with the assistant's sentence by
+        sentence. A hold is left alone (the reply is waiting for the user's answer)."""
+        if self.record.status == CallStatus.on_hold:
+            return
+        reply = self._reply_task
+        if reply is not None and not reply.done() and reply is not asyncio.current_task():
+            log.info("call %s: the user is speaking; the assistant's reply is stopped", self.record.id)
+            reply.cancel()
+        if self._queued_by == "assistant":
+            await self._interrupt()
 
     async def owner_say_audio(self, pcm16k: bytes, lang: str | None = None) -> str:
         """The user's spoken reply, in their language: transcribed, then said to the

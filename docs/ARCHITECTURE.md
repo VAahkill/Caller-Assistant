@@ -320,6 +320,10 @@ translations shown to the user; what the caller hears is always in their languag
   (`small`; clear phone-mic speech doesn't need the large model; about 0.5 GB,
   loaded the first time the user speaks a reply), Telugu, Tamil and Hindi by their
   own models.
+- **The user takes over.** When they speak, the reply the assistant is making is
+  stopped (the model's stream is closed) and its speech not yet played is dropped,
+  so their words go out at once and the two don't alternate sentence by sentence.
+  During a hold nothing is stopped: the reply is waiting for their answer.
 - **Hold answers** in the user's language are translated into English for the model.
 - **After the call** the summary, its action items and a message in English are
   translated into the user's language.
@@ -334,6 +338,7 @@ ready) with the real models on a shared 4-vCPU machine. The server logs both ste
 |---|---|---|---|
 | Typed English, 2 sentences | Telugu (Piper) | 0.28 to 0.29 s | translation 0.19 s, speech 0.09 s |
 | Typed English, 1 sentence | Telugu | 0.20 to 0.22 s | |
+| Typed English, 2 sentences, while the model was answering the caller | Telugu | 0.61 s | the reply was stopped first |
 | Recorded English, 3.7 s | Telugu | 1.48 to 1.63 s; 2.58 s the first time | hearing it 1.3 to 1.5 s (4.8 s with large-v3-turbo); the first time also loads the model |
 | Typed Telugu, 2 sentences | Hindi (Kokoro) | 1.25 to 1.41 s | two translation steps 0.3 s, Kokoro 0.8 s |
 | Typed English, 1 sentence | Hindi | 1.16 to 1.25 s | |
