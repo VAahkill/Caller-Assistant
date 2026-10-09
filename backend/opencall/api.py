@@ -10,12 +10,13 @@ import hmac
 import json
 import logging
 import re
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, PlainTextResponse, Response
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from . import __version__
 from .audio import decode_audio, resample, to_wav, trim_silence
@@ -23,18 +24,25 @@ from .config import Settings
 from .engine import Engine
 from .maps import coords_from_link, reverse_geocode
 from .models import (
+    AppliesTo,
+    Away,
     Contact,
     Instruction,
     KnowledgeNote,
     Location,
     MessageStatus,
     Profile,
+    ShareWith,
     TaskKind,
+    country_code,
+    language_code,
     language_codes,
     new_id,
     voice_per_language,
 )
 from .owner_chat import handle_owner_message
+from .screening import normalize_number
+from .templates import TEMPLATES
 from .providers.tts import VoiceInfo
 from .telephony.asterisk import AsteriskGateway
 from .telephony.bluetooth import BluetoothGateway
@@ -75,7 +83,44 @@ def decode_recording(b64: str) -> bytes:
     return speech
 
 
+def _name(value: str | None) -> str | None:
+    if value is None:
+        return None
+    value = " ".join(value.split())
+    if not value:
+        raise ValueError("can't be empty")
+    if len(value) > 60:
+        raise ValueError("is too long (60 characters at most)")
+    return value
+
+
+# What the away presets say when the app sends no message of its own (English, read
+# after "Rahul is ...").
+AWAY_PRESETS = {"meeting": "In a meeting", "driving": "Driving", "sleeping": "Sleeping", "gym": "At the gym",
+                "travelling": "Travelling", "busy": "Busy", "out": "Out", "leave": "On leave"}
+
+
+class AwayIn(BaseModel):
+    preset: str = "custom"
+    message: str = ""
+    until: float | None = None
+
+    def to_away(self) -> Away:
+        message = " ".join(self.message.split()) or AWAY_PRESETS.get(self.preset.strip().lower(), "")
+        if not message:
+            raise HTTPException(422, "Say what you're doing, e.g. \"In a meeting until 3 PM\".")
+        if len(message) > 200:
+            raise HTTPException(422, "The away message is too long (200 characters at most).")
+        if self.until is not None and self.until <= time.time():
+            raise HTTPException(422, "That end time has already passed.")
+        return Away(preset=self.preset.strip().lower() or "custom", message=message, until=self.until)
+
+
 class ProfilePatch(BaseModel):
+    """Any profile field but the location, instructions, notes, contacts and push
+    tokens (they have their own endpoints). Missing or null fields are left as they
+    are, except ``away``: null clears it."""
+
     user_name: str | None = None
     assistant_name: str | None = None
     enabled: bool | None = None
@@ -86,17 +131,100 @@ class ProfilePatch(BaseModel):
     voice: str | None = None
     blocked_prefixes: list[str] | None = None
     caller_languages: list[str] | None = None
+    owner_language: str | None = None
+    translate_live: bool | None = None
     voices_by_language: dict[str, str] | None = None
+    blocked_numbers: list[str] | None = None
+    vip_numbers: list[str] | None = None
+    away: AwayIn | None = None
+
+    @field_validator("user_name", "assistant_name")
+    @classmethod
+    def _names(cls, value: str | None) -> str | None:
+        return _name(value)
+
+    @field_validator("home_country_code")
+    @classmethod
+    def _country(cls, value: str | None) -> str | None:
+        return None if value is None else country_code(value)
 
     @field_validator("caller_languages")
     @classmethod
     def _languages(cls, value: list[str] | None) -> list[str] | None:
         return None if value is None else language_codes(value)
 
+    @field_validator("owner_language")
+    @classmethod
+    def _owner_language(cls, value: str | None) -> str | None:
+        return None if value is None else language_code(value)
+
     @field_validator("voices_by_language")
     @classmethod
     def _voices(cls, value: dict[str, str] | None) -> dict[str, str] | None:
         return None if value is None else voice_per_language(value)
+
+    @field_validator("blocked_prefixes")
+    @classmethod
+    def _prefixes(cls, value: list[str] | None) -> list[str] | None:
+        if value is None:
+            return None
+        prefixes = list(dict.fromkeys(p.replace(" ", "") for p in value if p.strip()))
+        bad = [p for p in prefixes if not re.fullmatch(r"\+?\d{2,15}", p)]
+        if bad:
+            raise ValueError(f"not number prefixes: {', '.join(bad)} (digits, optionally starting with +)")
+        return prefixes
+
+
+def numbers_in(values: list[str], home_cc: str) -> list[str]:
+    """Phone numbers as the server keeps them (+<country><number>), each once. Raises
+    HTTPException 422 for something that isn't a phone number."""
+    out = []
+    for raw in values:
+        if not raw.strip():
+            continue
+        digits = re.sub(r"\D", "", raw)
+        if not 3 <= len(digits) <= 15:
+            raise HTTPException(422, f"{raw!r} isn't a phone number.")
+        out.append(normalize_number(raw, home_cc))
+    return list(dict.fromkeys(out))
+
+
+class InstructionIn(BaseModel):
+    text: str
+    enabled: bool = True
+    applies_to: AppliesTo = "everyone"
+    numbers: list[str] = Field(default_factory=list)
+    category: str = "general"
+    expires_at: float | None = None
+
+
+class InstructionPatch(BaseModel):
+    text: str | None = None
+    enabled: bool | None = None
+    applies_to: AppliesTo | None = None
+    numbers: list[str] | None = None
+    category: str | None = None
+    expires_at: float | None = None
+
+
+class KnowledgeIn(BaseModel):
+    text: str
+    share_with: ShareWith = "contacts"
+    numbers: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    expires_at: float | None = None
+
+
+class KnowledgePatch(BaseModel):
+    text: str | None = None
+    share_with: ShareWith | None = None
+    numbers: list[str] | None = None
+    enabled: bool | None = None
+    expires_at: float | None = None
+
+
+class NumberIn(BaseModel):
+    number: str
 
 
 class VoicePatch(BaseModel):
@@ -198,10 +326,33 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     @app.patch("/profile", dependencies=A)
     async def patch_profile(patch: ProfilePatch) -> Profile:
         data = store.profile.model_dump()
-        data.update({k: v for k, v in patch.model_dump().items() if v is not None})
-        store.save_profile(Profile.model_validate(data))
+        changes = {k: v for k, v in patch.model_dump(exclude={"away"}).items() if v is not None}
+        cc = changes.get("home_country_code", store.profile.home_country_code)
+        for field in ("blocked_numbers", "vip_numbers"):
+            if field in changes:
+                changes[field] = numbers_in(changes[field], cc)
+        data.update(changes)
+        if "away" in patch.model_fields_set:
+            data["away"] = patch.away.to_away().model_dump() if patch.away is not None else None
+        return await save_profile(Profile.model_validate(data))
+
+    async def save_profile(profile: Profile | None = None) -> Profile:
+        store.save_profile(profile)
         await engine.bus.publish("profile_updated")
         return store.profile
+
+    # ------------------------------------------------------------ away status
+    @app.put("/away", dependencies=A)
+    async def put_away(body: AwayIn) -> Profile:
+        """What the user is doing instead of taking calls ("In a meeting until 3 PM"):
+        callers hear it in the greeting until it ends."""
+        store.profile.away = body.to_away()
+        return await save_profile()
+
+    @app.delete("/away", dependencies=A)
+    async def delete_away() -> Profile:
+        store.profile.away = None
+        return await save_profile()
 
     @app.put("/location", dependencies=A)
     async def put_location(loc: Location) -> Location:
@@ -219,29 +370,99 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
             raise HTTPException(422, "Couldn't find a location in that link.")
         return {"lat": found[0], "lng": found[1]}
 
+    # ------------------------------------------------------------ instructions and notes
+    def clean_text(text: str) -> str:
+        text = text.strip()
+        if not text:
+            raise HTTPException(422, "The text is empty.")
+        if len(text) > 1000:
+            raise HTTPException(422, "That's too long for the assistant to keep in mind (1000 characters at most).")
+        return text
+
+    def check_rule(rule, numbers_needed: bool) -> None:
+        if numbers_needed and not rule.numbers:
+            raise HTTPException(422, "Add the phone numbers this is for.")
+        if rule.expires_at is not None and rule.expires_at <= time.time() and rule.enabled:
+            raise HTTPException(422, "That end date has already passed.")
+
+    def find(items: list, item_id: str, what: str):
+        found = next((i for i in items if i.id == item_id), None)
+        if found is None:
+            raise HTTPException(404, f"No such {what}.")
+        return found
+
+    @app.get("/instructions/templates", dependencies=A)
+    async def instruction_templates():
+        """Ready-made instructions, grouped by category in the app."""
+        return TEMPLATES
+
     @app.post("/instructions", dependencies=A)
-    async def add_instruction(body: TextIn) -> Instruction:
-        ins = Instruction(text=body.text.strip())
+    async def add_instruction(body: InstructionIn) -> Instruction:
+        cc = store.profile.home_country_code
+        ins = Instruction(text=clean_text(body.text), enabled=body.enabled, applies_to=body.applies_to,
+                          numbers=numbers_in(body.numbers, cc), category=body.category.strip().lower() or "general",
+                          expires_at=body.expires_at)
+        check_rule(ins, ins.applies_to == "numbers")
         store.profile.instructions.append(ins)
-        store.save_profile()
+        await save_profile()
         return ins
+
+    @app.patch("/instructions/{ins_id}", dependencies=A)
+    async def patch_instruction(ins_id: str, patch: InstructionPatch) -> Instruction:
+        ins = find(store.profile.instructions, ins_id, "instruction")
+        changes = patch.model_dump(exclude_unset=True)
+        if "text" in changes:
+            changes["text"] = clean_text(changes["text"] or "")
+        if "numbers" in changes:
+            changes["numbers"] = numbers_in(changes["numbers"] or [], store.profile.home_country_code)
+        if "category" in changes:
+            changes["category"] = (changes["category"] or "").strip().lower() or "general"
+        for key in ("enabled", "applies_to"):
+            if changes.get(key, "") is None:
+                changes.pop(key)
+        updated = ins.model_copy(update={**changes, "updated_at": time.time()})
+        check_rule(updated, updated.applies_to == "numbers")
+        store.profile.instructions = [updated if i.id == ins_id else i for i in store.profile.instructions]
+        await save_profile()
+        return updated
 
     @app.delete("/instructions/{ins_id}", dependencies=A)
     async def del_instruction(ins_id: str):
         store.profile.instructions = [i for i in store.profile.instructions if i.id != ins_id]
-        store.save_profile()
+        await save_profile()
         return {"ok": True}
 
     @app.post("/knowledge", dependencies=A)
-    async def add_note(note: KnowledgeNote) -> KnowledgeNote:
+    async def add_note(body: KnowledgeIn) -> KnowledgeNote:
+        note = KnowledgeNote(text=clean_text(body.text), share_with=body.share_with, enabled=body.enabled,
+                             numbers=numbers_in(body.numbers, store.profile.home_country_code),
+                             expires_at=body.expires_at)
+        check_rule(note, note.share_with == "numbers")
         store.profile.knowledge.append(note)
-        store.save_profile()
+        await save_profile()
         return note
+
+    @app.patch("/knowledge/{note_id}", dependencies=A)
+    async def patch_note(note_id: str, patch: KnowledgePatch) -> KnowledgeNote:
+        note = find(store.profile.knowledge, note_id, "note")
+        changes = patch.model_dump(exclude_unset=True)
+        if "text" in changes:
+            changes["text"] = clean_text(changes["text"] or "")
+        if "numbers" in changes:
+            changes["numbers"] = numbers_in(changes["numbers"] or [], store.profile.home_country_code)
+        for key in ("enabled", "share_with"):
+            if changes.get(key, "") is None:
+                changes.pop(key)
+        updated = note.model_copy(update={**changes, "updated_at": time.time()})
+        check_rule(updated, updated.share_with == "numbers")
+        store.profile.knowledge = [updated if n.id == note_id else n for n in store.profile.knowledge]
+        await save_profile()
+        return updated
 
     @app.delete("/knowledge/{note_id}", dependencies=A)
     async def del_note(note_id: str):
         store.profile.knowledge = [n for n in store.profile.knowledge if n.id != note_id]
-        store.save_profile()
+        await save_profile()
         return {"ok": True}
 
     @app.put("/contacts", dependencies=A)
@@ -250,6 +471,28 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
         store.profile.contacts = contacts
         store.save_profile()
         return {"count": len(contacts)}
+
+    @app.post("/contacts/block", dependencies=A)
+    async def block_number(body: NumberIn) -> Profile:
+        """Calls from this number are never answered (a VIP stops being one)."""
+        p = store.profile
+        number = (numbers_in([body.number], p.home_country_code) or [None])[0]
+        if number is None:
+            raise HTTPException(422, "Which number?")
+        if number not in p.blocked_numbers:
+            p.blocked_numbers.append(number)
+        p.vip_numbers = [n for n in p.vip_numbers if normalize_number(n, p.home_country_code) != number]
+        return await save_profile()
+
+    @app.delete("/contacts/block/{number}", dependencies=A)
+    async def unblock_number(number: str) -> Profile:
+        p = store.profile
+        target = normalize_number(number, p.home_country_code)
+        p.blocked_numbers = [n for n in p.blocked_numbers if normalize_number(n, p.home_country_code) != target]
+        for c in p.contacts:  # blocked by an older app, on the contact itself
+            if c.blocked and normalize_number(c.number, p.home_country_code) == target:
+                c.blocked = False
+        return await save_profile()
 
     @app.post("/push/register", dependencies=A)
     async def register_push(body: PushToken):
@@ -286,6 +529,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
     @app.post("/calls/{call_id}/answer", dependencies=A)
     async def answer_hold(call_id: str, body: AnswerIn):
+        """The user's answer to a hold question (in their language; the model gets it
+        in English), or, with no question waiting, words said to the caller."""
         s = live(call_id)
         if await s.answer_hold(body.hold_id, body.text):
             return {"ok": True, "mode": "hold_answer"}
@@ -294,14 +539,16 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
     @app.post("/calls/{call_id}/say", dependencies=A)
     async def say(call_id: str, body: SayIn):
-        """The user's own words for the caller, said right away."""
+        """The user's own words for the caller (in ``lang``, by default their own
+        language), translated and said in the caller's language right away."""
         if not await live(call_id).owner_say(body.text, lang_code(body.lang)):
             raise HTTPException(422, "Nothing was said: the text was empty or contained a code-like number.")
         return {"ok": True}
 
     @app.post("/calls/{call_id}/say-audio", dependencies=A)
     async def say_audio(call_id: str, audio: UploadFile = File(...), lang: str = Form("")):
-        """The user's spoken reply: transcribed, then said to the caller."""
+        """The user's spoken reply (in ``lang``, by default their own language):
+        transcribed, translated and said to the caller in theirs."""
         s = live(call_id)
         try:
             pcm, rate = decode_audio(await audio.read())
