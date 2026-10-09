@@ -20,6 +20,7 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
 import Chat from '../../app/chat';
+import { OFFLINE } from '../../lib/api';
 import type { MockServer } from '../../lib/mock/server';
 import { getTransport, setTransport } from '../../lib/transport';
 import { resetApi, useMockServer } from '../../test/mockApi';
@@ -103,7 +104,7 @@ test('a message that fails stays with the reason, and Retry sends it', async () 
   await renderScreen(<Chat />);
   await fireEvent.changeText(await screen.findByLabelText('Message Ava'), 'Who called today?');
   await fireEvent.press(screen.getByTestId('composer-send'));
-  expect(await screen.findByText('Not sent: Network request failed')).toBeTruthy();
+  expect(await screen.findByText(`Not sent: ${OFFLINE}`)).toBeTruthy();
   fail = false;
   await fireEvent.press(screen.getByRole('button', { name: 'Retry' }));
   expect(await screen.findByText(/^Today: /)).toBeTruthy();

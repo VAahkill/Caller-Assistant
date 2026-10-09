@@ -9,6 +9,7 @@ import {
   loadConfig,
   normalizeServerUrl,
   NOT_SET_UP,
+  OFFLINE,
   onConfigChange,
   saveConfig,
   unreachableMessage,
@@ -114,6 +115,28 @@ describe('errors', () => {
     await expect(api.addVoice('Me', 'file:///clip.m4a')).rejects.toThrow(BAD_TOKEN);
     setTransport(fixedTransport(422, '{"detail":"The recording is too short. Speak for at least 6 seconds."}'));
     await expect(api.addVoice('Me', 'file:///clip.m4a')).rejects.toThrow('Server said: The recording is too short');
+  });
+});
+
+describe('no answer at all', () => {
+  test('is said plainly, with the platform error kept as the cause', async () => {
+    await useMockServer();
+    const down = new TypeError('Network request failed');
+    setTransport({ ...fixedTransport(200, '{}'), fetch: async () => Promise.reject(down) });
+    const failed = api.calls().then(
+      () => null,
+      (e: unknown) => e,
+    );
+    const e = (await failed) as Error & { cause?: unknown };
+    expect(e.message).toBe(OFFLINE);
+    expect(e.cause).toBe(down);
+    expect(isHttpError(e)).toBe(false);
+  });
+
+  test('a server that answers with an error is not called unreachable', async () => {
+    await useMockServer();
+    setTransport(fixedTransport(500, '{"detail":"disk full"}'));
+    await expect(api.calls()).rejects.toThrow('Server said: disk full');
   });
 });
 

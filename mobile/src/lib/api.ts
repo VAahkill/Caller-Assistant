@@ -182,25 +182,42 @@ export async function readResponse<T>(res: ResponseLike): Promise<T> {
   return body as T;
 }
 
+/** No answer at all: offline, the server is down, or the address is wrong. */
+export const OFFLINE = "Couldn't reach your server. Check that it is running and that this phone is online.";
+
+/** Fails with OFFLINE (the platform's own error as its cause) when nothing
+ *  answered; "Network request failed" tells the owner nothing. */
+async function reach<T>(send: () => Promise<T>): Promise<T> {
+  try {
+    return await send();
+  } catch (e) {
+    throw Object.assign(new Error(OFFLINE), { cause: e });
+  }
+}
+
 async function request<T>(method: string, path: string, body?: unknown, form?: FormData): Promise<T> {
   const cfg = await loadConfig();
   if (!cfg) throw new Error(NOT_SET_UP);
   const headers: Record<string, string> = { Authorization: `Bearer ${cfg.token}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';
-  const res = await getTransport().fetch(`${cfg.url}${path}`, {
-    method,
-    headers,
-    body: form ?? (body !== undefined ? JSON.stringify(body) : undefined),
-  });
+  const res = await reach(() =>
+    getTransport().fetch(`${cfg.url}${path}`, {
+      method,
+      headers,
+      body: form ?? (body !== undefined ? JSON.stringify(body) : undefined),
+    }),
+  );
   return readResponse<T>(res);
 }
 
 async function unauthenticated<T>(baseUrl: string, method: string, path: string, body?: unknown): Promise<T> {
-  const res = await getTransport().fetch(`${baseUrl}${path}`, {
-    method,
-    headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
+  const res = await reach(() =>
+    getTransport().fetch(`${baseUrl}${path}`, {
+      method,
+      headers: body !== undefined ? { 'Content-Type': 'application/json' } : {},
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    }),
+  );
   return readResponse<T>(res);
 }
 
@@ -297,15 +314,17 @@ export const api = {
   addVoice: async (label: string, uri: string, onProgress?: (fraction: number) => void): Promise<VoiceInfo> => {
     const cfg = await loadConfig();
     if (!cfg) throw new Error(NOT_SET_UP);
-    const result = await getTransport().upload({
-      url: `${cfg.url}/voices`,
-      fileUri: uri,
-      fieldName: 'audio',
-      mimeType: RECORDING_MIME,
-      parameters: { label },
-      headers: { Authorization: `Bearer ${cfg.token}` },
-      onProgress,
-    });
+    const result = await reach(() =>
+      getTransport().upload({
+        url: `${cfg.url}/voices`,
+        fileUri: uri,
+        fieldName: 'audio',
+        mimeType: RECORDING_MIME,
+        parameters: { label },
+        headers: { Authorization: `Bearer ${cfg.token}` },
+        onProgress,
+      }),
+    );
     const res: ResponseLike = {
       ok: result.status >= 200 && result.status < 300,
       status: result.status,

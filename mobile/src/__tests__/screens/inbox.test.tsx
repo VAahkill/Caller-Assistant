@@ -12,6 +12,7 @@ import { fireEvent, screen, waitFor, within } from '@testing-library/react-nativ
 import { router, useLocalSearchParams } from 'expo-router';
 
 import Inbox from '../../app/(tabs)/inbox';
+import { OFFLINE } from '../../lib/api';
 import { dayTitle } from '../../lib/inbox';
 import type { MockServer } from '../../lib/mock/server';
 import { getTransport, setTransport } from '../../lib/transport';
@@ -133,7 +134,8 @@ describe('Calls', () => {
     params.mockReturnValue({ tab: 'calls' });
     await renderScreen(<Inbox />);
     expect(await screen.findByText("Couldn't load this")).toBeTruthy();
-    expect(screen.getByText('Network request failed')).toBeTruthy();
+    // Said plainly, not as the platform's "Network request failed".
+    expect(screen.getByText(OFFLINE)).toBeTruthy();
     fail = false;
     await fireEvent.press(screen.getByRole('button', { name: 'Retry' }));
     await waitFor(() => expect(callNames()).toHaveLength(8));
