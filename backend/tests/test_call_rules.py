@@ -161,7 +161,11 @@ def test_the_delivery_details_dont_carry_the_long_map_link():
     p = Profile(location=Location(lat=17.41, lng=78.44, landmarks="Opposite Apollo Pharmacy"))
     text = delivery_context(p, can_text=True)
     assert "http" not in text and "Opposite Apollo Pharmacy" in text and "Map pin: saved" in text
-    assert "hasn't pinned" not in delivery_context(Profile(location=Location(lat=17.41, lng=78.44)))
+    assert "hasn't pinned" not in delivery_context(Profile(location=Location(lat=17.41, lng=78.44)), can_text=True)
+    # Without texting the pin is no use to the caller: it isn't offered, and the model asks.
+    no_sms = delivery_context(p)
+    assert "Map pin" not in no_sms and "cannot send texts" in no_sms
+    assert "HOLD to ask for directions" in delivery_context(Profile(location=Location(lat=17.41, lng=78.44)))
 
 
 def test_a_delivery_partner_is_told_what_they_ask_and_replies_start_with_the_answer():
@@ -169,7 +173,41 @@ def test_a_delivery_partner_is_told_what_they_ask_and_replies_start_with_the_ans
     from opencall.prompts import delivery_context
 
     text = delivery_context(Profile(location=Location(lat=17.41, lng=78.44, floor_unit="4th floor, flat 402")))
-    assert "Answer exactly what they ask" in text and "the floor" in text
-    assert "give the address and the main landmark" in text
+    assert "4th floor, flat 402" in text
+    # How to answer them is in the part of the prompt that is the same for every call.
     system = Conversation.inbound(Profile(), None, "+919876500101", "", ["en"]).system_message()
+    static = system[: system.index("THIS CALL")]
+    assert "Answer exactly what they ask" in static and "the floor" in static
+    assert "give the address and the\n  main landmark" in static
     assert 'Start with the answer itself, not\n  "Hello!"' in system
+
+
+def test_with_translation_each_call_reuses_the_warm_up_prompt_up_to_the_caller():
+    # A local LLM on a CPU reads every new prompt token before its first word; with
+    # translation, what differs between calls (and turns) is only at the end.
+    p = rules_profile()
+    warm = Conversation.inbound(p, None, "", "", LANGS, translates=True).warm_up_messages()[0]["content"]
+    head = warm[: warm.index("THIS CALL")]
+    assert "LANGUAGE: always write plain English" in head and "Rahul is busy" in head
+    for lang, number, delivery in [("te", "+919833333333", True), ("hi", "+919811111111", False),
+                                   ("en", "+919822222222", True)]:
+        conv = Conversation.inbound(p, None, number, "", LANGS, translates=True)
+        conv.language, conv.pivot = lang, lang != "en"
+        if delivery:
+            conv._enter_delivery_mode()
+        system = conv.system_message()
+        assert system.startswith(head), lang
+        tail = system[len(head):]
+        assert ("The caller speaks" in tail) == (lang != "en")
+        assert ("DELIVERY:" in tail) == delivery
+        assert "Languages you can speak aloud" not in system
+
+
+def test_without_translation_the_model_writes_the_callers_language():
+    conv = Conversation.inbound(rules_profile(), None, "+919833333333", "", LANGS)
+    conv.language = "te"
+    system = conv.system_message()
+    assert "Reply only in Telugu, written in Telugu script." in system
+    assert "Languages you can speak aloud: " in system and "always write plain English" not in system
+    conv.language = ""
+    assert "LANGUAGE: start in English" in conv.system_message()

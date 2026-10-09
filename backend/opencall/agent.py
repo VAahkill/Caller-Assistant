@@ -233,6 +233,10 @@ class Conversation:
     # Whether this turn goes through English: the caller's words were translated into
     # English for the model, and its English reply is translated back for the caller.
     pivot: bool = False
+    # Whether the call can translate (the model then always writes English), and the
+    # languages it can speak when it can't.
+    translates: bool = False
+    speakable: list[str] = field(default_factory=lambda: ["en"])
     heard: list[str] = field(default_factory=list)  # the other party's own words
     _delivery: bool = False
     _turns: int = 0
@@ -240,7 +244,7 @@ class Conversation:
     @classmethod
     def inbound(cls, profile: Profile, llm: LLM, number: str, contact_name: str, speakable: list[str],
                 can_text: bool = False, vip: bool = False,
-                english: Callable[[str], str] | None = None) -> "Conversation":
+                english: Callable[[str], str] | None = None, translates: bool = False) -> "Conversation":
         can_text = can_text and bool(number)
         english = english or (lambda t: t)
         prompt = prompts.inbound_system_prompt(profile, number, contact_name, speakable, can_text,
@@ -248,15 +252,16 @@ class Conversation:
                                                english=english)
         return cls(profile, llm, prompt, caller_number=number, is_contact=bool(contact_name),
                    category="contact" if contact_name else "unknown", can_text=can_text, vip=vip,
-                   english=english, opening=opening_line(profile, english))
+                   english=english, opening=opening_line(profile, english), translates=translates,
+                   speakable=list(speakable))
 
     @classmethod
     def for_task(cls, profile: Profile, llm: LLM, task: Task, speakable: list[str],
-                 english: Callable[[str], str] | None = None) -> "Conversation":
+                 english: Callable[[str], str] | None = None, translates: bool = False) -> "Conversation":
         english = english or (lambda t: t)
         prompt = prompts.outbound_system_prompt(profile, task, speakable, english)
         return cls(profile, llm, prompt, caller_number=task.number, outbound=True, category="task",
-                   english=english)
+                   english=english, translates=translates, speakable=list(speakable))
 
     # What the assistant is allowed to say out loud, number-wise.
     def allowed_numbers(self) -> set[str]:
@@ -275,13 +280,18 @@ class Conversation:
         return published_numbers(*texts)
 
     def system_message(self) -> str:
-        parts = [self.system_prompt.rstrip()]
+        """The call's prompt for this turn. What changes during a call goes at the end,
+        after the part a local LLM keeps cached: the caller's language (when it is
+        translated) and, once it's a delivery, the delivery details."""
+        note = prompts.language_note(self.language, self.pivot, self.translates, self.speakable)
+        parts = [self.system_prompt.replace(prompts.LANGUAGE_SLOT, note, 1).rstrip()]
+        if self.pivot:
+            parts.append(prompts.caller_language_line(self.language))
         if self._delivery:
             rules = prompts.call_rules(self.profile, prompts.Caller(self.caller_number, self.is_contact, self.vip),
                                        self.english)
             parts.append(prompts.delivery_context(self.profile, self.can_text, rules.delivery, rules.delivery_facts,
                                                   self.english))
-        parts.append(prompts.language_note(self.language, self.pivot))
         return "\n\n".join(parts)
 
     def _messages(self, history: list[Message] | None = None) -> list[Message]:

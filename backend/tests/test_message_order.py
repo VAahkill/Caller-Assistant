@@ -56,7 +56,7 @@ async def test_plain_turn():
     assert [m["role"] for m in sent] == ["system", "user", "assistant", "user"]
     assert sent[1]["content"].startswith("[Private note") and sent[2]["content"] == conv.opening_line()
     assert sent[3]["content"] == "Hi, is Rahul there?"
-    assert "Reply only in English." in sent[0]["content"]
+    assert "LANGUAGE: always write plain English" in sent[0]["content"]
 
 
 async def test_delivery_context_lives_in_the_system_message():
@@ -93,7 +93,7 @@ async def test_hold_answer_and_timeout_are_private_user_notes(answer):
     last = llm.calls[-1][-1]
     assert last["role"] == "user" and last["content"].startswith("[Private note from Rahul's side")
     assert ("Tell her 9 PM works" in last["content"]) if answer else ("isn't available" in last["content"])
-    assert "Reply only in English." in llm.calls[-1][0]["content"]
+    assert "LANGUAGE: always write plain English" in llm.calls[-1][0]["content"]
 
 
 async def test_outbound_kickoff_is_a_private_user_note():

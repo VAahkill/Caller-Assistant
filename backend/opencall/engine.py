@@ -266,7 +266,7 @@ class Engine:
             self.ready["llm"] = True
             return
         messages = Conversation.inbound(self.store.profile, self.llm, "", "", self._speakable(),
-                                        english=self.owner_english).warm_up_messages()
+                                        english=self.owner_english, translates=self.mt.available).warm_up_messages()
         delay = 15.0
         while True:
             started = time.monotonic()
@@ -402,7 +402,8 @@ class Engine:
         if task:
             rec = CallRecord(id=bridge.call_id, direction=CallDirection.outbound, number=task.number,
                              contact_name=task.target_name, category="task", task_id=task.id)
-            conv = Conversation.for_task(profile, self.llm, task, self._speakable(), self.owner_english)
+            conv = Conversation.for_task(profile, self.llm, task, self._speakable(), self.owner_english,
+                                         translates=self.mt.available)
         else:
             contact = find_contact(profile, bridge.number)
             number = normalize_number(bridge.number, profile.home_country_code)
@@ -411,7 +412,7 @@ class Engine:
                              category="contact" if contact else "unknown", urgent=vip)
             conv = Conversation.inbound(profile, self.llm, number, rec.contact_name, self._speakable(),
                                         can_text=getattr(bridge, "can_sms", False), vip=vip,
-                                        english=self.owner_english)
+                                        english=self.owner_english, translates=self.mt.available)
         session = CallSession(self, bridge, rec, conv)
         self.sessions[rec.id] = session
         return session

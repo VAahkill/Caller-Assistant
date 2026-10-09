@@ -77,8 +77,9 @@ async def test_a_telugu_caller_is_answered_by_a_model_that_works_in_english(engi
     sent = llm.calls[-1]
     assert sent[-1] == {"role": "user", "content": SWIGGY_EN}
     system = sent[0]["content"]
-    assert "the caller speaks Telugu. You see their words translated into English" in system
-    assert "write only plain English" in system and "Reply only in Telugu" not in system
+    assert "The caller speaks Telugu; you see their words translated into English" in system
+    assert "always write plain English" in system and "Reply only in Telugu" not in system
+    assert "Languages you can speak aloud" not in system  # the model only writes English
     assert "Opposite Apollo Pharmacy" in system  # the delivery was recognised (in both languages)
     caller = lines(s, "caller")[-1]
     assert caller.text == SWIGGY_TE and caller.lang == "te" and caller.english == SWIGGY_EN
