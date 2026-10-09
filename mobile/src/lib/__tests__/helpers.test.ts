@@ -1,5 +1,5 @@
 import { awayMessage, spokenTime, untilFor } from '../away';
-import { dialerName } from '../format';
+import { dialerName, prettyNumber } from '../format';
 import { callerName, engineName, greetingLine, ownName } from '../labels';
 import { moveLanguage, toggleLanguage } from '../languages';
 import { directionsText, geocodeLine, locationChanged } from '../location';
@@ -193,6 +193,18 @@ describe('engine name', () => {
     expect(engineName('kokoro')).toBe('Kokoro');
     expect(engineName('mms')).toBe('MMS');
     expect(engineName('parler')).toBe('Parler');
+  });
+});
+
+describe('pretty number', () => {
+  test('mobiles in fives, big-city landlines by area code, the rest as stored', () => {
+    expect(prettyNumber('+919848012345')).toBe('+91 98480 12345');
+    expect(prettyNumber('+914023456789')).toBe('+91 40 2345 6789');
+    expect(prettyNumber('+911123456789')).toBe('+91 11 2345 6789');
+    // 80 could be a mobile as well as Bengaluru, so it keeps the mobile grouping.
+    expect(prettyNumber('+918045678901')).toBe('+91 80456 78901');
+    expect(prettyNumber('+14155550100')).toBe('+14155550100');
+    expect(prettyNumber('121')).toBe('121');
   });
 });
 

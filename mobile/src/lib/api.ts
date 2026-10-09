@@ -5,6 +5,7 @@ import {
   normalizeCallSummary,
   normalizeHealth,
   normalizeProfile,
+  normalizeTask,
   normalizeVoice,
 } from './normalize';
 import { dialerName } from './format';
@@ -281,9 +282,9 @@ export const api = {
     request<CallerMessage>('POST', `/messages/${enc(id)}/reply`, { text, call_back }),
   markRead: (id: string) => request<CallerMessage>('POST', `/messages/${enc(id)}/read`),
 
-  tasks: () => request<Task[]>('GET', '/tasks'),
-  createTask: (number: string, goal: string, kind: TaskKind, target_name = '') =>
-    request<Task>('POST', '/tasks', { number, goal, kind, target_name }),
+  tasks: async (): Promise<Task[]> => (await request<unknown[]>('GET', '/tasks')).map(normalizeTask),
+  createTask: async (number: string, goal: string, kind: TaskKind, target_name = ''): Promise<Task> =>
+    normalizeTask(await request<unknown>('POST', '/tasks', { number, goal, kind, target_name })),
 
   chat: (text: string, shared = '', history: ChatTurn[] = []) =>
     request<ChatReply>('POST', '/assistant/chat', { text, shared, history }),

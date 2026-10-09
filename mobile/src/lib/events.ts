@@ -1,7 +1,8 @@
 // Live events from /ws/events (and the practice socket, /ws/simulate), typed
 // per API contract v2, and the reducer that turns them into app state.
 
-import { normalizeCall, normalizeLine } from './normalize';
+import { normalizeCall, normalizeLine, normalizeTask } from './normalize';
+import { addTaskStep, type TaskStep } from './tasks';
 import type { AssistantState, CallRecord, CallerMessage, Task, TranscriptLine, VoiceStatus } from './types';
 
 interface CallEventBase {
@@ -128,6 +129,10 @@ export function parseEvent(data: unknown): ParseResult {
     ev.detail = s(ev.detail);
   }
   if (name === 'rejected') ev.reason = s(ev.reason);
+  if (name === 'task_update') {
+    ev.task = normalizeTask(ev.task);
+    ev.title = s(ev.title);
+  }
   return { ok: true, event: ev as unknown as AnyEvent };
 }
 
@@ -256,6 +261,8 @@ export interface LiveData {
   questions: PendingQuestion[];
   alerts: SecurityAlert[];
   tasks: Record<string, Task>;
+  /** Each status a task was seen to reach while the app was open, with when. */
+  taskSteps: Record<string, TaskStep[]>;
   /** Bumps when stored lists (calls, messages, tasks, profile) may have changed. */
   refreshKey: number;
   profileKey: number;
@@ -263,7 +270,7 @@ export interface LiveData {
   voicesKey: number;
 }
 
-export const initialLive: LiveData = { calls: {}, questions: [], alerts: [], tasks: {}, refreshKey: 0, profileKey: 0, voicesKey: 0 };
+export const initialLive: LiveData = { calls: {}, questions: [], alerts: [], tasks: {}, taskSteps: {}, refreshKey: 0, profileKey: 0, voicesKey: 0 };
 
 export type LiveAction =
   | { type: 'event'; event: ServerEvent; now?: number }
@@ -391,7 +398,12 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
     case 'message_taken':
       return { ...state, refreshKey: state.refreshKey + 1 };
     case 'task_update':
-      return { ...state, tasks: { ...state.tasks, [ev.task.id]: ev.task }, refreshKey: state.refreshKey + 1 };
+      return {
+        ...state,
+        tasks: { ...state.tasks, [ev.task.id]: ev.task },
+        taskSteps: { ...state.taskSteps, [ev.task.id]: addTaskStep(state.taskSteps[ev.task.id], ev.task, now) },
+        refreshKey: state.refreshKey + 1,
+      };
     case 'profile_updated':
       return { ...state, profileKey: state.profileKey + 1 };
     case 'voice_status':

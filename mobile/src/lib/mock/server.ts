@@ -2,6 +2,7 @@
 // (EXPO_PUBLIC_OPENCALL_MOCK=1) and tests use it in place of the network.
 
 import { normalizeProfile } from '../normalize';
+import { normalizeNumber } from '../phone';
 import type {
   Transport,
   RequestInitLike,
@@ -252,7 +253,8 @@ export class MockServer {
         const task: Task = {
           id: newId('task'),
           kind: (body.kind as Task['kind']) ?? 'enquire',
-          number: String(body.number ?? ''),
+          // Like the server: stored in full international form.
+          number: normalizeNumber(String(body.number ?? ''), s.profile.home_country_code),
           goal: String(body.goal ?? ''),
           target_name: String(body.target_name ?? ''),
           status: 'queued',
@@ -264,6 +266,7 @@ export class MockServer {
         };
         if (!task.number || !task.goal) return unprocessable('A number and a goal are needed.');
         s.tasks = [task, ...s.tasks];
+        if (this.latencyMs) this.playTask(task.id);
         return ok(task);
       }
       case 'POST /assistant/chat': {
@@ -300,6 +303,39 @@ export class MockServer {
       default:
         return notFound();
     }
+  }
+
+  /** Moves a call task on, as the server's TaskManager does, and says so on
+   *  the events socket (task_update). */
+  advanceTask(id: string, status: Task['status'], patch: Partial<Task> = {}): Task | null {
+    const found = this.state.tasks.find((t) => t.id === id);
+    if (!found) return null;
+    const task: Task = { ...found, ...patch, status, updated_at: nowS() };
+    this.state.tasks = this.state.tasks.map((t) => (t.id === id ? task : t));
+    const who = task.target_name || task.number;
+    const title =
+      status === 'dialing' ? `Calling ${who}...` : status === 'in_call' ? `Connected to ${who}` : `${who}: ${task.result || status}`;
+    this.liveSockets.forEach((sk) => sk.push({ event: 'task_update', task, task_id: id, title }, 0));
+    return task;
+  }
+
+  /** Mock mode: a new task dials, talks and reports back over a few seconds. */
+  private playTask(id: string) {
+    const task = this.state.tasks.find((t) => t.id === id);
+    if (!task) return;
+    const booking = task.kind === 'book';
+    const steps: [number, Task['status'], Partial<Task>][] = [
+      [1500, 'dialing', {}],
+      [4500, 'in_call', {}],
+      [
+        11000,
+        'done',
+        booking
+          ? { outcome: 'booked', result: 'Booked. They confirmed the table and the time, under your name.' }
+          : { outcome: 'available', result: 'They answered: it is on its way and should arrive by 6 PM today.' },
+      ],
+    ];
+    for (const [ms, status, patch] of steps) setTimeout(() => this.advanceTask(id, status, patch), ms);
   }
 
   /** Each list of voices brings preparing ones closer to ready, and says so on

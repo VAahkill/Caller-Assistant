@@ -8,6 +8,7 @@ import type {
   Health,
   Profile,
   ReadyFlags,
+  Task,
   TranscriptLine,
   VoiceEngine,
   VoiceInfo,
@@ -196,5 +197,27 @@ export function normalizeHealth(raw: unknown): Health {
     active_calls: num(h.active_calls, 0),
     ready,
     llm_model: str(h.llm_model),
+  };
+}
+
+const TASK_STATUSES: Task['status'][] = ['queued', 'dialing', 'in_call', 'waiting_user', 'done', 'failed'];
+const TASK_KINDS: Task['kind'][] = ['enquire', 'book', 'callback', 'custom'];
+
+/** A call task from GET /tasks, POST /tasks or a task_update event. */
+export function normalizeTask(raw: unknown): Task {
+  const t = (isObj(raw) ? raw : {}) as Loose<Task>;
+  const created = num(t.created_at, 0);
+  return {
+    id: str(t.id),
+    kind: TASK_KINDS.includes(t.kind as Task['kind']) ? (t.kind as Task['kind']) : 'custom',
+    number: str(t.number),
+    goal: str(t.goal),
+    target_name: str(t.target_name),
+    status: TASK_STATUSES.includes(t.status as Task['status']) ? (t.status as Task['status']) : 'queued',
+    outcome: str(t.outcome),
+    result: str(t.result),
+    call_id: str(t.call_id) || null,
+    created_at: created,
+    updated_at: num(t.updated_at, created),
   };
 }

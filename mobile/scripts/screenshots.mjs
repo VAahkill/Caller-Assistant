@@ -43,6 +43,11 @@ const SHOTS = [
   { name: 'inbox', path: '/inbox' },
   { name: 'inbox-calls', path: '/inbox', tap: 'Calls' },
   { name: 'call-for-me', path: '/tasks' },
+  {
+    name: 'call-for-me-started',
+    path: '/tasks',
+    steps: [{ tap: 'Book a table' }, { fill: ['Phone number', '+91 40 2345 6789'] }, { fill: ['Place or person (optional)', 'Paradise Biryani'] }, { tap: 'Call Paradise Biryani', wait: 5500 }],
+  },
   { name: 'assistant', path: '/assistant' },
   { name: 'settings', path: '/settings' },
   { name: 'call-live', path: '/call/call-live-swiggy' },
@@ -206,10 +211,13 @@ async function main() {
         page.on('console', (m) => m.type() === 'error' && !m.text().includes('ERR_BLOCKED_BY_CLIENT') && errors.push(m.text()));
         await page.goto(base + shot.path, { waitUntil: 'networkidle' });
         await page.waitForTimeout(1500);
-        // One tap, or several in order (each waits for the screen to settle).
-        for (const tap of shot.tap ? [shot.tap].flat() : []) {
-          await page.getByText(tap, { exact: true }).last().click();
-          await page.waitForTimeout(shot.wait ?? 900);
+        // One tap, or several in order (each waits for the screen to settle),
+        // or steps that also type into a field found by its label.
+        const steps = shot.steps ?? (shot.tap ? [shot.tap].flat().map((tap) => ({ tap, wait: shot.wait })) : []);
+        for (const step of steps) {
+          if (step.fill) await page.getByLabel(step.fill[0], { exact: true }).last().fill(step.fill[1]);
+          else await page.getByText(step.tap, { exact: true }).last().click();
+          await page.waitForTimeout(step.wait ?? 900);
         }
         const files = [];
         for (let part = 1; part <= maxParts; part++) {

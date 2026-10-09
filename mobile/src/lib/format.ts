@@ -32,8 +32,15 @@ export function isToday(ts: EpochSeconds, now: Date = new Date()): boolean {
   return d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
 }
 
-/** "+91 98765 00001" for Indian mobiles, otherwise the number as stored. */
+// Big-city landline codes that no mobile number starts with (mobiles start
+// with 6 to 9), so +91 40 2345 6789 can be told from a mobile.
+const CITY_CODES = new Set(['11', '20', '22', '33', '40', '44']);
+
+/** "+91 98765 00001" for Indian mobiles, "+91 40 2345 6789" for big-city
+ *  landlines, otherwise the number as stored. */
 export function prettyNumber(n: string): string {
+  const city = /^\+91(\d{2})(\d{4})(\d{4})$/.exec(n);
+  if (city && CITY_CODES.has(city[1])) return `+91 ${city[1]} ${city[2]} ${city[3]}`;
   const m = /^\+91(\d{5})(\d{5})$/.exec(n);
   return m ? `+91 ${m[1]} ${m[2]}` : n;
 }
