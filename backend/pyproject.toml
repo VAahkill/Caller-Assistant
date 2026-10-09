@@ -15,18 +15,37 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local speech stack. Install what your hardware can run.
-stt = ["faster-whisper>=1.0"]
-vad = ["silero-vad>=5.1"]
-tts = ["kokoro>=0.9", "soundfile>=0.12"]
+# Local speech stack. Install what your hardware can run. constraints.txt has the
+# exact versions the Docker image is built and tested with:
+#   pip install -c constraints.txt ".[stt-indic,vad,tts,indic,lid,mt,piper]"
+stt = ["faster-whisper>=1.2,<2"]
+# The Telugu, Tamil and Hindi speech models: Whisper fine-tunes, converted once to
+# CTranslate2 on first use, which needs transformers and PyTorch.
+stt-indic = ["faster-whisper>=1.2,<2", "transformers>=4.57,<6", "torch>=2.4"]
+# Which language the caller speaks (VoxLingua107, run with plain PyTorch).
+lid = ["torch>=2.4", "huggingface-hub>=0.23"]
+# Silero voice detection (the default; without it a simple energy detector is used).
+# onnxruntime runs it about 5x cheaper per frame than TorchScript.
+vad = ["silero-vad>=5.1", "onnxruntime>=1.17"]
+# Translation between English and Indian languages (IndicTrans2 as ONNX). The
+# toolkit is only used for its text pre- and post-processing.
+mt = ["onnxruntime>=1.17", "tokenizers>=0.19", "huggingface-hub>=0.23", "IndicTransToolkit>=1.1.1,<1.2"]
+tts = ["kokoro>=0.9.4,<0.10", "soundfile>=0.12"]
+# Piper's Telugu voices (also need the espeak-ng program).
+piper = ["onnxruntime>=1.17", "huggingface-hub>=0.23"]
 # Telugu, Tamil and other Indian-language voices (Meta MMS, runs on a CPU).
-indic = ["transformers>=4.40", "torch>=2.1", "num2words>=0.5.13"]
+indic = ["transformers>=4.57,<6", "torch>=2.4", "num2words>=0.5.13"]
 # Optional: AI4Bharat Indic Parler-TTS, more natural but needs a GPU and a free
 # Hugging Face token. Pins its own transformers version, so install it on its own.
 indic-parler = ["parler-tts>=0.2.3", "num2words>=0.5.13"]
-clone = ["coqui-tts>=0.24"]
+# Your own recorded voices (Coqui XTTS-v2). Its audio loading needs torchaudio and
+# torchcodec, installed with PyTorch from the same index (see the Dockerfile), and
+# it doesn't work with transformers 5 yet.
+clone = ["coqui-tts[codec]>=0.27,<0.28", "torchaudio>=2.4", "transformers>=4.57,<5"]
 bluetooth = ["dbus-next>=0.2.3"]
-all = ["opencall[stt,vad,tts,indic,clone,bluetooth]"]
+all = ["opencall[stt-indic,lid,vad,mt,tts,piper,indic,clone,bluetooth]"]
+# The quality checks in eval/ (FLEURS clips read straight from Hugging Face).
+eval = ["pyarrow>=15", "soundfile>=0.12", "sacrebleu>=2.4"]
 dev = ["pytest>=8", "pytest-asyncio>=0.23"]
 
 [project.scripts]

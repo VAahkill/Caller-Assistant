@@ -14,12 +14,15 @@ Two free engines:
 
 from __future__ import annotations
 
+import logging
 import re
 import threading
 
 import numpy as np
 
 from ..audio import RATE, float_to_pcm16, resample
+
+log = logging.getLogger("opencall.indic")
 
 # Whisper language code -> (name, MMS model suffix)
 INDIC_LANGS = {
@@ -72,8 +75,8 @@ def _number_words(digits: str, lang: str) -> str:
             from num2words import num2words
 
             return num2words(int(digits), lang=lang)
-        except Exception:
-            pass
+        except (ImportError, NotImplementedError) as e:  # not installed, or no words for it
+            log.debug("num2words can't say %s in %s (%s); reading it digit by digit", digits, lang, e)
     # Phone numbers, flat numbers and anything num2words can't say: digit by digit,
     # the way people read them out in India anyway.
     names = _DIGITS[lang].split()

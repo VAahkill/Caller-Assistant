@@ -23,6 +23,7 @@ PUSH_EVENTS = {
     "message_taken": ("high", "Message from {who}"),
     "task_update": ("high", "{title}"),
     "task_needs_decision": ("max", "{title}"),
+    "urgent_call": ("max", "{title}"),  # a VIP is calling, or a call needs the user soon
 }
 
 

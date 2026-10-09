@@ -42,7 +42,8 @@ async def test_no_texting_promised_on_lines_without_sms(engine, llm):
     bridge = QueueBridge("c2", "+919876543210")
     session = await run_delivery_call(engine, llm, bridge)
     assert "[SEND_LOCATION]" not in session.conv.system_prompt
-    assert any("cannot send texts" in m["content"] for m in session.conv.history if m["role"] == "system")
+    sent = llm.calls[0]  # the reply to the caller (the last one is the call summary)
+    assert sent[0]["role"] == "system" and "cannot send texts" in sent[0]["content"]
 
 
 def test_sms_command_is_one_safe_cli_line():

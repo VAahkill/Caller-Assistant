@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Generic, TypeVar
 
@@ -67,6 +68,8 @@ class Store:
             if self._profile_path.exists()
             else Profile()
         )
+        # Called after every profile save (the engine warms the new call prompt).
+        self.on_profile_saved: list[Callable[[], None]] = []
         self.calls: _Collection[CallRecord] = _Collection(data_dir / "calls.json", CallRecord)
         self.messages: _Collection[CallerMessage] = _Collection(data_dir / "messages.json", CallerMessage)
         self.tasks: _Collection[Task] = _Collection(data_dir / "tasks.json", Task)
@@ -76,4 +79,6 @@ class Store:
             if profile is not None:
                 self.profile = profile
             _atomic_write(self._profile_path, self.profile.model_dump_json(indent=2))
+        for callback in self.on_profile_saved:
+            callback()
         return self.profile

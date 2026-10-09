@@ -24,22 +24,38 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-# What a caller might say when fishing for a credential. English, plus common
-# Hindi/Hinglish and Devanagari forms since delivery calls in India often use them.
+# What a caller might say when fishing for a credential: English, Hindi (Devanagari and
+# romanised), Telugu (script and romanised) and Tamil, since delivery calls in India
+# often use them. Indian scripts have no reliable word boundaries in ``re``, so those
+# patterns match plain substrings; each one is specific enough not to hit directions
+# ("pin code" and Tamil "பின்னால்" = "behind" are not credentials).
 _SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("otp", re.compile(r"\b(o\.?\s?t\.?\s?p|one[\s-]?time[\s-]?(pass(word|code)?|code|pin)|verification code|security code|auth(entication)? code|confirmation code)\b", re.I)),
-    ("otp", re.compile(r"(ओटीपी|ओ टी पी|कोड बताओ|कोड बताइए|otp bata|code bata|otp bol|code bol)", re.I)),
+    ("otp", re.compile(r"(ओटीपी|ओ टी पी|ओटिपी|कोड बताओ|कोड बताइए|कोड बता दो|कोड बोलो|कोड भेजो)", re.I)),
+    ("otp", re.compile(r"\b(otp|code)\s+(bata|bol|bhej|de\s?do|do\b|dijiye|chepp|pamp|sollu|sollunga|kudunga)", re.I)),
+    ("otp", re.compile(r"(ఓటీపీ|ఓటిపి|ఒటిపి|ఓ టీ పీ|ఓ టి పి|కోడ్ చెప్ప|కోడ్ పంప|కోడ్ ఇవ్వ)")),
+    ("otp", re.compile(r"(ஓடிபி|ஓ டி பி|ஓடீபி|ஓ.டி.பி|கோட் சொல்|கோடு சொல்|கோட் அனுப்ப|கோடு அனுப்ப)")),
     ("password", re.compile(r"\b(pass\s?word|passcode|login code|net\s?banking (id|password)|upi pin|m-?pin|atm pin)\b", re.I)),
-    ("password", re.compile(r"(पासवर्ड|पिन नंबर)", re.I)),
+    ("password", re.compile(r"(पासवर्ड|पिन नंबर|यूपीआई पिन|एटीएम पिन)", re.I)),
+    ("password", re.compile(r"(పాస్‌వర్డ్|పాస్వర్డ్|పాస్ వర్డ్|యూపీఐ పిన్|ఏటీఎం పిన్|పిన్ నంబర్|పిన్ చెప్ప)")),
+    ("password", re.compile(r"(பாஸ்வேர்ட்|பாஸ்வேர்டு|கடவுச்சொல்|யுபிஐ பின்|ஏடிஎம் பின்|பின் நம்பர்|பின் எண்)")),
     ("pin", re.compile(r"\b(pin)\b(?!\s*code)", re.I)),  # "PIN" but not "pin code" (postal)
     ("card", re.compile(r"\b(cvv|cvc|card number|card details|expiry date|debit card|credit card number)\b", re.I)),
+    ("card", re.compile(r"(सीवीवी|कार्ड नंबर|కార్డ్ నంబర్|కార్డు నంబర్|సీవీవీ|கார்டு நம்பர்|கார்டு எண்|சிவிவி)")),
     ("balance", re.compile(r"\b((bank|account|card|wallet)\s+balance|how much (money )?(is|do you have) in)\b", re.I)),
-    ("account", re.compile(r"\b(account number|ifsc|aadhaa?r( number)?|pan (card )?number|social security)\b", re.I)),
+    ("balance", re.compile(r"\b(balance\s+(kitna|kitni|batao|bataiye|bolo|entha|enta|cheppu|cheppandi|evvalavu|sollunga)|(kitna|entha|enta|evvalavu)\s+balance)\b", re.I)),
+    ("balance", re.compile(r"(बैलेंस|बैलेन्स|बैंक में कितना|బ్యాలెన్స్|బ్యాలన్స్|பேலன்ஸ்|வங்கி இருப்பு)")),
+    ("account", re.compile(r"\b(account number|ifsc|aadhaa?r( number)?|pan (card )?number|social security|bank (details|account details))\b", re.I)),
+    ("account", re.compile(r"(खाता नंबर|अकाउंट नंबर|बैंक डिटेल|बैंक की जानकारी|आधार नंबर|आधार कार्ड नंबर|पैन नंबर|पैन कार्ड)")),
+    ("account", re.compile(r"(అకౌంట్ నంబర్|ఖాతా నంబర్|ఖాతా సంఖ్య|బ్యాంక్ వివరాలు|బ్యాంకు వివరాలు|బ్యాంక్ డీటెయిల్స్|ఆధార్ నంబర్|ఆధార్ కార్డ్ నంబర్|పాన్ నంబర్|పాన్ కార్డ్)")),
+    ("account", re.compile(r"(அக்கவுண்ட் நம்பர்|கணக்கு எண்|வங்கி விவரங்கள்|பேங்க் டீடெயில்ஸ்|பேங்க் விவரம்|ஆதார் நம்பர்|ஆதார் எண்|பான் நம்பர்|பான் கார்டு)")),
 ]
 
 REFUSAL_TEXT = {
     "en": "For security reasons I can't share any verification codes, passwords or account details over the phone. I've alerted {user} right away.",
     "hi": "सुरक्षा कारणों से मैं फ़ोन पर कोई OTP, पासवर्ड या खाते की जानकारी नहीं दे सकती। मैंने {user} को तुरंत सूचित कर दिया है।",
+    "te": "భద్రతా కారణాల వల్ల నేను ఫోన్‌లో ఓటీపీ, పాస్‌వర్డ్ లేదా ఖాతా వివరాలు ఏవీ చెప్పలేను. {user} గారికి వెంటనే తెలియజేశాను.",
+    "ta": "பாதுகாப்பு காரணங்களால் நான் தொலைபேசியில் ஓடிபி, கடவுச்சொல் அல்லது கணக்கு விவரங்கள் எதையும் சொல்ல முடியாது. {user} அவர்களுக்கு உடனே தெரிவித்துவிட்டேன்.",
 }
 
 
@@ -49,11 +65,14 @@ class SensitiveMatch:
     phrase: str
 
 
-def detect_sensitive_request(text: str) -> SensitiveMatch | None:
-    for kind, pattern in _SENSITIVE_PATTERNS:
-        m = pattern.search(text)
-        if m:
-            return SensitiveMatch(kind=kind, phrase=m.group(0))
+def detect_sensitive_request(text: str, english: str | None = None) -> SensitiveMatch | None:
+    """Checks what the caller said, and its English translation when there is one, so
+    a request in a language without patterns here is still caught."""
+    for candidate in (text, english or ""):
+        for kind, pattern in _SENSITIVE_PATTERNS:
+            m = pattern.search(candidate)
+            if m:
+                return SensitiveMatch(kind=kind, phrase=m.group(0))
     return None
 
 

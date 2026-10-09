@@ -25,6 +25,8 @@ def settings(tmp_path) -> Settings:
         api_token="test-token",
         llm_provider="scripted",
         stt_provider="none",
+        lid_provider="none",
+        mt_provider="none",
         tts_provider="silent",
         clone_provider="none",
         hold_timeout_s=0.6,

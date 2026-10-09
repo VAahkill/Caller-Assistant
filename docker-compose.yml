@@ -11,7 +11,7 @@ services:
     build:
       context: ./backend
       args:
-        EXTRAS: stt,vad,tts,indic,clone
+        EXTRAS: stt-indic,lid,vad,mt,tts,piper,indic,clone
         TORCH_INDEX: ${OPENCALL_TORCH_INDEX:-https://download.pytorch.org/whl/cpu}
     env_file: .env
     environment:
@@ -35,6 +35,10 @@ services:
 
   ollama:
     image: ollama/ollama
+    environment:
+      # Keep the model in memory between calls. Ollama unloads it after 5 idle
+      # minutes by default, and reloading it on a CPU makes the next caller wait.
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
     volumes:
       - ollama:/root/.ollama
     restart: unless-stopped

@@ -8,8 +8,9 @@ the tests) start without a GPU or any model downloaded.
 from __future__ import annotations
 
 from ..config import Settings
-from .llm import LLM, OpenAICompatLLM, ScriptedLLM
-from .stt import STT, FasterWhisperSTT, NullSTT
+from .llm import LLM, OpenAICompatLLM, ScriptedLLM, parse_extra_body
+from .lid import LanguageID, build_lid
+from .stt import STT, FasterWhisperSTT, NullSTT, parse_models
 from .tts import TTSRouter
 from .vad import VAD, EnergyVAD, make_vad
 
@@ -26,17 +27,23 @@ __all__ = [
     "make_vad",
     "build_llm",
     "build_stt",
+    "build_lid",
+    "LanguageID",
 ]
 
 
 def build_llm(s: Settings) -> LLM:
     if s.llm_provider == "scripted":
         return ScriptedLLM()
-    return OpenAICompatLLM(s.llm_base_url, s.llm_api_key, s.llm_model, s.llm_temperature)
+    return OpenAICompatLLM(s.llm_base_url, s.llm_api_key, s.llm_model, s.llm_temperature,
+                           connect_timeout=s.llm_connect_timeout_s, first_token_timeout=s.llm_first_token_timeout_s,
+                           idle_timeout=s.llm_idle_timeout_s, max_tokens=s.llm_max_tokens,
+                           extra_body=parse_extra_body(s.llm_extra_body))
 
 
 def build_stt(s: Settings) -> STT:
     if s.stt_provider == "faster_whisper":
         languages = [code.strip() for code in s.caller_languages.split(",") if code.strip()]
-        return FasterWhisperSTT(s.whisper_model, s.whisper_device, languages)
+        return FasterWhisperSTT(s.whisper_model, s.whisper_device, languages, parse_models(s.stt_models),
+                                s.models_dir, owner_english=s.owner_stt_model, beam_size=s.whisper_beam_size)
     return NullSTT()

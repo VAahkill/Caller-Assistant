@@ -12,6 +12,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12" }
+      # ffmpeg decodes the app's m4a recordings; espeak-ng gives Piper its phonemes and
+      # spells English words in Indian scripts. Tests use both.
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg espeak-ng
       - run: pip install -e ".[dev]" pytest-timeout
       - run: pytest -q --timeout 30
 

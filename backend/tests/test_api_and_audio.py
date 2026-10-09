@@ -1,10 +1,13 @@
 import base64
 import io
+import json
+import re
 import wave
 
 import numpy as np
 from fastapi.testclient import TestClient
 
+from opencall import __version__
 from opencall.api import create_app
 from opencall.audio import mulaw_decode, mulaw_encode, resample
 from opencall.owner_chat import extract_phone
@@ -14,6 +17,19 @@ H = {"Authorization": "Bearer test-token"}
 
 def client(settings, engine):
     return TestClient(create_app(settings, engine, start_gateways=False))
+
+
+def receive_until_closed(ws):
+    """Everything the simulator sends until it hangs up: (json events, binary audio)."""
+    events, audio = [], []
+    while True:
+        msg = ws.receive()
+        if msg["type"] == "websocket.close":
+            return events, audio
+        if msg.get("bytes") is not None:
+            audio.append(msg["bytes"])
+        else:
+            events.append(json.loads(msg["text"]))
 
 
 def test_auth_required(settings, engine):
@@ -54,8 +70,9 @@ def test_voice_clone_upload(settings, engine):
         w.writeframes(b"\x01\x00" * 16000 * 8)
     c = client(settings, engine)
     r = c.post("/voices", headers=H, data={"label": "My Voice"}, files={"audio": ("v.wav", buf.getvalue(), "audio/wav")})
-    assert r.json()["id"] == "clone:my_voice"
-    assert any(v["id"] == "clone:my_voice" for v in c.get("/voices", headers=H).json())
+    voice_id = r.json()["id"]
+    assert re.fullmatch(r"clone:my_voice-[0-9a-f]{6}", voice_id)  # unique, so a second "My Voice" can't replace it
+    assert any(v["id"] == voice_id for v in c.get("/voices", headers=H).json())
 
 
 def test_simulator_websocket(settings, engine, llm):
@@ -64,15 +81,10 @@ def test_simulator_websocket(settings, engine, llm):
     with c.websocket_connect("/ws/simulate?token=test-token&number=9876543210") as ws:
         assert ws.receive_json()["event"] == "started"
         ws.send_json({"text": "Hi, this is Ankit, tell Rahul I called"})
-        got_audio = False
-        try:
-            while True:
-                ws.receive_bytes()
-                got_audio = True
-        except Exception:
-            pass
-    assert got_audio
+        events, audio = receive_until_closed(ws)
+    assert audio
     assert engine.store.messages.list()[0].text == "Ankit called"
+    assert {"event": "ack", "kind": "text"} in events
 
 
 def test_practice_call_from_the_app(settings, engine, llm):
@@ -87,13 +99,11 @@ def test_practice_call_from_the_app(settings, engine, llm):
     with c.websocket_connect("/ws/simulate?token=test-token&number=9876543210&wav=1") as ws:
         call_id = ws.receive_json()["call_id"]
         ws.send_json({"audio_b64": base64.b64encode(to_wav(tone, 16000)).decode()})
-        clips = []
-        try:
-            while True:  # the greeting and the reply; the call ends after it
-                clips.append(ws.receive_bytes())
-        except Exception:
-            pass
+        events, clips = receive_until_closed(ws)  # the greeting and the reply; the call ends after it
     assert clips and all(c[:4] == b"RIFF" and read_wav(c)[1] == 16000 for c in clips)
+    assert any(e["event"] == "ack" and e["kind"] == "audio" for e in events)
+    said = [e["line"]["text"] for e in events if e["event"] == "transcript" and e["line"]["speaker"] == "assistant"]
+    assert said[-1] == "సరే, ఒక్క నిమిషం."
     record = engine.store.calls.get(call_id)
     assert record.language == "te"
     assert [l.text for l in record.transcript if l.speaker == "caller"] == ["హలో, స్విగ్గీ ఆర్డర్"]
@@ -118,3 +128,11 @@ def test_mulaw_roundtrip_and_resample():
 def test_extract_phone():
     assert extract_phone("Paradise Biryani · 040 6666 1234 · Open now") == "04066661234"
     assert extract_phone("no number here") == ""
+
+
+def test_health_reports_what_is_ready(settings, engine):
+    engine.ready.update(stt=True, tts=True)
+    body = TestClient(create_app(settings, engine, start_gateways=False)).get("/health").json()
+    assert body["ok"] and body["version"] == __version__ and body["active_calls"] == 0
+    assert body["ready"] == {"stt": True, "tts": True, "llm": False, "mt": False, "lid": False}
+    assert body["llm_model"] == settings.llm_model
