@@ -1,11 +1,11 @@
-import * as Notifications from 'expo-notifications';
-import { router, Stack, ThemeProvider as NavigationThemeProvider, useSegments } from 'expo-router';
+import { Stack, ThemeProvider as NavigationThemeProvider, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
 import { Platform } from 'react-native';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 
+import { NotificationTaps } from '../components/domain/NotificationTaps';
 import { ConfirmProvider } from '../components/ui/ConfirmSheet';
 import { TAB_BAR_HEIGHT, ToastProvider } from '../components/ui/Toast';
 import { navigationTheme, stackOptions, useAppFonts } from '../lib/design';
@@ -87,18 +87,8 @@ function NotificationRouting() {
     loadConfig()
       .then((cfg) => (cfg ? setupNotifications() : undefined))
       .catch((e: unknown) => console.warn('Notification setup failed; the app still shows live events while open.', e));
-    const stopReplies = listenForNotificationReplies();
-    const tap = Notifications.addNotificationResponseReceivedListener((r) => {
-      if (r.actionIdentifier !== Notifications.DEFAULT_ACTION_IDENTIFIER) return;
-      const data = r.notification.request.content.data as { call_id?: string; message_id?: string; task_id?: string };
-      if (data?.call_id) router.push(`/call/${data.call_id}`);
-      else if (data?.message_id) router.push('/inbox');
-      else if (data?.task_id) router.push('/tasks');
-    });
-    return () => {
-      stopReplies();
-      tap.remove();
-    };
+    return listenForNotificationReplies();
   }, []);
-  return null;
+  // The web preview has no notifications to tap.
+  return Platform.OS === 'web' ? null : <NotificationTaps />;
 }

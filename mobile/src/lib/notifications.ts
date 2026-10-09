@@ -86,6 +86,19 @@ export function listenForNotificationReplies(): () => void {
   return () => sub.remove();
 }
 
+/** The screen a tapped notification is about: the call, the inbox for a
+ *  message, Call for me for a task. Null when it names none of them. */
+export function notificationRoute(data: unknown): `/call/${string}` | '/inbox' | '/tasks' | null {
+  if (!data || typeof data !== 'object') return null;
+  // Server pushes carry the live event (call_id, or the whole task for
+  // task_update); the app's own notifications carry call_id or task_id.
+  const d = data as { call_id?: unknown; message_id?: unknown; task_id?: unknown; task?: unknown };
+  if (typeof d.call_id === 'string' && d.call_id) return `/call/${encodeURIComponent(d.call_id)}`;
+  if (d.message_id) return '/inbox';
+  if (d.task_id || (d.task && typeof d.task === 'object')) return '/tasks';
+  return null;
+}
+
 /** allowed, ask (not decided yet, or can be asked again), blocked (only
  *  Android settings can turn them on), unsupported (the web preview). */
 export type NotificationAccess = 'allowed' | 'ask' | 'blocked' | 'unsupported';
