@@ -1,4 +1,8 @@
 // A stand-in for expo-audio's native player and recorder in tests.
+// setPlayerStatus / setRecorderState change what the hooks report, as the
+// native side would while a clip plays or the microphone records.
+import { useSyncExternalStore } from 'react';
+
 export const mockPlayer = () => ({
   play: jest.fn(),
   pause: jest.fn(),
@@ -28,7 +32,42 @@ export const idleStatus = {
   isLoaded: true,
   playbackRate: 1,
   shouldCorrectPitch: true,
+  error: null as string | null,
 };
+
+export const idleRecorderState = { isRecording: false, durationMillis: 0, metering: -160 as number | undefined, canRecord: true };
+
+function store<T extends object>(initial: T) {
+  let value = initial;
+  const subs = new Set<() => void>();
+  return {
+    get: () => value,
+    set: (next: Partial<T>) => {
+      value = { ...value, ...next };
+      subs.forEach((f) => f());
+    },
+    reset: () => {
+      value = initial;
+      subs.forEach((f) => f());
+    },
+    subscribe: (f: () => void) => {
+      subs.add(f);
+      return () => subs.delete(f);
+    },
+  };
+}
+
+const playerStatus = store(idleStatus);
+const recorderState = store(idleRecorderState);
+
+/** What useAudioPlayerStatus reports from now on (wrap in act). */
+export const setPlayerStatus = playerStatus.set;
+/** What useAudioRecorderState reports from now on (wrap in act). */
+export const setRecorderState = recorderState.set;
+export function resetAudioMock() {
+  playerStatus.reset();
+  recorderState.reset();
+}
 
 export const recorder = {
   prepareToRecordAsync: jest.fn(() => Promise.resolve()),
@@ -42,9 +81,9 @@ export const expoAudioMock = {
   requestRecordingPermissionsAsync: jest.fn(() => Promise.resolve({ granted: true, status: 'granted' })),
   setAudioModeAsync: jest.fn(() => Promise.resolve()),
   useAudioRecorder: jest.fn(() => recorder),
-  useAudioRecorderState: jest.fn(() => ({ isRecording: false, durationMillis: 0, metering: -160, canRecord: true })),
+  useAudioRecorderState: jest.fn(() => useSyncExternalStore(recorderState.subscribe, recorderState.get)),
   useAudioPlayer: jest.fn(() => player),
-  useAudioPlayerStatus: jest.fn(() => idleStatus),
+  useAudioPlayerStatus: jest.fn(() => useSyncExternalStore(playerStatus.subscribe, playerStatus.get)),
   createAudioPlayer: jest.fn(() => mockPlayer()),
   preload: jest.fn(() => Promise.resolve()),
   clearAllPreloadedSources: jest.fn(() => Promise.resolve()),
