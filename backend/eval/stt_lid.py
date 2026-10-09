@@ -5,8 +5,10 @@ Reports, per language, how often the language is identified correctly (each clip
 its own, restricted to the caller languages) and the character error rate (CER) of
 each speech model with the language given, on clean 16 kHz audio and on the same
 audio squeezed through a phone line (300-3400 Hz, 8 kHz, G.711 mu-law), with
-street-like background noise if asked ("8k@20": 20 dB below the voice). Targets:
-language ID >= 95 %, CER te/ta <= 0.15, hi <= 0.10, en <= 0.08.
+street-like background noise if asked ("8k@20": 20 dB below the voice). Speech is
+heard the way a call hears it: cut into turns by the call's turn detector, then
+transcribed (--whole-clips skips the turn detector). Targets: language ID >= 95 %,
+CER te/ta <= 0.15, hi <= 0.10, en <= 0.08.
 
     pip install pyarrow soundfile          # plus the server's speech extras
     python eval/stt_lid.py --clips 30 --out report.json
@@ -48,6 +50,21 @@ def as_heard(pcm16k: bytes, band: str, seed: int) -> bytes:
     if band.startswith("8k@"):
         return phone_line(pcm16k, float(band[3:]), seed)
     raise ValueError(f"unknown band {band!r}: use 16k, 8k or 8k@<dB>")
+
+
+def as_turns(pcm16k: bytes) -> bytes:
+    """The clip the way a call hears it: cut by the call's turn detector (Silero, the
+    server's end-of-turn silence), its turns heard together. Falls back to the whole
+    clip when no speech is detected."""
+    from opencall.audio import FRAME_BYTES
+    from opencall.config import Settings
+    from opencall.providers.vad import TurnDetector, make_vad
+
+    det = TurnDetector(make_vad("silero"), Settings(_env_file=None).end_of_turn_silence_ms)
+    audio = pcm16k + b"\x00\x00" * 16000  # a second of quiet after it ends the last turn
+    turns = [utt for i in range(0, len(audio) - FRAME_BYTES + 1, FRAME_BYTES)
+             for event, utt in [det.push(audio[i:i + FRAME_BYTES])] if event == "end"]
+    return b"".join(turns) or pcm16k
 
 
 # A simulated call's turns: (clip offset, seconds kept; 0 = the whole clip). The
@@ -100,6 +117,8 @@ def main() -> None:
                                                  "default: the main model and each language's own model")
     ap.add_argument("--bands", default="16k,8k@20")
     ap.add_argument("--beam", type=int, default=1, help="beam search width (the server's OPENCALL_WHISPER_BEAM_SIZE)")
+    ap.add_argument("--whole-clips", action="store_true",
+                    help="transcribe each clip whole instead of the turns a call's turn detector cuts from it")
     ap.add_argument("--no-lid", action="store_true")
     ap.add_argument("--no-stt", action="store_true", help="language ID only")
     ap.add_argument("--lid-dir", type=Path, default=None, help="the language-ID model (default: Hugging Face cache)")
@@ -130,8 +149,8 @@ def main() -> None:
         from opencall.providers.lid import VoxLinguaLID
 
         lid = VoxLinguaLID(args.lid_dir)
-    report: dict = {"candidates": candidates, "clips": args.clips, "bands": bands, "beam": args.beam, "lid": {},
-                    "stt": {}, "rows": []}
+    report: dict = {"candidates": candidates, "clips": args.clips, "bands": bands, "beam": args.beam,
+                    "audio": "whole clips" if args.whole_clips else "turns", "lid": {}, "stt": {}, "rows": []}
     stt_by_model: dict[str, FasterWhisperSTT] = {}
     for lang in langs:
         clips = load_clips(lang, args.clips, args.data)
@@ -168,7 +187,7 @@ def main() -> None:
                     stt.models = {code: spec for code in CONFIGS}
                 errors, started, total = [], time.monotonic(), 0.0
                 for m, pcm in audio:
-                    text = stt._run(pcm, lang).text
+                    text = stt._run(pcm if args.whole_clips else as_turns(pcm), lang).text
                     errors.append(cer(m["text"], text))
                     total += len(pcm) / 32000
                     report["rows"].append({"lang": lang, "band": band, "model": spec, "file": m["file"],
