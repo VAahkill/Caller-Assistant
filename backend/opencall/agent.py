@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 
 from . import prompts
 from .guardrails import detect_sensitive_request, published_numbers, scrub_outgoing
+from .languages import full_stop_ends_sentence
 from .models import Profile, Task
 from .phrases import fill, phrase
 from .providers.llm import LLM, Message
@@ -147,6 +148,20 @@ class TagStreamParser:
         held, self.buf = self.buf[start:], self.buf[:start]
         return "" if final else held
 
+    def _sentence_end(self, final: bool) -> re.Match | None:
+        """Where the first sentence in the buffer ends, if it does: the full stop of
+        "Dr." or of "No." before a number doesn't end one."""
+        for m in _SENTENCE_END.finditer(self.buf):
+            if m.group(1) is None or m.group(1).rstrip("\"')]") != "." or "\n" in m.group(2):
+                return m
+            after = self.buf[m.end() :]
+            ends = full_stop_ends_sentence(self.buf[: m.start()], after if after or final else None)
+            if ends is None:
+                return None  # wait for the next words
+            if ends:
+                return m
+        return None
+
     def _drain_text(self, final: bool) -> list[Action]:
         out: list[Action] = []
         if not self._head_checked:
@@ -161,7 +176,7 @@ class TagStreamParser:
             open_idx = self.buf.rfind("[")
             pending_tag = open_idx != -1 and "]" not in self.buf[open_idx:]
             tag = _TAG_RE.search(self.buf)
-            sent = _SENTENCE_END.search(self.buf)
+            sent = self._sentence_end(final)
             if tag and (not sent or tag.start() <= sent.start()):
                 before = self.buf[: tag.start()].strip()
                 if before:

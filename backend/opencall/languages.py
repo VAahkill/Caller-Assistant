@@ -8,6 +8,7 @@ keeps it for the call instead of re-guessing every turn.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 
 # Languages the app offers, by the codes Whisper and the language-ID model use.
@@ -65,6 +66,32 @@ def needs_translation(text: str, lang: str) -> bool:
     isn't written in Latin letters."""
     return lang != "en" and lang in LANGUAGE_NAMES and not any(
         (script_of(ch) or "en") != "en" for ch in text)
+
+
+# Words written with a full stop that doesn't end the sentence ("Dr. Rao", "Road
+# No. 12"). "No." is the word "no" unless a number follows it.
+ABBREVIATIONS = frozenset({
+    "no", "nos", "mr", "mrs", "ms", "dr", "st", "rd", "sr", "jr", "opp", "apt", "approx", "nr", "ph", "tel",
+    "vs", "prof", "sh", "smt", "ave", "blvd", "bldg", "dept", "govt", "pvt", "ltd",
+})
+_BEFORE_NUMBERS = frozenset({"no", "nos"})
+_LAST_WORD = re.compile(r"(?:^|[^\w.])([A-Za-z]+)$")
+
+
+def full_stop_ends_sentence(before: str, after: str | None) -> bool | None:
+    """Whether a full stop between ``before`` and ``after`` ends a sentence, or None
+    when that depends on what follows and ``after`` isn't known yet (the text is
+    still arriving)."""
+    m = _LAST_WORD.search(before)
+    word = m.group(1).lower() if m else ""
+    if word not in ABBREVIATIONS:
+        return True
+    if word in _BEFORE_NUMBERS:
+        rest = (after or "").lstrip()
+        if not rest:
+            return None if after is None else True
+        return not (rest[0].isdigit() or rest[0] == "#")
+    return False
 
 
 def script_runs(text: str) -> list[tuple[str, str]]:

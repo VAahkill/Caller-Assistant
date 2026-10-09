@@ -28,6 +28,10 @@ def test_text_is_translated_a_sentence_at_a_time():
     assert split_sentences("नमस्ते। पार्सल आया है।") == ["नमस्ते।", "पार्सल आया है।"]
     assert split_sentences("Flat 4.2 is on the left\nthanks") == ["Flat 4.2 is on the left", "thanks"]
     assert split_sentences("  ") == []
+    # A full stop after an abbreviation doesn't end the sentence ("No." only before a number).
+    assert split_sentences("Come to Road No. 12, Banjara Hills. Mr. Rao is at the gate.") == [
+        "Come to Road No. 12, Banjara Hills.", "Mr. Rao is at the gate."]
+    assert split_sentences("No. I can't share that.") == ["No.", "I can't share that."]
 
 
 @pytest.mark.parametrize("text, lang, expected", [

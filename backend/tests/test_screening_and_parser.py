@@ -63,3 +63,20 @@ def test_parser_never_speaks_the_models_reasoning():
 
 def test_parser_drops_reasoning_that_never_ends():
     assert _run(["Hello. <think>Let me think about", " this. Hmm."]) == [Say("Hello.")]
+
+
+def test_parser_doesnt_cut_after_an_abbreviation():
+    reply = "The address is Road No. 12, Banjara Hills. Ask Dr. Rao at the gate. No. That's all."
+    for size in (1, 3, 7, len(reply)):
+        out = _run([reply[i : i + size] for i in range(0, len(reply), size)])
+        assert out == [Say("The address is Road No. 12, Banjara Hills."), Say("Ask Dr. Rao at the gate."),
+                       Say("No."), Say("That's all.")], size
+
+
+def test_parser_waits_to_see_what_follows_no():
+    p = TagStreamParser()
+    assert p.feed("It's flat No.") == []  # a number may follow
+    assert p.feed(" 402.") == [Say("It's flat No. 402.")]
+    p = TagStreamParser()
+    assert p.feed("No.") == []
+    assert p.feed(" Sorry.") == [Say("No."), Say("Sorry.")]

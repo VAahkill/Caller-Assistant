@@ -30,6 +30,7 @@ from typing import Protocol
 
 import numpy as np
 
+from ..languages import full_stop_ends_sentence
 from .lid import fetch_pinned
 
 log = logging.getLogger("opencall.mt")
@@ -81,7 +82,18 @@ _SENTENCE_END = re.compile(r"(?<=[.!?।॥])\s+|\n+")
 
 
 def split_sentences(text: str) -> list[str]:
-    return [s.strip() for s in _SENTENCE_END.split(text) if s and s.strip()]
+    """The sentences of ``text`` (a full stop after "Dr" or "Road No" doesn't end one)."""
+    out: list[str] = []
+    start = 0
+    for m in _SENTENCE_END.finditer(text):
+        before = text[start : m.start()]
+        if before.endswith(".") and not before.endswith("..") and "\n" not in m.group(0) and not \
+                full_stop_ends_sentence(before[:-1], text[m.end() :]):
+            continue
+        out.append(before)
+        start = m.end()
+    out.append(text[start:])
+    return [s.strip() for s in out if s and s.strip()]
 
 
 class Translator(Protocol):
