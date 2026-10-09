@@ -168,8 +168,15 @@ async def test_the_users_english_replies_use_the_quicker_model(monkeypatch):
     assert (await stt.transcribe_owner(pcm, "en")).text == "small"
     assert (await stt.transcribe_owner(pcm, "te")).text == "org/telugu"  # their language's own model
     assert (await stt.transcribe(pcm, "en")).text == "large-v3-turbo"  # callers keep the main model
-    stt.warm_up_owner("en")
     assert opened.count("small") == 1
+
+
+def test_the_model_for_english_replies_waits_until_it_is_needed(monkeypatch):
+    stt, opened = fake_stt(monkeypatch)
+    stt.owner_english = "small"
+    stt.warm_up_owner("en")  # it costs memory; many users never speak a reply
+    stt.warm_up_owner("te")
+    assert opened == ["org/telugu"]
 
 
 async def test_without_a_quicker_model_the_users_replies_use_the_main_one(monkeypatch, caplog):

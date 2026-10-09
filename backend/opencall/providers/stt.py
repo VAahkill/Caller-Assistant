@@ -218,10 +218,10 @@ class FasterWhisperSTT:
         return {lang: math.log(max(p, 1e-12)) for lang, p in probs}
 
     def warm_up_owner(self, language: str) -> None:
-        """Load the model for the user's spoken replies in ``language`` now."""
-        if language == "en" and self.owner_english:
-            self._model_by_spec(self.owner_english, "en")
-        else:
+        """Load the model for the user's spoken replies in ``language`` now. Not the
+        one for English replies: it takes about 0.5 GB, so it is loaded the first
+        time the user speaks a reply (a few seconds, once)."""
+        if language != "en" or not self.owner_english:
             self._model_for(language)
 
     def _run(self, pcm16k: bytes, language_hint: str | None, spec: str = "") -> Transcription:
