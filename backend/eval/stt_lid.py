@@ -4,12 +4,14 @@ on real held-out speech (FLEURS test, never used to train any of the models).
 Reports, per language, how often the language is identified correctly (each clip on
 its own, restricted to the caller languages) and the character error rate (CER) of
 each speech model with the language given, on clean 16 kHz audio and on the same
-audio squeezed through a phone line (300-3400 Hz, 8 kHz, G.711 mu-law). Targets:
+audio squeezed through a phone line (300-3400 Hz, 8 kHz, G.711 mu-law), with
+street-like background noise if asked ("8k@20": 20 dB below the voice). Targets:
 language ID >= 95 %, CER te/ta <= 0.15, hi <= 0.10, en <= 0.08.
 
     pip install pyarrow soundfile          # plus the server's speech extras
     python eval/stt_lid.py --clips 30 --out report.json
     python eval/stt_lid.py --models te=main,te=vasista22/whisper-telugu-small   # compare models
+    python eval/stt_lid.py --bands 16k,8k,8k@20,8k@10    # clean, phone line, phone line with noise
 
 Clips are cached in --data (default ~/.cache/opencall-eval). Slow on a CPU: about
 half an hour for the default run.
@@ -26,22 +28,53 @@ from pathlib import Path
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fleurs import cer, fetch  # noqa: E402
+from phone import phone_line  # noqa: E402
 
-from opencall.audio import float_to_pcm16, mulaw_decode, mulaw_encode, resample  # noqa: E402
+from opencall.audio import float_to_pcm16  # noqa: E402
 
 CONFIGS = {"en": "en_us", "hi": "hi_in", "te": "te_in", "ta": "ta_in"}
 
 
-def phone_line(pcm16k: bytes) -> bytes:
-    """What a caller sounds like after a narrowband phone call."""
-    x = np.frombuffer(pcm16k, dtype=np.int16).astype(np.float32)
-    spectrum = np.fft.rfft(x)
-    freqs = np.fft.rfftfreq(len(x), 1 / 16000)
-    spectrum[(freqs < 300) | (freqs > 3400)] = 0
-    band = np.clip(np.fft.irfft(spectrum, len(x)), -32768, 32767).astype(np.int16).tobytes()
-    return resample(mulaw_decode(mulaw_encode(resample(band, 16000, 8000))), 8000, 16000)
+def as_heard(pcm16k: bytes, band: str, seed: int) -> bytes:
+    """``band``: "16k" (as recorded), "8k" (a phone line) or "8k@<dB>" (a phone line
+    with background noise that many dB below the voice)."""
+    if band == "16k":
+        return pcm16k
+    if band == "8k":
+        return phone_line(pcm16k)
+    if band.startswith("8k@"):
+        return phone_line(pcm16k, float(band[3:]), seed)
+    raise ValueError(f"unknown band {band!r}: use 16k, 8k or 8k@<dB>")
+
+
+# A simulated call's turns: (clip offset, seconds kept; 0 = the whole clip). The
+# first turn is short, like "Hello, I'm from Swiggy"; the tracker settles over the call.
+CALL_TURNS = [(0, 3), (1, 0), (2, 2), (3, 5)]
+CALL_CUTS = sorted({cut for _, cut in CALL_TURNS if cut})
+
+
+def simulated_calls(scored: list[dict], lang: str, candidates: list[str]) -> dict:
+    """Each clip starts one call of CALL_TURNS (the clips after it, cut as listed),
+    replayed through the call's LanguageTracker: how often the language is right
+    after the first turn, on every turn, and at the end."""
+    from opencall.languages import LanguageTracker
+
+    first = every = last = 0
+    for start in range(len(scored)):
+        tracker = LanguageTracker(candidates)
+        right = []
+        for offset, cut in CALL_TURNS:
+            logprobs, secs = scored[(start + offset) % len(scored)][cut]
+            right.append(tracker.hear(logprobs, secs).language == lang)
+        first += right[0]
+        every += all(right)
+        last += right[-1]
+    n = max(1, len(scored))
+    return {"calls": len(scored), "call_first_turn": round(first / n, 3), "call_every_turn": round(every / n, 3),
+            "call_end": round(last / n, 3)}
 
 
 def load_clips(lang: str, n: int, data: Path) -> list[tuple[dict, bytes]]:
@@ -65,8 +98,10 @@ def main() -> None:
     ap.add_argument("--main-model", default="large-v3-turbo")
     ap.add_argument("--models", default="", help="lang=model pairs to score (main = the main model); "
                                                  "default: the main model and each language's own model")
-    ap.add_argument("--bands", default="16k,8k")
+    ap.add_argument("--bands", default="16k,8k@20")
+    ap.add_argument("--beam", type=int, default=1, help="beam search width (the server's OPENCALL_WHISPER_BEAM_SIZE)")
     ap.add_argument("--no-lid", action="store_true")
+    ap.add_argument("--lid-dir", type=Path, default=None, help="the language-ID model (default: Hugging Face cache)")
     ap.add_argument("--out", type=Path, default=Path("stt_lid_report.json"))
     args = ap.parse_args()
 
@@ -91,26 +126,34 @@ def main() -> None:
     if not args.no_lid:
         from opencall.providers.lid import VoxLinguaLID
 
-        lid = VoxLinguaLID()
-    report: dict = {"candidates": candidates, "clips": args.clips, "lid": {}, "stt": {}, "rows": []}
+        lid = VoxLinguaLID(args.lid_dir)
+    report: dict = {"candidates": candidates, "clips": args.clips, "bands": bands, "beam": args.beam, "lid": {},
+                    "stt": {}, "rows": []}
     stt_by_model: dict[str, FasterWhisperSTT] = {}
     for lang in langs:
         clips = load_clips(lang, args.clips, args.data)
         for band in bands:
-            audio = [(m, pcm if band == "16k" else phone_line(pcm)) for m, pcm in clips]
+            audio = [(m, as_heard(pcm, band, seed)) for seed, (m, pcm) in enumerate(clips)]
             if lid is not None:
-                right, seconds = 0, []
+                right, seconds, scored = 0, [], []
                 for m, pcm in audio:
                     started = time.monotonic()
-                    post = LanguageTracker(candidates).restrict(lid.identify(pcm))
+                    whole = lid.identify(pcm)
                     seconds.append(time.monotonic() - started)
+                    post = LanguageTracker(candidates).restrict(whole)
                     guess = max(post, key=post.__getitem__)
                     right += guess == lang
                     report["rows"].append({"lang": lang, "band": band, "file": m["file"], "lid": guess,
                                            "p": round(post[guess], 3)})
+                    # The same clip cut short, for the simulated calls.
+                    clip = {cut: (lid.identify(pcm[: cut * 32000]), min(cut, len(pcm) / 32000)) for cut in CALL_CUTS}
+                    clip[0] = (whole, len(pcm) / 32000)
+                    scored.append(clip)
                 report["lid"][f"{lang}/{band}"] = {"accuracy": round(right / len(audio), 3), "n": len(audio),
-                                                   "mean_s": round(float(np.mean(seconds)), 2)}
-                print(f"LID {lang} {band}: {right}/{len(audio)}", flush=True)
+                                                   "mean_s": round(float(np.mean(seconds)), 2),
+                                                   **simulated_calls(scored, lang, candidates)}
+                print(f"LID {lang} {band}: {right}/{len(audio)}; calls {report['lid'][f'{lang}/{band}']}",
+                      flush=True)
             for plang, model in pairs:
                 if plang != lang:
                     continue
@@ -118,7 +161,7 @@ def main() -> None:
                 stt = stt_by_model.get(spec)
                 if stt is None:
                     stt = stt_by_model[spec] = FasterWhisperSTT(args.main_model, "cpu", models={lang: spec},
-                                                                models_dir=args.models_dir)
+                                                                models_dir=args.models_dir, beam_size=args.beam)
                     stt.models = {code: spec for code in CONFIGS}
                 errors, started, total = [], time.monotonic(), 0.0
                 for m, pcm in audio:
