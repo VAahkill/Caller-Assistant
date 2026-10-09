@@ -88,7 +88,8 @@ class Location(BaseModel):
             ("Landmarks", english(self.landmarks)),
             ("Gate / entry", english(self.gate_instructions)),
             ("Nearby (from map pin)", self.geocoded_hint),
-            ("Map link (can be sent by SMS)", self.maps_link()),
+            # The link itself is long and never read out; it is texted with [SEND_LOCATION].
+            ("Map pin", "saved, a map link can be texted" if self.maps_link() else ""),
         ]
         return "\n".join(f"- {k}: {v}" for k, v in parts if v)
 

@@ -152,3 +152,13 @@ def test_the_end_of_call_summary_has_urgency_and_action_items():
     s = parse_summary("Summary:\nA courier came.\nHe left it with the guard.\nUrgent: no\n"
                       "Action items:\n1. Collect the parcel")
     assert s.text == "A courier came. He left it with the guard." and s.action_items == ["Collect the parcel"]
+
+
+def test_the_delivery_details_dont_carry_the_long_map_link():
+    from opencall.models import Location, Profile
+    from opencall.prompts import delivery_context
+
+    p = Profile(location=Location(lat=17.41, lng=78.44, landmarks="Opposite Apollo Pharmacy"))
+    text = delivery_context(p, can_text=True)
+    assert "http" not in text and "Opposite Apollo Pharmacy" in text and "Map pin: saved" in text
+    assert "hasn't pinned" not in delivery_context(Profile(location=Location(lat=17.41, lng=78.44)))

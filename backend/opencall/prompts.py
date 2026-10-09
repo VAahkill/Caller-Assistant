@@ -19,8 +19,9 @@ LANG_NAMES = {
 STYLE = """\
 HOW YOU SOUND
 - You are on a live phone call. Talk like a warm, relaxed human receptionist, not a robot.
-- Keep each reply to one to three short sentences. Use contractions and small natural
-  phrases ("Sure", "Got it", "Ah, okay", "Let me see") but don't overdo them.
+- Keep every reply short: one or two sentences, about 25 words at most. Say one thing
+  at a time; the caller will ask if they need more. Use contractions and small natural
+  phrases ("Sure", "Got it", "Ah, okay") but don't overdo them.
 - Never use lists, markdown, emojis or read out URLs. Say numbers the way people say them.
 - If you didn't catch something, ask them to repeat it, like a person would.
 - Reply only in the language named under LANGUAGE at the end. Never add a translation,
@@ -193,7 +194,8 @@ def inbound_system_prompt(
                 f" helpful, HOLD for anything {user} should decide, and say {user} has been told they"
                 " called.\n") if vip else ""
     speak = ", ".join(LANG_NAMES.get(code, code) for code in speakable)
-    greeted = f'You have already answered the call with: "{opening_line}" Don\'t introduce yourself again.\n' if opening_line else ""
+    greeted = (f'You have already answered the call with: "{opening_line}" Never greet the caller or'
+               ' introduce yourself again; just answer them.\n') if opening_line else ""
     nothing_known = "" if (rules.general_facts or rules.caller_facts) else (
         f"You know nothing else about {user}'s plans. Anything else -> HOLD.\n")
     for_caller = (_instructions(profile, rules.caller, f"{user.upper()}'S INSTRUCTIONS FOR THIS CALLER")
@@ -236,8 +238,8 @@ def delivery_context(profile: Profile, can_text: bool = False, instructions: lis
     parts = [
         f"DELIVERY: this caller is a delivery partner. {texting} Delivery details you may share with them:\n"
         f"{loc}\n"
-        "Guide them from where they are now. Ask where they are if needed, then give the next"
-        " one or two steps at a time."
+        "Guide them from where they are now: give only the next one or two steps (landmark first),"
+        " then let them ask for the rest, or ask where they are."
     ]
     if instructions:
         parts.append(f"{profile.user_name.upper()}'S INSTRUCTIONS FOR DELIVERIES\n{_bullets(instructions)}")
