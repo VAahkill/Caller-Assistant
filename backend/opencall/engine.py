@@ -106,8 +106,10 @@ class Engine:
         log.info("Voice demos ready: %d.", made)
 
     def _prerender_phrases(self) -> None:
-        """The greeting, "one moment" and the apology play instantly from memory, in
-        the voices now chosen. Lines already in memory aren't made again."""
+        """The greeting, "one moment", the apology and the refusal to share a code play
+        instantly from memory, in the voices now chosen. Lines already in memory aren't
+        made again. (The refusal is long: made during the call, it kept a caller who
+        asked for an OTP waiting about 3 s on a CPU.)"""
         voice = self.store.profile.voice
         supported = self.tts.supported_languages(voice)
         self._prerender(self.greeting("en"), voice, "en")
@@ -115,7 +117,7 @@ class Engine:
             if lang in supported:
                 if lang != "en":
                     self._prerender(self.greeting(lang), voice, lang)
-                for key in ("filler", "fallback"):
+                for key in ("filler", "fallback", "refusal"):
                     self._prerender(self.fixed_line(key, lang), voice, lang)
 
     def _prerender(self, text: str, voice: str, lang: str) -> None:

@@ -79,6 +79,19 @@ def test_speech_warm_up_sets_ready_and_keeps_fixed_lines_in_memory(engine):
     assert pcm
 
 
+def test_the_refusal_to_share_a_code_is_ready_in_every_caller_language(engine):
+    engine.store.profile.caller_languages = ["te", "ta"]
+    engine.warm_up()
+
+    async def must_not_synthesize(*a, **k):
+        raise AssertionError("should come from memory")
+
+    engine.tts.synthesize = must_not_synthesize
+    voice = engine.store.profile.voice
+    for lang in ("te", "ta"):
+        assert asyncio.run(engine.speech(engine.fixed_line("refusal", lang), voice, lang, cache=True))
+
+
 async def test_a_profile_change_prepares_the_new_prompt_and_greeting(engine):
     engine.llm = WarmableLLM()
     engine.ready["tts"] = True
