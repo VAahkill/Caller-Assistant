@@ -22,9 +22,9 @@ import { api } from '../lib/api';
 import { Icon } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
 import { APPLIES_TO, INSTRUCTION_CATEGORY, categoryLabel } from '../lib/labels';
-import { displayNumber } from '../lib/phone';
+import { numbersLabel } from '../lib/phone';
 import { RULE_FILTERS, filterRules, instructionPreview, ruleCounts, type RuleFilter } from '../lib/rules';
-import type { AppliesTo, Contact, Instruction, InstructionInput, InstructionTemplate } from '../lib/types';
+import type { AppliesTo, Instruction, InstructionInput, InstructionTemplate } from '../lib/types';
 
 const AUDIENCE_ICON = {
   everyone: 'people-outline',
@@ -53,13 +53,6 @@ const toDraft = (i: Pick<Instruction, 'text' | 'applies_to' | 'numbers' | 'categ
   category: i.category || 'general',
   expires_at: i.expires_at,
 });
-
-/** "Amma", "Amma, Priya", "Amma, Priya +2": who a specific-numbers rule is for. */
-export function numbersLabel(numbers: string[], contacts: Contact[], homeCc: string): string {
-  if (!numbers.length) return APPLIES_TO.numbers;
-  const names = numbers.map((n) => displayNumber(contacts, n, homeCc));
-  return names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ');
-}
 
 /** Instructions: rules for how calls are handled. On/off, who it applies to,
  *  when it ends, ideas to start from, and a preview by kind of caller. */

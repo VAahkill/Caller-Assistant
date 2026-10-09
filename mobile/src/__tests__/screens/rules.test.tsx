@@ -241,4 +241,73 @@ describe('Notes', () => {
     await waitFor(() => expect(requests('POST', '/knowledge')).toHaveLength(1));
     expect(requests('POST', '/knowledge')[0].body).toMatchObject({ text: 'Parcels go to the security cabin.', share_with: 'delivery', enabled: true });
   });
+
+  test('an active away status shows on top and turns off with Undo', async () => {
+    await renderScreen(<Notes />);
+    const card = within(await screen.findByTestId('notes-away'));
+    expect(card.getByText(`Away: ${server.state.profile.away!.message}`)).toBeTruthy();
+    const before = server.state.profile.away!;
+    await fireEvent.press(card.getByRole('button', { name: 'Turn off' }));
+    await waitFor(() => expect(requests('DELETE', '/away')).toHaveLength(1));
+    expect(await screen.findByText('Away turned off. Calls are answered as usual.')).toBeTruthy();
+    expect(within(screen.getByTestId('notes-away')).getByText('Busy or away for a while?')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(requests('PUT', '/away')).toHaveLength(1));
+    expect(requests('PUT', '/away')[0].body).toEqual({ preset: before.preset, message: before.message, until: before.until });
+    expect(await within(screen.getByTestId('notes-away')).findByText(`Away: ${before.message}`)).toBeTruthy();
+  });
+
+  test('a quick away chip sets an away status, not a note', async () => {
+    server.state.profile = { ...server.state.profile, away: null };
+    await renderScreen(<Notes />);
+    await fireEvent.press(await screen.findByRole('button', { name: 'In a meeting · 1 hour' }));
+    await waitFor(() => expect(requests('PUT', '/away')).toHaveLength(1));
+    const body = requests('PUT', '/away')[0].body as { preset: string; message: string; until: number };
+    expect(body.preset).toBe('meeting');
+    expect(body.message).toMatch(/^In a meeting until \d{1,2}(:\d\d)? (AM|PM)/);
+    expect(body.until * 1000).toBeGreaterThan(Date.now() + 55 * 60_000);
+    expect(requests('POST', '/knowledge')).toHaveLength(0);
+    expect(await screen.findByText(`Away: ${body.message}. Callers hear it now.`)).toBeTruthy();
+    expect(within(screen.getByTestId('notes-away')).getByText(`Away: ${body.message}`)).toBeTruthy();
+    // Undo clears it again, as nothing was set before.
+    await fireEvent.press(screen.getByRole('button', { name: 'Undo' }));
+    await waitFor(() => expect(requests('DELETE', '/away')).toHaveLength(1));
+  });
+
+  test('filters and the who-is-calling preview work on notes too', async () => {
+    await renderScreen(<Notes />);
+    await screen.findByTestId('note-note-office');
+    await act(async () => {
+      fireEvent(screen.getByTestId('note-note-evenings-switch'), 'valueChange', false);
+    });
+    await waitFor(() => expect(requests('PATCH', '/knowledge/note-evenings')).toHaveLength(1));
+    await fireEvent.press(screen.getByRole('button', { name: 'Off, 1' }));
+    expect(screen.getAllByTestId(/^note-note-[a-z]+$/).map((n) => n.props.testID)).toEqual(['note-note-evenings']);
+    await fireEvent.press(screen.getByRole('button', { name: 'All' }));
+
+    const preview = within(screen.getByTestId('note-preview'));
+    expect(preview.queryByText(/When a delivery partner calls/)).toBeNull();
+    expect(preview.getByText('Ava may tell them')).toBeTruthy();
+    expect(preview.getByText('Gate 2 is open all night; Gate 1 closes at 10 PM.')).toBeTruthy();
+    expect(preview.queryByText(/Cyber Towers/)).toBeNull();
+    await fireEvent.press(preview.getByRole('tab', { name: 'Contact' }));
+    expect(preview.getByText(/Cyber Towers/)).toBeTruthy();
+    expect(preview.queryByText(/Gate 2 is open/)).toBeNull();
+    // Switched off, so nobody hears it.
+    expect(preview.queryByText(/after 6 PM on weekdays/)).toBeNull();
+  });
+
+  test('a note for specific people is picked from contacts and named on its card', async () => {
+    await renderScreen(<Notes />);
+    await screen.findByTestId('note-note-office');
+    await fireEvent.press(screen.getByRole('button', { name: 'New note' }));
+    await fireEvent.changeText(screen.getByLabelText('What may it tell callers?'), 'The spare key is with the neighbour.');
+    await fireEvent.press(screen.getByRole('button', { name: 'Specific numbers' }));
+    await fireEvent.press(within(screen.getByTestId('rule-numbers')).getByRole('checkbox', { name: /^Priya,/ }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Add note' }));
+    await waitFor(() => expect(requests('POST', '/knowledge')).toHaveLength(1));
+    expect(requests('POST', '/knowledge')[0].body).toMatchObject({ share_with: 'numbers', numbers: ['+919866554433'] });
+    const added = server.state.profile.knowledge.find((n) => n.text === 'The spare key is with the neighbour.')!;
+    expect(within(await screen.findByTestId(`note-${added.id}`)).getByText('Priya')).toBeTruthy();
+  });
 });

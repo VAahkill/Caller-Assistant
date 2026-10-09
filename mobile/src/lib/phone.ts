@@ -55,3 +55,10 @@ export function searchContacts<T extends NamedNumber>(contacts: T[], query: stri
 /** "Amma" or "+91 98480 12345". */
 export const displayNumber = (contacts: NamedNumber[], number: string, homeCc = '+91'): string =>
   contactName(contacts, number, homeCc) ?? prettyNumber(normalizeNumber(number, homeCc) || number);
+
+/** "Amma", "Amma, Priya", "Amma, Priya +2": who a specific-numbers rule is for. */
+export function numbersLabel(numbers: string[], contacts: NamedNumber[], homeCc = '+91', empty = 'Specific numbers'): string {
+  if (!numbers.length) return empty;
+  const names = numbers.map((n) => displayNumber(contacts, n, homeCc));
+  return names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ');
+}

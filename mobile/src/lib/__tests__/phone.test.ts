@@ -1,4 +1,4 @@
-import { contactName, displayNumber, isDialable, normalizeNumber, sameNumber, searchContacts } from '../phone';
+import { contactName, displayNumber, isDialable, normalizeNumber, numbersLabel, sameNumber, searchContacts } from '../phone';
 
 // The same cases backend/opencall/screening.normalize_number gives.
 test.each([
@@ -31,6 +31,17 @@ test('contactName and displayNumber find saved names across formats', () => {
   expect(contactName(contacts, '+919000000000')).toBeUndefined();
   expect(displayNumber(contacts, '+919866554433')).toBe('Priya');
   expect(displayNumber(contacts, '9177001122')).toBe('+91 91770 01122');
+});
+
+test('numbersLabel names up to two people and counts the rest', () => {
+  const contacts = [
+    { number: '+919848012345', name: 'Amma' },
+    { number: '+919866554433', name: 'Priya' },
+  ];
+  expect(numbersLabel([], contacts)).toBe('Specific numbers');
+  expect(numbersLabel(['+919848012345'], contacts)).toBe('Amma');
+  expect(numbersLabel(['+919848012345', '9177001122'], contacts)).toBe('Amma, +91 91770 01122');
+  expect(numbersLabel(['+919848012345', '+919866554433', '+919177001122', '+919000000001'], contacts)).toBe('Amma, Priya +2');
 });
 
 test('isDialable leaves out service codes', () => {
