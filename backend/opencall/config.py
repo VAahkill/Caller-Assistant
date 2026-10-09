@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     # whisper (Whisper's own guess, often hears Telugu as Tamil) | none
     lid_provider: str = "voxlingua"
     # Only with lid_provider=none: the languages Whisper may hear, e.g. "en,hi,te"
-    # (the app's "Callers speak" setting does this job otherwise).
+    # (the caller languages chosen in the app do this job otherwise).
     caller_languages: str = ""
     # Translation between callers' languages and English: indictrans2 (needs the mt
     # extra; about 500 MB, downloaded on first start) | none

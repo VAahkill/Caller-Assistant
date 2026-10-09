@@ -111,8 +111,8 @@ class NoTranslation:
 
 def load_indic_processor():
     """IndicTransToolkit's IndicProcessor (MIT), without the rest of the package: its
-    ``__init__`` also imports parts that need an older transformers than the server
-    uses, and only this module is needed."""
+    ``__init__`` also imports parts that break under transformers 5, and only this
+    module is needed."""
     if "IndicTransToolkit.processor" in sys.modules:
         return sys.modules["IndicTransToolkit.processor"].IndicProcessor
     spec = importlib.util.find_spec("IndicTransToolkit")  # finds it without running __init__
