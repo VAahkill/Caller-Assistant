@@ -8,7 +8,7 @@ the tests) start without a GPU or any model downloaded.
 from __future__ import annotations
 
 from ..config import Settings
-from .llm import LLM, OpenAICompatLLM, ScriptedLLM
+from .llm import LLM, OpenAICompatLLM, ScriptedLLM, parse_extra_body
 from .lid import LanguageID, build_lid
 from .stt import STT, FasterWhisperSTT, NullSTT, parse_models
 from .tts import TTSRouter
@@ -37,7 +37,8 @@ def build_llm(s: Settings) -> LLM:
         return ScriptedLLM()
     return OpenAICompatLLM(s.llm_base_url, s.llm_api_key, s.llm_model, s.llm_temperature,
                            connect_timeout=s.llm_connect_timeout_s, first_token_timeout=s.llm_first_token_timeout_s,
-                           idle_timeout=s.llm_idle_timeout_s)
+                           idle_timeout=s.llm_idle_timeout_s, max_tokens=s.llm_max_tokens,
+                           extra_body=parse_extra_body(s.llm_extra_body))
 
 
 def build_stt(s: Settings) -> STT:

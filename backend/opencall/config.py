@@ -22,13 +22,18 @@ class Settings(BaseSettings):
     api_token: str = "change-me"
     public_url: str = "http://localhost:8000"
 
-    # LLM: any OpenAI-compatible chat endpoint. Defaults to a local Ollama.
-    # Groq free tier: base_url=https://api.groq.com/openai/v1, model=llama-3.1-8b-instant
+    # LLM: any OpenAI-compatible chat endpoint. Defaults to a local Ollama. Optional
+    # free cloud tiers (Groq, Gemini) are in .env.example.
     llm_provider: str = "openai_compat"  # openai_compat | scripted
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
     llm_model: str = "llama3.1:8b"
     llm_temperature: float = 0.4
+    llm_max_tokens: int = 300
+    # Extra request fields, as JSON. Thinking is off: a model that reasons before each
+    # reply keeps the caller waiting (Ollama and llama.cpp understand "none"; Groq and
+    # Gemini want "low").
+    llm_extra_body: str = '{"reasoning_effort": "none"}'
     # A local model on a CPU can need minutes to load and read the prompt the first
     # time; later replies start within seconds. The first word may take this long:
     llm_first_token_timeout_s: float = 180.0

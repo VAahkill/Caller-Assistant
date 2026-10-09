@@ -6,12 +6,17 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 from collections.abc import AsyncIterator, Callable
-from typing import Protocol
+from typing import Any, Protocol
 
 import httpx
 
 Message = dict[str, str]
+log = logging.getLogger("opencall.llm")
+
+# Request fields the client sets itself; extra fields can't replace them.
+_OWN_FIELDS = {"model", "messages", "stream"}
 
 
 class LLM(Protocol):
@@ -26,6 +31,24 @@ class LLMTimeout(LLMError):
     pass
 
 
+def parse_extra_body(text: str) -> dict[str, Any]:
+    """OPENCALL_LLM_EXTRA_BODY: a JSON object of extra request fields, e.g.
+    {"reasoning_effort": "none"}."""
+    if not text.strip():
+        return {}
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"OPENCALL_LLM_EXTRA_BODY must be a JSON object, like {{\"reasoning_effort\": \"none\"}}"
+                         f" ({e.msg} at character {e.pos}).") from None
+    if not isinstance(value, dict):
+        raise ValueError("OPENCALL_LLM_EXTRA_BODY must be a JSON object, like {\"reasoning_effort\": \"none\"}.")
+    clash = sorted(_OWN_FIELDS & value.keys())
+    if clash:
+        raise ValueError(f"OPENCALL_LLM_EXTRA_BODY can't set {', '.join(clash)}; use the OPENCALL_LLM_* settings.")
+    return value
+
+
 class OpenAICompatLLM:
     """Streams a chat completion.
 
@@ -33,11 +56,16 @@ class OpenAICompatLLM:
     the first word, so the first token gets a long timeout of its own; after that,
     a stalled stream fails fast. Connecting fails fast too, so a server that isn't
     running is reported at once.
+
+    ``extra_body`` adds fields to every request, such as ``reasoning_effort``: a model
+    that thinks before it answers keeps the caller waiting for every reply, so
+    thinking is turned off by default (``"none"``, understood by Ollama and
+    llama.cpp's server).
     """
 
     def __init__(self, base_url: str, api_key: str, model: str, temperature: float = 0.4,
                  connect_timeout: float = 5.0, first_token_timeout: float = 180.0, idle_timeout: float = 30.0,
-                 max_tokens: int = 300):
+                 max_tokens: int = 300, extra_body: dict[str, Any] | None = None):
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
         self.model = model
@@ -45,12 +73,14 @@ class OpenAICompatLLM:
         self.first_token_timeout = first_token_timeout
         self.idle_timeout = idle_timeout
         self.max_tokens = max_tokens
+        self.extra_body = {k: v for k, v in (extra_body or {}).items() if k not in _OWN_FIELDS}
+        self._warned_thinking = False
         read = max(first_token_timeout, idle_timeout)
         self._client = httpx.AsyncClient(timeout=httpx.Timeout(read, connect=connect_timeout))
 
     def _payload(self, messages: list[Message], **extra) -> dict:
-        return {"model": self.model, "messages": messages, "temperature": self.temperature,
-                "max_tokens": self.max_tokens, **extra}
+        return {"temperature": self.temperature, "max_tokens": self.max_tokens, **self.extra_body,
+                "model": self.model, "messages": messages, **extra}
 
     @property
     def _headers(self) -> dict[str, str]:
@@ -87,9 +117,12 @@ class OpenAICompatLLM:
                     if data == "[DONE]":
                         break
                     try:
-                        delta = json.loads(data)["choices"][0]["delta"].get("content")
-                    except (KeyError, IndexError, json.JSONDecodeError):
+                        fields = json.loads(data)["choices"][0]["delta"]
+                    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
                         continue
+                    delta = fields.get("content")
+                    if not got_text and (fields.get("reasoning_content") or fields.get("reasoning")):
+                        self._thinking()
                     if delta:
                         got_text = True
                         yield delta
@@ -97,6 +130,13 @@ class OpenAICompatLLM:
             raise LLMTimeout(self._timeout_text(got_text)) from e
         except httpx.TransportError as e:
             raise LLMError(f"Couldn't reach the language model at {self.base_url} ({e.__class__.__name__}).") from e
+
+    def _thinking(self) -> None:
+        if not self._warned_thinking:
+            self._warned_thinking = True
+            log.warning("The language model (%s) is thinking before it answers, so every caller waits for it."
+                        " Turn thinking off: OPENCALL_LLM_EXTRA_BODY={\"reasoning_effort\": \"none\"} (or \"low\""
+                        " where the model can't turn it off).", self.model)
 
     def _timeout_text(self, got_text: bool) -> str:
         if got_text:

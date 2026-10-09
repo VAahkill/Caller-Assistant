@@ -82,6 +82,8 @@ _SENTENCE_END = re.compile(r"([.!?।]+[\"')\]]?)(\s+|$)|\n+")
 # ("assistant\n\nSure..."); that word must never be spoken.
 _LEAKED_ROLE = re.compile(r"\s*(?:<\|start_header_id\|>\s*)?assistant\s*(?:<\|end_header_id\|>)?[ \t]*(?::|\n|$)", re.I)
 _ROLE_HEADS = ("assistant", "<|start_header_id|>assistant<|end_header_id|>")
+# A model's reasoning, when the server leaves it in the reply text: never spoken.
+_THINK = re.compile(r"<think>.*?</think>\s*", re.S | re.I)
 
 
 def _maybe_role_header(head: str) -> bool:
@@ -130,6 +132,22 @@ class TagStreamParser:
         return self._drain(final=True)
 
     def _drain(self, final: bool) -> list[Action]:
+        held = self._hold_back_thinking(final)
+        out = self._drain_text(final)
+        self.buf += held
+        return out
+
+    def _hold_back_thinking(self, final: bool) -> str:
+        """Drops finished <think> blocks and holds back one still being written (it is
+        dropped if the reply ends inside it). Returns the held-back text."""
+        self.buf = _THINK.sub("", self.buf)
+        start = self.buf.lower().find("<think>")
+        if start == -1:
+            return ""
+        held, self.buf = self.buf[start:], self.buf[:start]
+        return "" if final else held
+
+    def _drain_text(self, final: bool) -> list[Action]:
         out: list[Action] = []
         if not self._head_checked:
             leaked = _LEAKED_ROLE.match(self.buf)

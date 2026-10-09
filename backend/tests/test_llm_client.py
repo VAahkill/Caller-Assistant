@@ -103,3 +103,48 @@ async def test_warm_up_sends_one_token_request():
 async def test_warm_up_failure_is_an_llm_error():
     with pytest.raises(LLMError, match="HTTP 500"):
         await client(lambda r: httpx.Response(500, text="loading")).warm_up([{"role": "user", "content": "x"}])
+
+
+async def test_extra_body_fields_are_sent_but_cannot_replace_the_clients_own():
+    seen = {}
+
+    def handler(request):
+        seen.update(json.loads(request.content))
+        return streaming(sse("Hi."))
+
+    llm = client(handler, extra_body={"reasoning_effort": "none", "top_k": 20, "model": "other", "stream": False})
+    assert await collect(llm) == "Hi."
+    assert seen["reasoning_effort"] == "none" and seen["top_k"] == 20
+    assert seen["model"] == "test-model" and seen["stream"] is True
+
+
+def test_extra_body_setting_is_checked():
+    from opencall.providers.llm import parse_extra_body
+
+    assert parse_extra_body("") == {}
+    assert parse_extra_body('{"reasoning_effort": "low"}') == {"reasoning_effort": "low"}
+    with pytest.raises(ValueError, match="JSON object"):
+        parse_extra_body("reasoning_effort=none")
+    with pytest.raises(ValueError, match="JSON object"):
+        parse_extra_body('["none"]')
+    with pytest.raises(ValueError, match="can't set model"):
+        parse_extra_body('{"model": "x"}')
+
+
+def test_thinking_is_off_by_default():
+    from opencall.config import Settings
+    from opencall.providers import build_llm
+
+    llm = build_llm(Settings(_env_file=None))
+    assert llm.extra_body == {"reasoning_effort": "none"}
+
+
+async def test_a_thinking_model_is_reported_and_its_reasoning_never_returned(caplog):
+    def handler(request):
+        chunks = [f"data: {json.dumps({'choices': [{'delta': {'reasoning_content': 'Let me see...'}}]})}\n\n".encode(),
+                  *sse("Sure.")]
+        return streaming(chunks)
+
+    with caplog.at_level("WARNING", logger="opencall.llm"):
+        assert await collect(client(handler)) == "Sure."
+    assert "thinking before it answers" in caplog.text and "reasoning_effort" in caplog.text

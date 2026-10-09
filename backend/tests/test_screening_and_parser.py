@@ -52,3 +52,14 @@ def test_parser_outcome_and_end():
 def test_parser_category_mid_text():
     out = _run(["[CATEGORY: delivery]Okay, take the left lane"])
     assert out == [Category("delivery"), Say("Okay, take the left lane")]
+
+
+def test_parser_never_speaks_the_models_reasoning():
+    reply = "<think>The caller wants the address. I should check. Okay.</think>\n\nSure, come to the green gate."
+    for size in (1, 4, 9, len(reply)):
+        out = _run([reply[i : i + size] for i in range(0, len(reply), size)])
+        assert out == [Say("Sure, come to the green gate.")], size
+
+
+def test_parser_drops_reasoning_that_never_ends():
+    assert _run(["Hello. <think>Let me think about", " this. Hmm."]) == [Say("Hello.")]
