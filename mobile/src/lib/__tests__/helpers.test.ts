@@ -31,14 +31,18 @@ describe('rules: expiry', () => {
     expect(isExpired(at(8, 9), NOW)).toBe(true);
     expect(isExpired(null, NOW)).toBe(false);
     expect(expiryText(at(8, 23, 59), NOW)).toMatch(/^Ends today, /);
-    expect(expiryText(at(9, 10), NOW)).toBe('Ends tomorrow');
-    expect(expiryText(at(15, 10), NOW)).toBe('Ends 15 Oct');
+    expect(expiryText(at(8, 18), NOW)).toBe('Ends today, 6 PM');
+    expect(expiryText(at(9, 10), NOW)).toBe('Ends tomorrow, 10 AM');
+    expect(expiryText(at(9, 23, 59), NOW)).toBe('Ends tomorrow');
+    expect(expiryText(at(15, 9, 30), NOW)).toBe('Ends 15 Oct, 9:30 AM');
+    expect(expiryText(at(15, 23, 59), NOW)).toBe('Ends 15 Oct');
   });
 });
 
 describe('rules: numbers and previews', () => {
-  test('numbers split on commas and lines, are cleaned and de-duplicated', () => {
-    expect(parseNumbers('+91 98480-12345, 9848012345\n+91 98480 12345; 12')).toEqual(['+919848012345', '9848012345']);
+  test('numbers split on commas and lines, are put in the server form and de-duplicated', () => {
+    expect(parseNumbers('+91 98480-12345, 9848012345\n098480 12345; 12, 91770 01122')).toEqual(['+919848012345', '+919177001122']);
+    expect(parseNumbers('07700 900123', '+44')).toEqual(['+447700900123']);
     expect(parseNumbers('')).toEqual([]);
   });
 
@@ -47,7 +51,7 @@ describe('rules: numbers and previews', () => {
       'When a delivery partner calls, Ava follows: "Leave parcels with the guard."',
     );
     expect(instructionPreview('Say I am at the dentist', 'everyone', 'Ava', at(9, 10), NOW)).toBe(
-      'When anyone calls, Ava follows: "Say I am at the dentist." Ends tomorrow.',
+      'When anyone calls, Ava follows: "Say I am at the dentist." Ends tomorrow, 10 AM.',
     );
     expect(instructionPreview('  ', 'everyone', 'Ava', null, NOW)).toBe('Write what Ava should do, and when.');
   });
