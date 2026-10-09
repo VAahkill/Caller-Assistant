@@ -159,3 +159,32 @@ def test_the_server_loads_the_models_for_the_callers_languages(engine):
     engine.store.profile.caller_languages = ["en", "te"]
     engine.warm_up()
     assert loaded == [["en", "te"]]
+
+
+async def test_the_users_english_replies_use_the_quicker_model(monkeypatch):
+    stt, opened = fake_stt(monkeypatch)
+    stt.owner_english = "small"
+    pcm = b"\x01\x00" * 16000
+    assert (await stt.transcribe_owner(pcm, "en")).text == "small"
+    assert (await stt.transcribe_owner(pcm, "te")).text == "org/telugu"  # their language's own model
+    assert (await stt.transcribe(pcm, "en")).text == "large-v3-turbo"  # callers keep the main model
+    stt.warm_up_owner("en")
+    assert opened.count("small") == 1
+
+
+async def test_without_a_quicker_model_the_users_replies_use_the_main_one(monkeypatch, caplog):
+    stt, _ = fake_stt(monkeypatch, broken={"small"})
+    stt.owner_english = "small"
+    pcm = b"\x01\x00" * 16000
+    assert (await stt.transcribe_owner(pcm, "en")).text == "large-v3-turbo"
+    assert "Couldn't load the en speech model small" in caplog.text
+    assert build_stt(Settings(owner_stt_model="main")).owner_english == ""
+    assert build_stt(Settings()).owner_english == "small"
+
+
+def test_the_server_loads_the_model_for_the_users_replies(engine):
+    loaded = []
+    engine.stt.warm_up_owner = loaded.append
+    engine.store.profile.owner_language = "te"
+    engine.warm_up()
+    assert loaded == ["te"]

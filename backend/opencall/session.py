@@ -655,7 +655,12 @@ class CallSession:
     async def owner_say_audio(self, pcm16k: bytes, lang: str | None = None) -> str:
         """The user's spoken reply, in their language: transcribed, then said to the
         caller in theirs. Returns what was heard."""
-        heard = await self.engine.stt.transcribe(pcm16k, lang or self.owner_language)
+        stt = self.engine.stt
+        started = time.monotonic()
+        # A quicker model for the user's English where there is one (see FasterWhisperSTT).
+        transcribe = getattr(stt, "transcribe_owner", stt.transcribe)
+        heard = await transcribe(pcm16k, lang or self.owner_language)
+        log.info("call %s: the user's recording was heard in %.2f s", self.record.id, time.monotonic() - started)
         text = heard.text.strip()
         if not text:
             await self._publish("turn_error", detail="Couldn't make out any words in your recording.")

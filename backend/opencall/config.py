@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     # Per-language speech models on top of the built-in ones (Telugu, Tamil and Hindi
     # fine-tunes, see providers/stt.py), e.g. "te=org/model,hi=off"; off = main model.
     stt_models: str = ""
+    # The user's own spoken replies in English, from the app during a call: clear
+    # phone-mic speech, so a small model is enough and the caller hears them about
+    # 3x sooner on a CPU. "main" uses the main model.
+    owner_stt_model: str = "small"
     # Which language a caller speaks: voxlingua (accurate for Indian languages) |
     # whisper (Whisper's own guess, often hears Telugu as Tamil) | none
     lid_provider: str = "voxlingua"

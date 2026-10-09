@@ -82,6 +82,9 @@ class Engine:
                 load_stt(self.store.profile.caller_languages)  # and each caller language's own model
             else:
                 load_stt()
+        load_owner = getattr(self.stt, "warm_up_owner", None)
+        if load_owner is not None:
+            load_owner(self.store.profile.owner_language)  # for the user's spoken replies
         self.ready["stt"] = True
         if self.lid is not None:
             self.lid.warm_up()

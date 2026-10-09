@@ -44,5 +44,5 @@ def build_stt(s: Settings) -> STT:
     if s.stt_provider == "faster_whisper":
         languages = [code.strip() for code in s.caller_languages.split(",") if code.strip()]
         return FasterWhisperSTT(s.whisper_model, s.whisper_device, languages, parse_models(s.stt_models),
-                                s.models_dir)
+                                s.models_dir, owner_english=s.owner_stt_model)
     return NullSTT()

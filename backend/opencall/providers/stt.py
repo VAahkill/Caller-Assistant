@@ -131,7 +131,8 @@ class FasterWhisperSTT:
     """Faster-Whisper on CPU or GPU, with an optional model per language."""
 
     def __init__(self, model: str = "large-v3-turbo", device: str = "auto", languages: list[str] | None = None,
-                 models: dict[str, str] | None = None, models_dir: Path | None = None, cpu_threads: int = 0):
+                 models: dict[str, str] | None = None, models_dir: Path | None = None, cpu_threads: int = 0,
+                 owner_english: str = ""):
         self.model_name = model
         self.device = device
         # Only used when no language is given (language ID turned off): speech is then
@@ -141,6 +142,12 @@ class FasterWhisperSTT:
         self.models = dict(models or {})  # language -> model spec
         self.ct2_dir = (models_dir or Path("./data/models")) / "ct2"
         self.cpu_threads = cpu_threads
+        # The user's own spoken replies in English (the app's microphone during a
+        # call). That is clear, close-up speech, not a phone line: a small model hears
+        # it as well as the main one and is about 3x quicker on a CPU, which is time
+        # the caller spends waiting. Empty: the main model. Their replies in another
+        # language use that language's model, like the callers'.
+        self.owner_english = "" if owner_english.strip().lower() in _OFF else owner_english.strip()
         self._model = None  # the main model
         self._extra: dict[str, object] = {}  # per-language models by spec
         self._failed: set[str] = set()
@@ -186,8 +193,10 @@ class FasterWhisperSTT:
     def _model_for(self, language: str | None):
         """This language's own model (loaded, and converted if needed, on first use);
         the main one when it has none or its model can't be loaded."""
-        spec = self.model_for(language)
-        if spec == self.model_name:
+        return self._model_by_spec(self.model_for(language), language or "")
+
+    def _model_by_spec(self, spec: str, language: str):
+        if spec == self.model_name or spec in self._failed:
             return self._load()
         with self._lock:
             lock = self._locks.setdefault(spec, threading.Lock())
@@ -208,8 +217,15 @@ class FasterWhisperSTT:
         _, _, probs = self._load().detect_language(pcm16_to_float(pcm16k[: 30 * 32000]))
         return {lang: math.log(max(p, 1e-12)) for lang, p in probs}
 
-    def _run(self, pcm16k: bytes, language_hint: str | None) -> Transcription:
-        model = self._model_for(language_hint)
+    def warm_up_owner(self, language: str) -> None:
+        """Load the model for the user's spoken replies in ``language`` now."""
+        if language == "en" and self.owner_english:
+            self._model_by_spec(self.owner_english, "en")
+        else:
+            self._model_for(language)
+
+    def _run(self, pcm16k: bytes, language_hint: str | None, spec: str = "") -> Transcription:
+        model = self._model_by_spec(spec, language_hint or "") if spec else self._model_for(language_hint)
         # The silence around the words is cut first: given silence or line noise after
         # the speech, Whisper (the fine-tuned models most of all) tends to go on
         # "hearing" sentences nobody said. On held-out Tamil this took the worst clips
@@ -238,6 +254,11 @@ class FasterWhisperSTT:
 
     async def transcribe(self, pcm16k: bytes, language_hint: str | None = None) -> Transcription:
         return await asyncio.to_thread(self._run, pcm16k, language_hint)
+
+    async def transcribe_owner(self, pcm16k: bytes, language_hint: str | None = None) -> Transcription:
+        """The user's own recorded reply (see ``owner_english``)."""
+        spec = self.owner_english if language_hint == "en" else ""
+        return await asyncio.to_thread(self._run, pcm16k, language_hint, spec)
 
 
 # Whisper's mistakes mostly stay inside a language family (Telugu heard as Tamil

@@ -261,6 +261,28 @@ async def test_the_users_voice_is_heard_in_their_language(engine, llm):
     await task
 
 
+async def test_the_users_voice_goes_to_the_model_kept_for_their_replies(engine, llm):
+    """A speech engine with a quicker model for the user's replies gets them there."""
+    table_mt(engine, {("I am coming", "hi"): "मैं आ रहा हूँ"})
+    used = []
+
+    async def for_callers(pcm, language_hint=None):
+        used.append("callers")
+        return Transcription("I am coming", "en")
+
+    async def for_the_user(pcm, language_hint=None):
+        used.append(("user", language_hint))
+        return Transcription("I am coming", "en")
+
+    engine.stt.transcribe, engine.stt.transcribe_owner = for_callers, for_the_user
+    bridge, s, task = await start_call(engine)
+    await s.handle_text("नमस्ते", "hi")
+    assert await s.owner_say_audio(b"\x01\x00" * 16000, "en") == "I am coming"
+    assert used == [("user", "en")] and lines(s, "user")[-1].text == "मैं आ रहा हूँ"
+    await bridge.hangup()
+    await task
+
+
 async def test_a_hold_answer_in_the_users_language_reaches_the_model_in_english(engine, llm, settings):
     settings.hold_timeout_s = 5
     table_mt(engine, {("గార్డ్ దగ్గర ఇవ్వమను", "en"): "Ask him to leave it with the guard",
