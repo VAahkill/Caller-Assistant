@@ -86,6 +86,28 @@ export function listenForNotificationReplies(): () => void {
   return () => sub.remove();
 }
 
+/** allowed, ask (not decided yet, or can be asked again), blocked (only
+ *  Android settings can turn them on), unsupported (the web preview). */
+export type NotificationAccess = 'allowed' | 'ask' | 'blocked' | 'unsupported';
+
+/** Settings: whether notifications can reach the owner. */
+export async function notificationAccess(): Promise<NotificationAccess> {
+  // expo-notifications has no permissions on the web; it throws there.
+  if (Platform.OS === 'web') return 'unsupported';
+  const p = await Notifications.getPermissionsAsync();
+  return p.status === 'granted' ? 'allowed' : p.canAskAgain ? 'ask' : 'blocked';
+}
+
+/** Settings: "Allow". Asks Android, and on yes sets up the channels and push. */
+export async function allowNotifications(): Promise<NotificationAccess> {
+  const asked = await Notifications.requestPermissionsAsync();
+  if (asked.status !== 'granted') {
+    throw new Error(asked.canAskAgain ? 'Notifications are still off.' : 'Android blocked notifications for OpenCall. Turn them on in Android settings.');
+  }
+  await setupNotifications();
+  return 'allowed';
+}
+
 /** Settings: "Send a test notification". */
 export async function sendTestNotification(): Promise<void> {
   const { status } = await Notifications.getPermissionsAsync();

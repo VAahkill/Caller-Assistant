@@ -36,6 +36,11 @@ export function ServerConnect({ header, onConnected, toastOnSuccess = true }: Se
     setUrl(server.config.url);
     setToken(server.config.token);
   }
+  // Forgotten in Settings: the token goes too; the address stays to pair again.
+  if (!server.config && shownConfig) {
+    setShownConfig(null);
+    setToken('');
+  }
 
   const doConnect = useAsyncAction(
     async (typedToken?: string) => {
