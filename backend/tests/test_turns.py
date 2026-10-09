@@ -273,3 +273,38 @@ async def test_hold_reminder_is_in_the_callers_language(engine, settings):
     assert hold_states and "waiting for Rahul" in hold_states[0]["detail"]
     await bridge.hangup()
     await task
+
+
+@pytest.mark.parametrize("reply, said, ended", [
+    ("", "fallback", False),                         # nothing at all
+    ("[CATEGORY: delivery]", "fallback", False),     # only a tag
+    ("[MESSAGE: Swiggy order at the gate]", "fallback", False),
+    ("[END_CALL]", "goodbye", True),                 # a small model hanging up without a word
+    ("[HOLD: Can the parcel be left with the guard?]", "filler", False),
+])
+async def test_a_reply_with_nothing_to_say_is_never_silence(engine, reply, said, ended):
+    replies = iter([reply])
+    engine.llm.responder = lambda m: next(replies, "Okay.")  # then the answer after a hold, the summary
+    bridge, s, task = await start_call(engine)
+    turn = s.submit_text("Swiggy order, where should I come?", "en")
+    for _ in range(200):
+        if len(assistant_lines(s)) > 1:
+            break
+        await asyncio.sleep(0.01)
+    assert assistant_lines(s)[1:] == [phrase(said, "en").replace("{user}", "Rahul")]
+    if said == "filler":
+        assert s.record.holds and await s.answer_hold(None, "Yes")
+    await turn
+    await s.wait_playback()
+    await asyncio.sleep(0.4)
+    assert task.done() == ended
+    await bridge.hangup()
+    await task
+
+
+async def test_a_reply_that_speaks_gets_no_extra_line(engine):
+    engine.llm.responder = lambda m: "Okay, bye! [END_CALL]"
+    bridge, s, task = await start_call(engine)
+    await s.handle_text("That's all, thanks.", "en")
+    assert assistant_lines(s)[1:] == ["Okay, bye!"]
+    await task

@@ -342,9 +342,10 @@ class Conversation:
         spoken: list[str] = []
         allowed = self.allowed_numbers()
         stop = False
+        acted = False  # put them on hold, ended the call or texted them
 
         def handle(actions: list[Action]):
-            nonlocal stop
+            nonlocal stop, acted
             for a in actions:
                 if isinstance(a, Say):
                     res = scrub_outgoing(a.text, allowed)
@@ -359,6 +360,13 @@ class Conversation:
                     self.category = a.value if not self.outbound else self.category
                     yield a
                 else:
+                    if isinstance(a, (Hold, EndCall)) and not spoken and not acted:
+                        # Small models sometimes do this without a word; nobody is put on
+                        # hold or hung up on in silence.
+                        log.warning("The model chose %s without saying anything; saying a fixed line first.",
+                                    type(a).__name__)
+                        yield self.fixed_say("filler" if isinstance(a, Hold) else "goodbye")
+                    acted = acted or isinstance(a, (Hold, EndCall, SendLocation))
                     yield a
                     if isinstance(a, Hold):
                         stop = True  # wait for the user before saying anything else
@@ -376,6 +384,11 @@ class Conversation:
             if not stop:
                 for out in handle(parser.close()):
                     yield out
+                if not spoken and not acted:
+                    # An empty reply (or one that was all tags) would leave the caller
+                    # waiting in silence.
+                    log.warning("The model's reply had nothing to say to the caller; asking them to repeat.")
+                    yield self.fixed_say("fallback")
         finally:
             # Keep what was actually said, even if the turn was cut short.
             if spoken:
