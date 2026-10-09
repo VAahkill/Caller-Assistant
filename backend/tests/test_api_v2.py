@@ -1,10 +1,12 @@
 """API contract v2: profile fields and their checks, away status, instructions and
 notes with who they're for and when they end, templates, blocking and VIPs,
-and the user's live replies over REST."""
+pairing the app with a code, and the user's live replies over REST."""
 
 import asyncio
 import io
 import json
+import logging
+import re
 import time
 import wave
 
@@ -13,6 +15,7 @@ from fastapi.testclient import TestClient
 
 from opencall.api import create_app
 from opencall.models import Contact
+from opencall.pairing import Pairing, PairingError
 from opencall.providers.mt import TranslationService
 from opencall.providers.stt import Transcription
 from opencall.screening import screen_number
@@ -216,6 +219,88 @@ def test_calls_list_has_urgency_and_action_items(settings, engine):
                                       action_items=["Call the bank back"]))
     call = client(settings, engine).get("/calls", headers=H).json()[0]
     assert call["urgent"] is True and call["action_items"] == ["Call the bank back"] and "transcript" not in call
+
+
+# ------------------------------------------------------------------ pairing
+class Clock:
+    def __init__(self):
+        self.t = 1000.0
+
+    def __call__(self):
+        return self.t
+
+
+def code_from(caplog) -> str:
+    found = re.findall(r"Pairing code for the OpenCall app: (\d{6}) \(valid 5 minutes\)", caplog.text)
+    assert found, caplog.text
+    return found[-1]
+
+
+def test_pairing_with_the_code_from_the_server_log(settings, engine, caplog):
+    caplog.set_level(logging.INFO, "opencall.pairing")
+    c = client(settings, engine)
+    r = c.post("/pair/start")  # no token needed
+    assert r.status_code == 200 and r.json() == {"ok": True, "expires_in": 300}
+    code = code_from(caplog)
+    wrong = "000000" if code != "000000" else "111111"
+    r = c.post("/pair/finish", json={"code": wrong})
+    assert r.status_code == 403 and "4 tries left" in r.json()["detail"]
+    r = c.post("/pair/finish", json={"code": f"{code[:3]} {code[3:]}"})  # spaces are fine
+    assert r.status_code == 200 and r.json() == {"token": "test-token"}
+    assert c.post("/pair/finish", json={"code": code}).status_code == 410  # one use
+    assert c.get("/profile", headers={"Authorization": f"Bearer {r.json()['token']}"}).status_code == 200
+
+
+def test_a_pairing_code_is_void_after_five_wrong_tries():
+    pairing = Pairing(lambda: "tok", clock=Clock())
+    pairing.start()
+    code = pairing._code.value
+    wrong = "000000" if code != "000000" else "111111"
+    for left in (4, 3, 2, 1):
+        with pytest.raises(PairingError) as e:
+            pairing.finish(wrong)
+        assert e.value.status == 403 and f"{left} tr" in e.value.detail
+    with pytest.raises(PairingError) as e:
+        pairing.finish(wrong)
+    assert e.value.status == 410 and "void" in e.value.detail
+    with pytest.raises(PairingError) as e:
+        pairing.finish(code)  # even the right code is no use now
+    assert e.value.status == 410
+
+
+def test_a_pairing_code_runs_out_and_asking_again_gives_the_same_one(caplog):
+    caplog.set_level(logging.INFO, "opencall.pairing")
+    clock = Clock()
+    pairing = Pairing(lambda: "tok", clock=clock)
+    assert pairing.start() == 300
+    first = code_from(caplog)
+    clock.t += 100
+    assert pairing.start() == 200 and code_from(caplog) == first  # the code still waiting, written again
+    clock.t += 201
+    with pytest.raises(PairingError) as e:
+        pairing.finish(first)
+    assert e.value.status == 410
+    pairing.start()
+    assert pairing.finish(code_from(caplog)) == "tok"
+
+
+def test_only_a_few_pairing_codes_an_hour():
+    clock = Clock()
+    pairing = Pairing(lambda: "tok", clock=clock, codes_per_hour=5)
+    for _ in range(5):
+        pairing.start()
+        pairing._code = None  # used up
+    with pytest.raises(PairingError) as e:
+        pairing.start()
+    assert e.value.status == 429
+    clock.t += 3601
+    assert pairing.start() == 300
+
+
+def test_pairing_errors_reach_the_app(settings, engine):
+    c = client(settings, engine)
+    r = c.post("/pair/finish", json={"code": "123456"})
+    assert r.status_code == 410 and "Ask for a new one" in r.json()["detail"]
 
 
 # ------------------------------------------------------------------ the user's live replies over REST

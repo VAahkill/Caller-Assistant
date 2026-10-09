@@ -41,6 +41,7 @@ from .models import (
     voice_per_language,
 )
 from .owner_chat import handle_owner_message
+from .pairing import Pairing, PairingError
 from .screening import normalize_number
 from .templates import TEMPLATES
 from .providers.tts import VoiceInfo
@@ -227,6 +228,10 @@ class NumberIn(BaseModel):
     number: str
 
 
+class CodeIn(BaseModel):
+    code: str
+
+
 class VoicePatch(BaseModel):
     label: str
 
@@ -311,6 +316,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
     store = engine.store
     A = [Depends(auth)]
+    pairing = Pairing(lambda: settings.api_token)
 
     # ------------------------------------------------------------ health
     @app.get("/health")
@@ -353,6 +359,22 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     async def delete_away() -> Profile:
         store.profile.away = None
         return await save_profile()
+
+    # ------------------------------------------------------------ pairing (no token needed)
+    @app.post("/pair/start")
+    async def pair_start():
+        """Writes a 6-digit pairing code to the server log, for the user to type into the app."""
+        try:
+            return {"ok": True, "expires_in": pairing.start()}
+        except PairingError as e:
+            raise HTTPException(e.status, e.detail) from e
+
+    @app.post("/pair/finish")
+    async def pair_finish(body: CodeIn):
+        try:
+            return {"token": pairing.finish(body.code)}
+        except PairingError as e:
+            raise HTTPException(e.status, e.detail) from e
 
     @app.put("/location", dependencies=A)
     async def put_location(loc: Location) -> Location:
