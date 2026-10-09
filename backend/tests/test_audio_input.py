@@ -56,6 +56,22 @@ def test_trim_silence_keeps_quiet_speech_and_drops_silence():
     assert trim_silence(b"") == b""
 
 
+def test_trim_silence_keeps_speech_quieter_than_minus_50_dbfs():
+    # Some phones and lines deliver speech this quiet; it used to be cut away whole.
+    silence = b"\x00\x00" * 16000
+    very_quiet = tone(1, amp=60)  # about -54 dBFS
+    assert 1.0 <= len(trim_silence(silence + very_quiet + silence)) / 32000 <= 1.6
+    rng = np.random.default_rng(0)
+    hiss = (rng.normal(0, 20, 16000)).astype(np.int16).tobytes()  # background at about -64 dBFS
+    trimmed = trim_silence(hiss + tone(1, amp=1000) + hiss)
+    assert 1.0 <= len(trimmed) / 32000 <= 1.6  # the hiss around the speech goes
+
+
+def test_trim_silence_leaves_a_recording_without_quiet_parts_whole():
+    speech = tone(0.5)
+    assert trim_silence(speech) == speech
+
+
 def test_long_speech_is_cut_at_its_pauses():
     pause = b"\x00\x00" * 8000  # half a second
     speech = tone(6) + pause + tone(6) + pause + tone(7)

@@ -125,17 +125,21 @@ def decode_audio(data: bytes, rate: int | None = None) -> tuple[bytes, int]:
 
 def trim_silence(pcm: bytes, rate: int = RATE, pad_ms: int = 250) -> bytes:
     """Cuts the silence before and after the speech in a recording. Returns b""
-    when there is no speech at all. Quiet speech counts: the threshold follows the
-    loudest part of the recording, not a fixed level."""
+    when there is no speech at all. Quiet speech counts: speech is told apart from
+    the recording's own background, not by a fixed level, because some phones and
+    lines deliver it well below -50 dBFS."""
     x = pcm16_to_float(pcm)
     n = rate * FRAME_MS // 1000
     if len(x) < n:
         return b""
     frames_ = x[: len(x) - len(x) % n].reshape(-1, n)
     db = 20 * np.log10(np.sqrt(np.mean(frames_ * frames_, axis=1)) + 1e-9)
-    voiced = np.flatnonzero(db > max(-50.0, float(db.max()) - 35.0))
-    if not len(voiced) or db.max() < -50.0:
-        return b""
+    peak, background = float(db.max()), float(np.percentile(db, 10))
+    if peak < -75.0:
+        return b""  # (near) digital silence
+    if peak - background < 6.0:
+        return pcm  # one level throughout: no silence around it to tell apart
+    voiced = np.flatnonzero(db > max(peak - 35.0, background + 6.0))
     pad = pad_ms // FRAME_MS
     start = max(0, int(voiced[0]) - pad) * n
     end = min(len(frames_), int(voiced[-1]) + 1 + pad) * n
