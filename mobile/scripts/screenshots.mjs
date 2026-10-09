@@ -18,6 +18,11 @@
 // page) and screenshots/report.json with console errors per screen. Requests
 // that leave this machine are blocked and counted. Exits 1 if a screen threw
 // an uncaught error.
+//
+// Android draws Telugu, Hindi and Tamil with its Noto fonts. A machine without
+// them shows those scripts unshaped; point INDIC_FONTS_DIR at a folder with
+// noto-sans-{telugu,devanagari,tamil}-*-{400,500,600,700}-normal.woff2 (from
+// the @fontsource packages) and they are used the same way, as fallbacks.
 
 import { spawnSync } from 'node:child_process';
 import { createReadStream, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -96,12 +101,42 @@ function exportWeb() {
   if (r.status !== 0) throw new Error(`expo export failed (exit ${r.status})`);
 }
 
-const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.ttf': 'font/ttf', '.ico': 'image/x-icon' };
+const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.ttf': 'font/ttf', '.woff2': 'font/woff2', '.ico': 'image/x-icon' };
+
+const FONTS_DIR = process.env.INDIC_FONTS_DIR;
+const INDIC = [
+  { file: 'noto-sans-telugu-telugu', range: 'U+0C00-0C7F, U+200C-200D, U+25CC' },
+  { file: 'noto-sans-devanagari-devanagari', range: 'U+0900-097F, U+1CD0-1CFF, U+A8E0-A8FF, U+200C-200D, U+25CC' },
+  { file: 'noto-sans-tamil-tamil', range: 'U+0B80-0BFF, U+200C-200D, U+25CC' },
+];
+const WEIGHTS = { Inter_400Regular: 400, Inter_500Medium: 500, Inter_600SemiBold: 600, Inter_700Bold: 700 };
+
+/** @font-face rules that add the Indic scripts to each Inter family the app uses, as Android's fallback does. */
+function indicFontCss() {
+  if (!FONTS_DIR) return '';
+  const rules = [];
+  for (const [family, weight] of Object.entries(WEIGHTS)) {
+    for (const f of INDIC) {
+      const file = `${f.file}-${weight}-normal.woff2`;
+      if (!existsSync(join(FONTS_DIR, file))) throw new Error(`INDIC_FONTS_DIR has no ${file}`);
+      rules.push(`@font-face{font-family:'${family}';src:url('/__fonts/${file}') format('woff2');unicode-range:${f.range};font-display:block}`);
+    }
+  }
+  return rules.join('\n');
+}
 
 /** A static server with single-page fallback, so deep links load index.html. */
 function serve() {
   const server = createServer((req, res) => {
     const url = decodeURIComponent((req.url ?? '/').split('?')[0]);
+    if (FONTS_DIR && url.startsWith('/__fonts/')) {
+      const font = normalize(join(FONTS_DIR, url.slice('/__fonts/'.length)));
+      if (font.startsWith(FONTS_DIR) && existsSync(font)) {
+        res.writeHead(200, { 'Content-Type': 'font/woff2' });
+        createReadStream(font).pipe(res);
+        return;
+      }
+    }
     let file = normalize(join(DIST, url));
     if (!file.startsWith(DIST) || !existsSync(file) || statSync(file).isDirectory()) file = join(DIST, 'index.html');
     res.writeHead(200, { 'Content-Type': TYPES[extname(file)] ?? 'application/octet-stream' });
@@ -133,6 +168,7 @@ async function main() {
   const server = await serve();
   const base = `http://127.0.0.1:${server.address().port}`;
   const browser = await chromium.launch();
+  const fontCss = indicFontCss();
   const report = {};
   let crashed = false;
   try {
@@ -153,6 +189,15 @@ async function main() {
           },
         );
         const page = await ctx.newPage();
+        if (fontCss) {
+          await page.addInitScript((css) => {
+            document.addEventListener('DOMContentLoaded', () => {
+              const style = document.createElement('style');
+              style.textContent = css;
+              document.head.appendChild(style);
+            });
+          }, fontCss);
+        }
         const errors = [];
         page.on('pageerror', (e) => {
           crashed = true;
