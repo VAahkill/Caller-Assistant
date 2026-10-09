@@ -33,7 +33,10 @@ export function useLeaveOnboarding() {
   const toast = useToast();
   return (href = '/', then?: () => void) => {
     const go = () => {
-      router.replace(href as never);
+      // Back to Today: on a first run the welcome screen is replaced; run
+      // again from Settings, the steps close onto the tabs already there
+      // (a replace would leave a second Today under the first).
+      router.dismissTo(href as never);
       then?.();
     };
     finishOnboarding()

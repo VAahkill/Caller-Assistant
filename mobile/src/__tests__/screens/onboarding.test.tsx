@@ -4,7 +4,7 @@
 jest.mock('expo-file-system', () => require('../../test/expoFileSystemMock').expoFileSystemMock);
 jest.mock('expo-router', () => ({
   ...jest.requireActual('expo-router'),
-  router: { push: jest.fn(), replace: jest.fn(), back: jest.fn(), navigate: jest.fn() },
+  router: { push: jest.fn(), replace: jest.fn(), dismissTo: jest.fn(), back: jest.fn(), navigate: jest.fn() },
 }));
 
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
@@ -57,7 +57,7 @@ test('Set up later remembers the choice and goes to Today', async () => {
   expect(screen.getByText("Answers when you can't")).toBeTruthy();
   expect(screen.getByText('Translates live')).toBeTruthy();
   await fireEvent.press(screen.getByRole('button', { name: 'Set up later' }));
-  await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/'));
+  await waitFor(() => expect(router.dismissTo).toHaveBeenCalledWith('/'));
   expect(await onboardingDone()).toBe(true);
 });
 
@@ -152,14 +152,14 @@ describe('the last step', () => {
     expect(screen.queryByRole('button', { name: 'Skip this step' })).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Start a practice call' }));
     await waitFor(() => expect(router.push).toHaveBeenCalledWith('/practice'));
-    expect(router.replace).toHaveBeenCalledWith('/');
+    expect(router.dismissTo).toHaveBeenCalledWith('/');
     expect(await onboardingDone()).toBe(true);
   });
 
   test('Go to Today also finishes setup', async () => {
     await renderUI(<DoneStep />);
     await fireEvent.press(screen.getByRole('button', { name: 'Go to Today' }));
-    await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/'));
+    await waitFor(() => expect(router.dismissTo).toHaveBeenCalledWith('/'));
     expect(await onboardingDone()).toBe(true);
   });
 });

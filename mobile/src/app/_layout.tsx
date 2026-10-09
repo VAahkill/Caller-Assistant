@@ -19,6 +19,10 @@ import { listenForNotificationReplies, setupNotifications } from '../lib/notific
 SplashScreen.preventAutoHideAsync().catch((e: unknown) => console.warn("Couldn't hold the splash screen", e));
 SplashScreen.setOptions({ fade: true, duration: 200 });
 
+// A screen opened straight from a link (a call, from outside the app) gets
+// the tabs under it, so its back arrow leads to Today instead of nowhere.
+export const unstable_settings = { initialRouteName: '(tabs)' };
+
 export default function RootLayout() {
   return (
     <KeyboardProvider>
