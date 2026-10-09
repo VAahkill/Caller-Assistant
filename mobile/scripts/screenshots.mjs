@@ -51,14 +51,20 @@ const SHOTS = [
   { name: 'practice-live', path: '/practice', tap: 'Start practice call', wait: 3500 },
   { name: 'practice-chat', path: '/practice', tap: ['Start practice call', 'Hi, I have a Swiggy order for you. Where should I come?'], wait: 4500 },
   { name: 'voices', path: '/voices' },
+  { name: 'voices-record', path: '/voices', tap: 'Record another voice' },
   { name: 'instructions', path: '/instructions' },
+  { name: 'instructions-off', path: '/instructions', tap: 'Off' },
   { name: 'instructions-edit', path: '/instructions', tap: 'New instruction' },
+  { name: 'instructions-date', path: '/instructions', tap: ['New instruction', 'Pick a date'] },
+  { name: 'instructions-numbers', path: '/instructions', tap: ['New instruction', 'Specific numbers'] },
   { name: 'instructions-ideas', path: '/instructions', tap: 'Ideas' },
   { name: 'notes', path: '/notes' },
+  { name: 'notes-edit', path: '/notes', tap: 'New note' },
   { name: 'location', path: '/location' },
   { name: 'persona', path: '/persona' },
   { name: 'languages', path: '/languages' },
   { name: 'screening', path: '/screening' },
+  { name: 'screening-add', path: '/screening', tap: 'Add' },
   { name: 'away', path: '/away' },
   { name: 'onboarding-welcome', path: '/onboarding' },
   { name: 'onboarding-connect', path: '/onboarding/connect' },
@@ -111,8 +117,8 @@ async function scrollOnce(page) {
       const s = getComputedStyle(el);
       return (s.overflowY === 'auto' || s.overflowY === 'scroll') && el.scrollHeight > el.clientHeight + 8 && el.clientHeight > 200;
     });
-    // The visible sheet or screen: the last (topmost) of the largest ones.
-    all.sort((a, b) => a.clientHeight - b.clientHeight);
+    // An open sheet is rendered after the screen, so the last one in the
+    // document is the one in front.
     const el = all[all.length - 1];
     if (!el || el.scrollTop + el.clientHeight >= el.scrollHeight - 4) return false;
     el.scrollTop += Math.round(el.clientHeight * 0.8);
