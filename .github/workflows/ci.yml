@@ -26,3 +26,5 @@ jobs:
       - run: npx tsc --noEmit
       - run: npx expo lint
       - run: npx jest --ci
+      # Resolves app.json and every config plugin as a native build would (no Gradle).
+      - run: npx expo config --type prebuild > /dev/null
