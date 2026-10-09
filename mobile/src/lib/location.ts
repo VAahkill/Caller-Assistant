@@ -20,16 +20,23 @@ const sentence = (s: string) => {
   return t ? (/[.!?]$/.test(t) ? t : `${t}.`) : '';
 };
 
+// "Use Gate 2" reads as "use Gate 2" mid-sentence; "ATM" and "Gate 2" keep their capitals.
+const midSentence = (s: string) => (/^[A-Z][a-z]+\b/.test(s) && !/^(Gate|Block|Tower|Flat|Road|Street)\b/.test(s) ? s.charAt(0).toLowerCase() + s.slice(1) : s);
+
+const WHERE = /^(opposite|next to|behind|above|below|near|beside|in front of|across from)\b/i;
+
 /**
  * Roughly what the assistant says when a delivery partner asks the way, in
- * the order a rider needs it: the place, then the door, then the way in.
+ * the order a rider needs it: the place, then the landmark, then the way in.
  */
 export function directionsText(loc: Location): string {
   const place = [loc.floor_unit, loc.building, loc.address].map((s) => s.trim()).filter(Boolean).join(', ');
+  const landmark = loc.landmarks.trim().replace(/[.,]$/, '');
+  const gate = loc.gate_instructions.trim().replace(/[.,]$/, '');
   const parts = [
     place ? sentence(place) : loc.geocoded_hint ? sentence(`Near ${loc.geocoded_hint}`) : '',
-    loc.landmarks.trim() ? sentence(`Landmark: ${loc.landmarks.trim()}`) : '',
-    loc.gate_instructions.trim() ? sentence(`To get in: ${loc.gate_instructions.trim()}`) : '',
+    landmark ? sentence(WHERE.test(landmark) ? `It's ${landmark.charAt(0).toLowerCase()}${landmark.slice(1)}` : `Look for ${midSentence(landmark)}`) : '',
+    gate ? sentence(`To get in, ${midSentence(gate)}`) : '',
     loc.lat != null && loc.lng != null ? 'I can also send you the map pin by SMS.' : '',
   ].filter(Boolean);
   return parts.join(' ');

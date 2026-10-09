@@ -77,7 +77,7 @@ export const TextField = forwardRef<TextInput, TextFieldProps>(function TextFiel
             borderWidth: focused || error ? 1.5 : 1,
             backgroundColor: disabled ? c.surface3 : c.surface2,
             borderRadius: t.radius.md,
-            minHeight: multiline ? 24 * minLines + 24 : 52,
+            minHeight: multiline ? Math.max(52, 24 * minLines + 24) : 52,
             alignItems: multiline ? 'flex-start' : 'center',
           },
         ]}

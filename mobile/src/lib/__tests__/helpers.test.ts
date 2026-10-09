@@ -84,9 +84,18 @@ describe('location', () => {
         gate_instructions: 'Use Gate 2 and tell security the flat number',
       }),
     ).toBe(
-      'Flat 402, 4th floor, Lakeview Residency, Road No. 2, Kondapur. Landmark: Opposite Ratnadeep supermarket. ' +
-        'To get in: Use Gate 2 and tell security the flat number. I can also send you the map pin by SMS.',
+      'Flat 402, 4th floor, Lakeview Residency, Road No. 2, Kondapur. It\'s opposite Ratnadeep supermarket. ' +
+        'To get in, use Gate 2 and tell security the flat number. I can also send you the map pin by SMS.',
     );
+  });
+
+  test('landmarks and gate notes read as sentences', () => {
+    const only = (landmarks: string, gate_instructions = '') => directionsText({ ...emptyLocation(), landmarks, gate_instructions });
+    expect(only('Next to the SBI ATM')).toBe("It's next to the SBI ATM.");
+    expect(only('The big banyan tree')).toBe('Look for the big banyan tree.');
+    expect(only('SBI ATM,')).toBe('Look for SBI ATM.');
+    expect(only('', 'Gate 2 is open all night.')).toBe('To get in, Gate 2 is open all night.');
+    expect(only('', 'Take the lift to 4')).toBe('To get in, take the lift to 4.');
   });
 
   test('with only a pin, the map hint stands in for the address', () => {

@@ -1,7 +1,13 @@
 // Settings, Today and the Assistant setup screens against the in-memory v2 server.
 
 jest.mock('expo-file-system', () => require('../../test/expoFileSystemMock').expoFileSystemMock);
-jest.mock('expo-router', () => ({ ...jest.requireActual('expo-router'), router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() } }));
+// The screen's navigation object: tests read the beforeRemove listener from it.
+const mockNavigation = { listeners: {} as Record<string, (e: unknown) => void>, addListener: jest.fn(), dispatch: jest.fn() };
+jest.mock('expo-router', () => ({
+  ...jest.requireActual('expo-router'),
+  router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
+  useNavigation: () => mockNavigation,
+}));
 jest.mock('@maplibre/maplibre-react-native', () => {
   const { View } = require('react-native');
   return { Map: View, Camera: () => null, Marker: View };
@@ -13,7 +19,7 @@ jest.mock('expo-location', () => ({
   reverseGeocodeAsync: jest.fn(async () => [{ street: 'Road No. 2', district: 'Kondapur', city: 'Hyderabad', postalCode: '500084' }]),
 }));
 
-import { fireEvent, screen, waitFor, within } from '@testing-library/react-native';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
 
 import AssistantHub from '../../app/(tabs)/assistant';
@@ -117,6 +123,55 @@ describe('Setup screens', () => {
     expect(requests('PUT', '/location')[0].body).toMatchObject({ landmarks: 'Opposite Ratnadeep, behind', lat: 17.4612 });
     expect(await screen.findByText('Location saved. Delivery partners get these directions.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Saved' })).toBeDisabled();
+  });
+
+  test('Location: pin, then directions, then what the assistant will say', async () => {
+    await renderScreen(<LocationScreen />);
+    await screen.findByRole('button', { name: 'Saved' });
+    expect(screen.getAllByTestId(/^location-/).map((n) => n.props.testID)).toEqual(['location-pin', 'location-directions', 'location-preview']);
+    expect(screen.getByText('1. Pin your door')).toBeTruthy();
+    expect(within(screen.getByTestId('location-pin')).getByRole('button', { name: 'My location' })).toBeTruthy();
+    expect(within(screen.getByTestId('location-pin')).getByRole('button', { name: 'Paste Maps link' })).toBeTruthy();
+    for (const label of ['Flat / house no. and floor', 'Building / society', 'Street and area', 'Landmark', 'Gate and entry']) {
+      expect(within(screen.getByTestId('location-directions')).getByLabelText(label)).toBeTruthy();
+    }
+    expect(within(screen.getByTestId('location-preview')).getByText(/Only delivery partners hear these directions/)).toBeTruthy();
+  });
+
+  test('Location: the map line can fill in the street and area', async () => {
+    await renderScreen(<LocationScreen />);
+    await screen.findByRole('button', { name: 'Saved' });
+    const hint = server.state.profile.location.geocoded_hint;
+    await fireEvent.press(screen.getByRole('button', { name: 'Use this as the street and area' }));
+    expect(screen.getByLabelText('Street and area').props.value).toBe(hint);
+    expect(screen.getByRole('button', { name: 'Save location' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Use this as the street and area' })).toBeNull();
+  });
+
+  test('Location: leaving with unsaved changes asks first', async () => {
+    mockNavigation.addListener.mockImplementation((name: string, cb: (e: unknown) => void) => {
+      mockNavigation.listeners[name] = cb;
+      return () => delete mockNavigation.listeners[name];
+    });
+    await renderScreen(<LocationScreen />);
+    await screen.findByRole('button', { name: 'Saved' });
+    const leave = async () => {
+      const e = { preventDefault: jest.fn(), data: { action: { type: 'GO_BACK' } } };
+      await act(async () => mockNavigation.listeners.beforeRemove(e));
+      return e;
+    };
+    // Nothing changed: it just goes.
+    expect((await leave()).preventDefault).not.toHaveBeenCalled();
+    await fireEvent.changeText(screen.getByLabelText('Gate and entry'), 'Ring twice');
+    const e = await leave();
+    expect(e.preventDefault).toHaveBeenCalled();
+    expect(await screen.findByText('Leave without saving?')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Keep editing' }));
+    expect(mockNavigation.dispatch).not.toHaveBeenCalled();
+    await leave();
+    await fireEvent.press(await screen.findByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(mockNavigation.dispatch).toHaveBeenCalledWith({ type: 'GO_BACK' }));
+    expect(requests('PUT', '/location')).toHaveLength(0);
   });
 
   test('Location: a Maps link moves the pin and the map line updates', async () => {

@@ -1,6 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import * as ExpoLocation from 'expo-location';
-import { useRef, useState } from 'react';
+import { useNavigation } from 'expo-router';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Linking, StyleSheet, View } from 'react-native';
 
 import { PinMap } from '../components/domain/MapView';
@@ -9,6 +10,7 @@ import { BottomSheet } from '../components/ui/BottomSheet';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Chip } from '../components/ui/Chip';
+import { useConfirm } from '../components/ui/ConfirmSheet';
 import { Screen } from '../components/ui/Screen';
 import { Section } from '../components/ui/Section';
 import { SkeletonRows } from '../components/ui/Skeleton';
@@ -48,6 +50,31 @@ export default function LocationScreen() {
 
   const dirty = !!saved && locationChanged(loc, saved);
   const pinned = loc.lat != null && loc.lng != null;
+
+  // Leaving with unsaved changes asks first (back button, gesture or header).
+  const navigation = useNavigation();
+  const confirm = useConfirm();
+  const dirtyRef = useRef(dirty);
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  });
+  useEffect(
+    () =>
+      navigation.addListener('beforeRemove', (e) => {
+        if (!dirtyRef.current) return;
+        e.preventDefault();
+        void confirm({
+          title: 'Leave without saving?',
+          message: 'Your changes to the delivery location are not saved yet.',
+          confirmLabel: 'Discard changes',
+          cancelLabel: 'Keep editing',
+          destructive: true,
+        }).then((leave) => {
+          if (leave) navigation.dispatch(e.data.action);
+        });
+      }),
+    [navigation, confirm],
+  );
 
   // A live "Map says" line from the phone's geocoder whenever the pin moves.
   const lookup = useRef(0);
@@ -134,7 +161,7 @@ export default function LocationScreen() {
       }
       testID="location"
     >
-      <Section title="Pin your door" grouped={false}>
+      <Section title="1. Pin your door" grouped={false} testID="location-pin">
         <View>
           <PinMap lat={loc.lat} lng={loc.lng} onMove={movePin} height={260} />
           <View style={styles.overlay} pointerEvents="box-none">
@@ -169,20 +196,29 @@ export default function LocationScreen() {
               {mapSays.text || (pinned ? 'Save to look up this spot' : 'No pin yet. Long-press the map at your gate.')}
             </Text>
           </View>
-          {mapSays.busy ? <ActivityIndicator size="small" color={t.color.primary} /> : null}
+          {mapSays.busy ? <ActivityIndicator size="small" color={t.color.primary} accessibilityLabel="Looking up this spot" /> : null}
         </View>
+        {mapSays.text && !mapSays.busy && loc.address.trim() !== mapSays.text ? (
+          <Button
+            title="Use this as the street and area"
+            icon="arrow-down"
+            variant="ghost"
+            size="sm"
+            onPress={() => setLoc((l) => ({ ...l, address: mapSays.text }))}
+          />
+        ) : null}
         <Text variant="footnote" color="text2">
           Long-press the map at your exact gate to move the pin.
         </Text>
       </Section>
 
-      <Section title="Directions for delivery partners" grouped={false}>
+      <Section title="2. Directions for delivery partners" grouped={false} testID="location-directions">
         <Card>
           <TextField label="Flat / house no. and floor" value={loc.floor_unit} onChangeText={set('floor_unit')} placeholder="Flat 402, 4th floor" />
           <TextField label="Building / society" value={loc.building} onChangeText={set('building')} placeholder="Lakeview Residency, Block B" />
-          <TextField label="Street and area" value={loc.address} onChangeText={set('address')} placeholder="Road No. 2, Kondapur" multiline />
+          <TextField label="Street and area" value={loc.address} onChangeText={set('address')} placeholder="Road No. 2, Kondapur" multiline minLines={1} />
           <View style={styles.field}>
-            <TextField label="Landmark" value={loc.landmarks} onChangeText={set('landmarks')} placeholder="Opposite Ratnadeep supermarket" multiline />
+            <TextField label="Landmark" value={loc.landmarks} onChangeText={set('landmarks')} placeholder="Opposite Ratnadeep supermarket" multiline minLines={1} />
             <View style={styles.chips}>
               {LANDMARK_HINTS.map((h) => (
                 <Chip key={h} kind="suggestion" label={h.trim()} onPress={() => addHint('landmarks', h)} />
@@ -190,7 +226,7 @@ export default function LocationScreen() {
             </View>
           </View>
           <View style={styles.field}>
-            <TextField label="Gate and entry" value={loc.gate_instructions} onChangeText={set('gate_instructions')} placeholder="Use Gate 2, take the lift" multiline />
+            <TextField label="Gate and entry" value={loc.gate_instructions} onChangeText={set('gate_instructions')} placeholder="Use Gate 2, take the lift" multiline minLines={1} />
             <View style={styles.chips}>
               {GATE_HINTS.map((h) => (
                 <Chip key={h} kind="suggestion" label={h} onPress={() => addHint('gate_instructions', h)} />
@@ -200,7 +236,7 @@ export default function LocationScreen() {
         </Card>
       </Section>
 
-      <Section title="What the assistant will say" grouped={false}>
+      <Section title="3. What the assistant will say" grouped={false} testID="location-preview">
         <Card tone="primary">
           <Text variant="body" color="onPrimaryContainer">
             {preview || 'Add your flat, building and a landmark, and your assistant will guide riders to the door.'}
