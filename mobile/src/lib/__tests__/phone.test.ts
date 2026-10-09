@@ -1,4 +1,4 @@
-import { contactName, displayNumber, isDialable, normalizeNumber, numbersLabel, sameNumber, searchContacts } from '../phone';
+import { contactName, displayNumber, isDialable, normalizeNumber, normalizePrefix, numbersLabel, sameNumber, searchContacts } from '../phone';
 
 // The same cases backend/opencall/screening.normalize_number gives.
 test.each([
@@ -60,4 +60,14 @@ test('searchContacts matches names or digits, names A to Z', () => {
   expect(searchContacts(contacts, 'off').map((c) => c.name)).toEqual(['Kiran (office)']);
   expect(searchContacts(contacts, '9866 5').map((c) => c.name)).toEqual(['Priya']);
   expect(searchContacts(contacts, '9')).toEqual([]);
+});
+
+test('normalizePrefix puts a series in the form the server compares', () => {
+  expect(normalizePrefix('140')).toBe('+91140');
+  expect(normalizePrefix('0140')).toBe('+91140');
+  expect(normalizePrefix('+92')).toBe('+92');
+  expect(normalizePrefix('0092 3')).toBe('+923');
+  expect(normalizePrefix('+1 (800)')).toBe('+1800');
+  expect(normalizePrefix('800', '+1')).toBe('+1800');
+  expect(normalizePrefix(' ')).toBe('');
 });

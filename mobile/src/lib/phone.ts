@@ -62,3 +62,15 @@ export function numbersLabel(numbers: string[], contacts: NamedNumber[], homeCc 
   const names = numbers.map((n) => displayNumber(contacts, n, homeCc));
   return names.length > 2 ? `${names.slice(0, 2).join(', ')} +${names.length - 2}` : names.join(', ');
 }
+
+/** A blocked-number prefix in the form the server compares against
+ *  ("+91140"): the server checks it against numbers in full international
+ *  form, so "140" or "0140" means the home country's 140 series. */
+export function normalizePrefix(raw: string, homeCc = '+91'): string {
+  const text = raw.trim();
+  const digits = text.replace(/\D/g, '');
+  if (!digits) return '';
+  if (text.startsWith('+')) return `+${digits}`;
+  if (digits.startsWith('00')) return `+${digits.slice(2)}`;
+  return `${homeCc}${digits.replace(/^0+/, '')}`;
+}

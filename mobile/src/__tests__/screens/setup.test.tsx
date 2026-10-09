@@ -20,7 +20,9 @@ jest.mock('expo-location', () => ({
 }));
 
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
+import { Contact, requestPermissionsAsync } from 'expo-contacts';
 import { router } from 'expo-router';
+import { Linking } from 'react-native';
 
 import AssistantHub from '../../app/(tabs)/assistant';
 import Today from '../../app/(tabs)/index';
@@ -196,6 +198,60 @@ describe('Setup screens', () => {
     await waitFor(() => expect(server.state.profile.blocked_numbers).not.toContain(blocked));
     await fireEvent.press(await screen.findByRole('button', { name: 'Undo' }));
     await waitFor(() => expect(server.state.profile.blocked_numbers).toContain(blocked));
+  });
+
+  test('Screening: the country reads "India (+91)" and says it is not your phone number', async () => {
+    await renderScreen(<Screening />);
+    expect(await screen.findByText('India (+91)')).toBeTruthy();
+    expect(screen.getByText('Not your phone number. It tells local callers from international ones.')).toBeTruthy();
+  });
+
+  test('Screening: contacts sync shows a spinner, a message and when it last ran', async () => {
+    (Contact.getAllDetails as jest.Mock).mockResolvedValueOnce([
+      { fullName: 'Amma', phones: [{ number: '098480 12345' }] },
+      { fullName: 'Ravi', phones: [{ number: '+91 90000 11111' }, { number: '121' }] },
+    ]);
+    await renderScreen(<Screening />);
+    const row = within(await screen.findByTestId('contacts-sync'));
+    expect(row.getByText('3 numbers on your server · not synced from this phone yet')).toBeTruthy();
+    await fireEvent.press(row.getByRole('button', { name: 'Sync now' }));
+    expect(await screen.findByText('Synced 2 numbers. Saved contacts always get through.')).toBeTruthy();
+    expect(within(screen.getByTestId('contacts-sync')).getByText('Last synced just now · 2 numbers')).toBeTruthy();
+    expect(requests('PUT', '/contacts')[0].body).toEqual([
+      { number: '+919848012345', name: 'Amma' },
+      { number: '+919000011111', name: 'Ravi' },
+    ]);
+  });
+
+  test('Screening: contacts access turned off explains and opens Settings', async () => {
+    const settings = jest.spyOn(Linking, 'openSettings').mockResolvedValue(undefined);
+    (requestPermissionsAsync as jest.Mock).mockResolvedValueOnce({ granted: false, canAskAgain: false, status: 'denied' });
+    await renderScreen(<Screening />);
+    await fireEvent.press(within(await screen.findByTestId('contacts-sync')).getByRole('button', { name: 'Sync now' }));
+    expect(await screen.findByText('Contacts access is off for OpenCall. Turn it on in Settings, then sync again.')).toBeTruthy();
+    expect(requests('PUT', '/contacts')).toHaveLength(0);
+    await fireEvent.press(screen.getByRole('button', { name: 'Open Settings' }));
+    expect(settings).toHaveBeenCalledTimes(1);
+  });
+
+  test('Screening: a VIP can be picked from contacts, and a typed number is saved in full', async () => {
+    await renderScreen(<Screening />);
+    await fireEvent.press((await screen.findAllByRole('button', { name: 'Add' }))[0]);
+    await fireEvent.changeText(screen.getByLabelText('Phone number'), '098665 54433');
+    expect(screen.getByText('Saved as +91 98665 54433 (Priya).')).toBeTruthy();
+    await fireEvent.press(within(screen.getByTestId('add-from-contacts')).getByRole('button', { name: /^Kiran \(office\),/ }));
+    await waitFor(() => expect(server.state.profile.vip_numbers).toContain('+919177001122'));
+    expect(await screen.findByText('Kiran (office) is now a VIP.')).toBeTruthy();
+  });
+
+  test('Screening: a blocked series is saved with the country code the server compares', async () => {
+    await renderScreen(<Screening />);
+    await fireEvent.press((await screen.findAllByRole('button', { name: 'Add' }))[1]);
+    await fireEvent.press(screen.getByRole('tab', { name: 'Numbers starting with' }));
+    await fireEvent.changeText(screen.getByLabelText('Starts with'), '0120');
+    expect(screen.getByText('Blocks every number starting +91120.')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Block' }));
+    await waitFor(() => expect(server.state.profile.blocked_prefixes).toEqual(['+91140', '+91120']));
   });
 
   test('Languages: reorder and add caller languages', async () => {

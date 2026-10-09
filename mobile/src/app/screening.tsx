@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Linking, StyleSheet, View } from 'react-native';
 
+import { ContactPicker } from '../components/domain/ContactPicker';
 import { Banner } from '../components/ui/Banner';
 import { BottomSheet } from '../components/ui/BottomSheet';
 import { Button } from '../components/ui/Button';
@@ -19,7 +20,8 @@ import { useProfile } from '../hooks/useProfile';
 import { api } from '../lib/api';
 import { lastSync, syncContacts, type LastSync } from '../lib/contacts';
 import { useTokens } from '../lib/design/theme';
-import { cleanNumber, prettyNumber, timeAgo } from '../lib/format';
+import { prettyNumber, timeAgo } from '../lib/format';
+import { contactName, isDialable, normalizeNumber, normalizePrefix, sameNumber, type NamedNumber } from '../lib/phone';
 
 type AddKind = 'vip' | 'block' | 'prefix';
 
@@ -43,12 +45,14 @@ export default function Screening() {
   const sync = useAsyncAction(
     async () => {
       setDenied(null);
-      const r = await syncContacts();
+      const r = await syncContacts(profile.data?.home_country_code);
       if (!r.ok) {
         setDenied({ message: r.message, settings: !r.canAskAgain });
         return null;
       }
       setSynced({ at: r.at, count: r.count });
+      // Names for VIPs, blocks and the contact pickers come from the server's copy.
+      void profile.reload();
       return r;
     },
     { success: (r) => (r ? `Synced ${r.count} numbers. Saved contacts always get through.` : ''), error: (e) => `Sync failed. ${errorMessage(e)}` },
@@ -90,15 +94,18 @@ export default function Screening() {
     });
   };
 
+  const homeCc = p.home_country_code;
+  const who = (n: string) => contactName(p.contacts, n, homeCc) ?? prettyNumber(n);
   const add = async (kind: AddKind, value: string) => {
     if (kind === 'block') {
+      if (p.blocked_numbers.some((n) => sameNumber(n, value, homeCc))) throw new Error('Already blocked.');
       const next = await api.blockNumber(value);
       profile.mutate(() => next);
-      toast.success(`Blocked ${prettyNumber(value)}. Your assistant won't answer it.`);
+      toast.success(`Blocked ${who(value)}. Your assistant won't answer it.`);
     } else {
       const key = kind === 'vip' ? 'vip_numbers' : 'blocked_prefixes';
-      if (p[key].includes(value)) throw new Error('Already on the list.');
-      const ok = await profile.patch({ [key]: [...p[key], value] }, kind === 'vip' ? `${prettyNumber(value)} is now a VIP.` : `Blocking numbers starting ${value}.`);
+      if (p[key].some((x) => (kind === 'vip' ? sameNumber(x, value, homeCc) : x === value))) throw new Error('Already on the list.');
+      const ok = await profile.patch({ [key]: [...p[key], value] }, kind === 'vip' ? `${who(value)} is now a VIP.` : `Blocking numbers starting ${value}.`);
       if (!ok) throw new Error('Not saved.');
     }
     setAdding(null);
@@ -134,8 +141,15 @@ export default function Screening() {
           icon="people-outline"
           iconTone="success"
           title="Sync contacts"
-          subtitle={synced ? `Last synced ${timeAgo(synced.at)} · ${synced.count} numbers` : 'Not synced yet'}
+          subtitle={
+            synced
+              ? `Last synced ${timeAgo(synced.at)} · ${synced.count} numbers`
+              : p.contacts.length
+                ? `${p.contacts.length} numbers on your server · not synced from this phone yet`
+                : 'Not synced yet'
+          }
           trailing={<Button title={sync.busy ? 'Syncing' : 'Sync now'} size="sm" variant="tonal" icon="sync" loading={sync.busy} onPress={() => void sync.run()} />}
+          testID="contacts-sync"
         />
       </Section>
       {denied ? (
@@ -154,7 +168,7 @@ export default function Screening() {
       >
         {p.vip_numbers.length ? (
           p.vip_numbers.map((n) => (
-            <NumberRow key={n} icon="star" number={n} name={nameFor(p.contacts, n)} onRemove={() => removeFrom('vip_numbers', n, `Removed ${prettyNumber(n)} from VIPs.`)} />
+            <NumberRow key={n} icon="star" number={n} name={contactName(p.contacts, n, homeCc)} onRemove={() => removeFrom('vip_numbers', n, `Removed ${prettyNumber(n)} from VIPs.`)} />
           ))
         ) : (
           <EmptyRow text="No VIPs yet." />
@@ -165,7 +179,7 @@ export default function Screening() {
         {p.blocked_numbers.length || p.blocked_prefixes.length ? (
           <>
             {p.blocked_numbers.map((n) => (
-              <NumberRow key={n} icon="ban" number={n} name={nameFor(p.contacts, n)} onRemove={() => void unblock(n)} removeLabel="Unblock" />
+              <NumberRow key={n} icon="ban" number={n} name={contactName(p.contacts, n, homeCc)} onRemove={() => void unblock(n)} removeLabel="Unblock" />
             ))}
             {p.blocked_prefixes.map((prefix) => (
               <NumberRow
@@ -185,12 +199,21 @@ export default function Screening() {
       </Section>
       <View style={{ height: t.space.lg }} />
 
-      <AddNumberSheet kind={adding} onClose={() => setAdding(null)} onAdd={add} onKind={setAdding} />
+      <AddNumberSheet
+        kind={adding}
+        contacts={p.contacts}
+        homeCc={homeCc}
+        onSyncContacts={() => {
+          setAdding(null);
+          void sync.run();
+        }}
+        onClose={() => setAdding(null)}
+        onAdd={add}
+        onKind={setAdding}
+      />
     </Screen>
   );
 }
-
-const nameFor = (contacts: { number: string; name: string }[], n: string) => contacts.find((c) => c.number === n)?.name;
 
 function NumberRow({
   icon,
@@ -236,11 +259,17 @@ function EmptyRow({ text }: { text: string }) {
 
 function AddNumberSheet({
   kind,
+  contacts,
+  homeCc,
+  onSyncContacts,
   onClose,
   onAdd,
   onKind,
 }: {
   kind: AddKind | null;
+  contacts: NamedNumber[];
+  homeCc: string;
+  onSyncContacts: () => void;
   onClose: () => void;
   onAdd: (kind: AddKind, value: string) => Promise<void>;
   onKind: (k: AddKind) => void;
@@ -256,16 +285,17 @@ function AddNumberSheet({
     setError(null);
   }
 
-  const value = cleanNumber(text);
-  const digits = value.replace(/\D/g, '').length;
-  const valid = kind === 'prefix' ? digits >= 2 : digits >= 5;
+  // Saved in the server's form, so "098665 54433" and "+91 98665 54433" are one number.
+  const value = kind === 'prefix' ? normalizePrefix(text, homeCc) : normalizeNumber(text, homeCc);
+  const valid = kind === 'prefix' ? value.replace(/\D/g, '').length >= 3 : isDialable(text);
+  const name = kind !== 'prefix' && valid ? contactName(contacts, value, homeCc) : undefined;
 
-  const submit = async () => {
+  const submit = async (number = value) => {
     if (!kind) return;
     setBusy(true);
     setError(null);
     try {
-      await onAdd(kind, value);
+      await onAdd(kind, number);
     } catch (e) {
       setError(errorMessage(e));
     } finally {
@@ -295,7 +325,15 @@ function AddNumberSheet({
           keyboardType="phone-pad"
           autoFocus
           placeholder={kind === 'prefix' ? '+92 or 140' : '+91 98480 12345'}
-          helper={kind === 'prefix' ? 'For example 140, the series telemarketers use in India.' : 'Include the country code for numbers from abroad.'}
+          helper={
+            valid
+              ? kind === 'prefix'
+                ? `Blocks every number starting ${value}.`
+                : `Saved as ${prettyNumber(value)}${name ? ` (${name})` : ''}.`
+              : kind === 'prefix'
+                ? 'For example 140, the series telemarketers use in India.'
+                : 'Include the country code for numbers from abroad.'
+          }
           error={error}
         />
         <Button
@@ -307,6 +345,14 @@ function AddNumberSheet({
           disabled={!valid}
           onPress={() => void submit()}
         />
+        {kind === 'vip' || kind === 'block' ? (
+          <View style={styles.sheet}>
+            <Text variant="overline" color="text2">
+              Or pick from your contacts
+            </Text>
+            <ContactPicker contacts={contacts} homeCc={homeCc} onPick={(n) => void submit(n)} onSyncContacts={onSyncContacts} pageSize={4} testID="add-from-contacts" />
+          </View>
+        ) : null}
       </View>
     </BottomSheet>
   );

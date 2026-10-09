@@ -36,7 +36,7 @@ export function CountryPicker({ value, onChange, error, disabled, testID }: Coun
       options={options}
       searchable
       onChange={(v) => onChange(v.split('|')[0])}
-      helper="Used to tell local callers from international ones. This is not your phone number."
+      helper="Not your phone number. It tells local callers from international ones."
       error={error}
       disabled={disabled}
     />
