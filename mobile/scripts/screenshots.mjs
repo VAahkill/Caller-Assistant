@@ -50,6 +50,8 @@ const SHOTS = [
   },
   { name: 'assistant', path: '/assistant' },
   { name: 'settings', path: '/settings' },
+  { name: 'settings-parts', path: '/settings', tap: 'Speech and AI' },
+  { name: 'settings-forget', path: '/settings', tap: 'Forget this server' },
   { name: 'call-live', path: '/call/call-live-swiggy' },
   { name: 'call-ended', path: '/call/call-rajesh' },
   { name: 'call-scam', path: '/call/call-kyc' },
