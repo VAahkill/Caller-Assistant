@@ -7,7 +7,7 @@ import { File } from 'expo-file-system';
 
 import { BAD_TOKEN, loadConfig, NOT_SET_UP, wsUrl } from './api';
 import { parseEvent, type ServerEvent, type SimulateEvent } from './events';
-import { getTransport, SOCKET_OPEN, type SocketLike } from './transport';
+import { getTransport, refusedToken, SOCKET_OPEN, type SocketLike } from './transport';
 
 export interface PracticeOptions {
   /** The pretend caller's number (screening applies to it). */
@@ -48,10 +48,15 @@ interface Pending {
   timedOut: boolean;
 }
 
+const CUT_OFF = 'The practice call was cut off. Check the connection to your server.';
+
 function closeMessage(code: number, reason: string): string | null {
   if (code === 1000 || code === 1005) return null;
-  if (code === 4401) return BAD_TOKEN;
-  return reason ? `The practice call was cut off: ${reason}` : 'The practice call was cut off. Check the connection to your server.';
+  if (refusedToken(code, reason)) return BAD_TOKEN;
+  // 1006 carries the platform's own wording (an OkHttp exception on Android),
+  // which means nothing to the owner. A reason the server gave is kept.
+  if (code === 1006 || !reason) return CUT_OFF;
+  return `The practice call was cut off: ${reason}`;
 }
 
 export class PracticeCall {

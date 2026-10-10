@@ -129,10 +129,14 @@ export class MockEventsSocket extends MockSocketBase {
     super(server?.latencyMs ? 400 : 0);
   }
 
-  /** A socket the server refuses with 4401, like a wrong token. */
+  /**
+   * A socket the server refuses, like a wrong token. The server closes before
+   * accepting, so the phone sees the handshake fail with HTTP 403, reported
+   * as 1006 with OkHttp's message (Android).
+   */
   static refused(): MockEventsSocket {
     const s = new MockEventsSocket();
-    s.close(4401, 'bad token');
+    s.close(1006, "Expected HTTP 101 response but was '403 Forbidden'");
     return s;
   }
 

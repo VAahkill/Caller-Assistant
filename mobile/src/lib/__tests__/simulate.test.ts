@@ -168,3 +168,18 @@ test('a dropped connection rejects what was waiting and says why', async () => {
   await expect(pending).rejects.toThrow('The practice call ended before the server answered.');
   expect(r.closes).toEqual([{ code: 1006, message: 'The practice call was cut off. Check the connection to your server.' }]);
 });
+
+test.each([
+  ['an HTTP 403 handshake (how Android reports a close before accept)', 1006, "Expected HTTP 101 response but was '403 Forbidden'", BAD_TOKEN],
+  ['a 4401 close', 4401, '', BAD_TOKEN],
+  ['a failed connection, without the platform wording', 1006, 'Failed to connect to /192.168.1.7:8000', 'The practice call was cut off. Check the connection to your server.'],
+  ['a close the server explained', 1011, 'The speech models are still loading', 'The practice call was cut off: The speech models are still loading'],
+])('the start fails clearly on %s', async (_what, code, reason, message) => {
+  await saveConfig({ url: 'http://192.168.1.7:8000', token: 't' });
+  const socket = new HandSocket();
+  setTransport(handTransport(socket));
+  const p = PracticeCall.start({}, recorder().handlers);
+  await tick();
+  socket.close(code, reason);
+  await expect(p).rejects.toThrow(message);
+});
