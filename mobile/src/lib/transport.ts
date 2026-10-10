@@ -58,6 +58,15 @@ export interface Transport {
 
 export const SOCKET_OPEN = 1;
 
+/**
+ * The server turned down the socket's token. It means to close with 4401, but
+ * a close before the handshake reaches the phone as an HTTP 403, which the
+ * WebSocket reports as code 1006 with the status in the reason.
+ */
+export function refusedToken(code?: number, reason?: string): boolean {
+  return code === 4401 || (code === 1006 && /\b40[13]\b/.test(reason ?? ''));
+}
+
 const platformTransport: Transport = {
   fetch: (url, init) => fetch(url, init as RequestInit),
   openSocket: (url) => new WebSocket(url) as unknown as SocketLike,

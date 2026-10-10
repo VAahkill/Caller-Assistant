@@ -4,7 +4,7 @@ import { AppState, Platform, Vibration } from 'react-native';
 import { loadConfig, wsUrl } from './api';
 import { initialLive, liveReducer, parseEvent, type LiveData, type SecurityAlert, type ServerEvent } from './events';
 import { notifyLocal, pushRegistered } from './notifications';
-import { getTransport, SOCKET_OPEN, type SocketLike } from './transport';
+import { getTransport, refusedToken, SOCKET_OPEN, type SocketLike } from './transport';
 
 export type { CallView, PendingQuestion, SecurityAlert } from './events';
 
@@ -85,7 +85,14 @@ export function LiveProvider({ children }: { children: ReactNode }) {
         if (!url || cancelled) return;
         const socket = getTransport().openSocket(url);
         ws.current = socket;
+        // Every handler first checks the socket is still the current one: after a
+        // reconnect the old socket's late events must not touch the app.
+        const stale = () => cancelled || ws.current !== socket;
         socket.onopen = () => {
+          if (stale()) {
+            socket.close();
+            return;
+          }
           failures.current = 0;
           setConnected(true);
           // The server sends a snapshot of each live call right away. Calls it
@@ -95,6 +102,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           settle = setTimeout(() => dispatch({ type: 'dropStale' }), SNAPSHOT_GRACE_MS);
         };
         socket.onmessage = (m) => {
+          if (stale()) return;
           const parsed = parseEvent(m.data);
           if (!parsed.ok) {
             console.warn('Ignored a live event:', parsed.reason);
@@ -105,11 +113,12 @@ export function LiveProvider({ children }: { children: ReactNode }) {
           notifyFor(ev);
         };
         socket.onerror = () => undefined; // onclose follows and schedules the retry
-        socket.onclose = () => {
-          if (ws.current === socket) ws.current = null;
+        socket.onclose = (e) => {
+          if (stale()) return;
+          ws.current = null;
           setConnected(false);
-          if (cancelled) return;
-          failures.current += 1;
+          // A refused token never gets better by retrying fast.
+          failures.current = refusedToken(e?.code, e?.reason) ? Math.max(failures.current + 1, 10) : failures.current + 1;
           retry = setTimeout(() => setAttempt((a) => a + 1), Math.min(30000, 2000 * failures.current));
         };
       })
@@ -118,8 +127,17 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       if (retry) clearTimeout(retry);
       if (settle) clearTimeout(settle);
-      ws.current?.close();
+      const old = ws.current;
       ws.current = null;
+      setConnected(false);
+      if (old) {
+        old.onmessage = null;
+        old.onclose = null;
+        // On Android, close() does nothing while the socket is still connecting,
+        // so one that opens later is closed then.
+        old.onopen = () => old.close();
+        old.close();
+      }
     };
   }, [attempt]);
 
