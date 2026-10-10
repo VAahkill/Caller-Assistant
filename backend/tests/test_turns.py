@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from opencall.phrases import phrase
+from opencall.phrases import fill, phrase
 from opencall.providers.llm import LLMError, LLMTimeout, ScriptedLLM
 from opencall.providers.stt import Transcription
 from opencall.telephony.queue_bridge import QueueBridge
@@ -415,5 +415,19 @@ async def test_words_the_model_already_has_are_not_heard_twice(engine):
     assert heard == ["Hello, Amazon delivery.", "I'm at your gate."]
     # Both reach the model, once each (two caller turns in a row become one message).
     assert llm.calls[-1][-1] == {"role": "user", "content": "Hello, Amazon delivery.\nI'm at your gate."}
+    await bridge.hangup()
+    await task
+
+
+async def test_a_message_tag_on_its_own_is_confirmed_not_apologised_for(engine):
+    # Small models often answer "please tell him to call me" with only the tag.
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = ScriptedLLM(lambda m: "[MESSAGE: Suresh wants a call back about the report]")
+    await s.handle_text("This is Suresh. Ask Rahul to call me back about the report.", "en")
+    assert assistant_lines(s)[-1] == fill(phrase("message_taken", "en"), engine.store.profile.user_name)
+    await s.handle_text("That's all, thanks.", "en")
+    assert assistant_lines(s)[-1] == fill(phrase("message_again", "en"), engine.store.profile.user_name)
+    assert not events(engine, "turn_error")
+    assert phrase("fallback", "en") not in assistant_lines(s)
     await bridge.hangup()
     await task

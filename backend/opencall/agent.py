@@ -254,6 +254,7 @@ class Conversation:
     heard: list[str] = field(default_factory=list)  # the other party's own words
     _delivery: bool = False
     _turns: int = 0
+    _messages_taken: int = 0
 
     @classmethod
     def inbound(cls, profile: Profile, llm: LLM, number: str, contact_name: str, speakable: list[str],
@@ -457,7 +458,13 @@ class Conversation:
                         log.warning("The model chose %s without saying anything; saying a fixed line first.",
                                     type(a).__name__)
                         yield self.fixed_say("filler" if isinstance(a, Hold) else "goodbye")
-                    acted = acted or isinstance(a, (Hold, EndCall, SendLocation))
+                    elif isinstance(a, TakeMessage) and not spoken and not acted:
+                        # A message tag on its own: tell the caller it was taken, rather
+                        # than asking them to say it again.
+                        yield self.fixed_say("message_again" if self._messages_taken else "message_taken")
+                    if isinstance(a, TakeMessage):
+                        self._messages_taken += 1
+                    acted = acted or isinstance(a, (Hold, EndCall, SendLocation, TakeMessage))
                     yield a
                     if isinstance(a, Hold):
                         stop = True  # wait for the user before saying anything else
