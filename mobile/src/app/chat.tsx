@@ -152,6 +152,7 @@ export default function Chat() {
         placeholder={`Message ${name}`}
         hint={items.length === 0 ? 'Type, or hold the mic and speak.' : undefined}
         busy={!!sending}
+        busyMessage={`Wait for ${name}'s reply first.`}
         onSend={send}
         onVoice={sendVoice}
       />

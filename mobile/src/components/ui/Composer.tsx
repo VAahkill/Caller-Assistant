@@ -21,8 +21,12 @@ export interface ComposerProps {
   hint?: string;
   /** Quick replies shown as chips. */
   suggestions?: string[];
-  /** Sending is in flight: the send button shows a spinner and input waits. */
+  /** Sends a tapped chip (default onSend), e.g. to tag the built-in English replies as English. */
+  onSuggestion?: (text: string) => unknown;
+  /** Sending is in flight: the send button shows a spinner, and input and the mic wait. */
   busy?: boolean;
+  /** Said when the mic is touched while busy (default "Wait for the last message to go through."). */
+  busyMessage?: string;
   disabled?: boolean;
   /** Why it is disabled, shown in place of the box. */
   disabledReason?: string;
@@ -36,6 +40,10 @@ export interface ComposerProps {
 }
 
 const CANCEL_DX = -80;
+// The mic sits this far in from the screen's right edge (with the bar's own
+// 12 dp), clear of Android's back-gesture zone: sliding left to cancel from
+// inside it would go Back instead.
+const EDGE_GAP = 20;
 // A browser textarea starts two rows tall; Android starts at one and grows.
 const WEB_ONE_ROW = Platform.OS === 'web' ? { rows: 1 } : null;
 
@@ -46,7 +54,9 @@ export function Composer({
   placeholder = 'Type a message',
   hint,
   suggestions,
+  onSuggestion,
   busy,
+  busyMessage = 'Wait for the last message to go through.',
   disabled,
   disabledReason,
   bottomInset = true,
@@ -80,8 +90,22 @@ export function Composer({
   // Hold the mic: start on touch, send on release, slide left to cancel.
   // A quick tap locks recording on until Send or Cancel.
   const talkRef = useRef(talk);
+  // While a send is in flight the mic doesn't record: a recording made then
+  // would have nowhere to go.
+  const blockedRef = useRef<string | null>(null);
+  const refused = useRef(false);
   useEffect(() => {
     talkRef.current = talk;
+    blockedRef.current = busy || disabled ? busyMessage : null;
+  });
+  const refuseTalk = () => {
+    const why = blockedRef.current;
+    if (why) toast.info(why);
+    return !!why;
+  };
+  const refuseRef = useRef(refuseTalk);
+  useEffect(() => {
+    refuseRef.current = refuseTalk;
   });
   // PanResponder runs these handlers only during a touch, never while rendering,
   // so reading talkRef in them is safe; the rule cannot see that.
@@ -89,13 +113,23 @@ export function Composer({
   const [pan] = useState(() =>
     PanResponder.create({
       onStartShouldSetPanResponder: () => true,
+      // A list scrolling under the finger must not take the hold away.
+      onPanResponderTerminationRequest: () => false,
       onPanResponderGrant: (e) => {
+        refused.current = refuseRef.current();
+        if (refused.current) return;
         pressStart.current = e.nativeEvent.timestamp;
         setCancelling(false);
         void talkRef.current.start();
       },
-      onPanResponderMove: (_, g) => setCancelling(g.dx < CANCEL_DX),
+      onPanResponderMove: (_, g) => {
+        if (!refused.current) setCancelling(g.dx < CANCEL_DX);
+      },
       onPanResponderRelease: (e, g) => {
+        if (refused.current) {
+          refused.current = false;
+          return;
+        }
         const quick = e.nativeEvent.timestamp - pressStart.current < 350;
         if (quick && g.dx > CANCEL_DX) {
           setLocked(true);
@@ -105,6 +139,10 @@ export function Composer({
         void talkRef.current.stop(g.dx < CANCEL_DX);
       },
       onPanResponderTerminate: () => {
+        if (refused.current) {
+          refused.current = false;
+          return;
+        }
         setCancelling(false);
         void talkRef.current.stop(true);
       },
@@ -116,6 +154,11 @@ export function Composer({
     if (!v || busy || disabled) return;
     setText('');
     await onSend(v);
+  };
+
+  const sendSuggestion = async (value: string) => {
+    if (busy || disabled) return;
+    await (onSuggestion ?? onSend)(value);
   };
 
   const finishLocked = (cancel: boolean) => {
@@ -155,7 +198,7 @@ export function Composer({
           contentContainerStyle={styles.suggestions}
         >
           {suggestions.map((s) => (
-            <Chip key={s} label={s} kind="suggestion" disabled={disabled || busy} onPress={() => void send(s)} />
+            <Chip key={s} label={s} kind="suggestion" disabled={disabled || busy} onPress={() => void sendSuggestion(s)} />
           ))}
         </ScrollView>
       ) : null}
@@ -235,15 +278,17 @@ export function Composer({
               accessibilityRole="button"
               accessibilityLabel="Hold to talk"
               accessibilityHint="Hold to record, release to send. Tap once to record hands-free."
+              accessibilityState={{ disabled: !!busy }}
               accessibilityActions={[{ name: 'activate', label: 'Record hands-free' }]}
               onAccessibilityAction={() => {
+                if (refuseTalk()) return;
                 setLocked(true);
                 void talk.start();
               }}
               style={[
                 styles.mic,
                 talk.recording && styles.micHeld,
-                { backgroundColor: talk.recording ? c.danger : c.primaryContainer },
+                { backgroundColor: talk.recording ? c.danger : c.primaryContainer, opacity: busy && !talk.recording ? 0.45 : 1 },
               ]}
             >
               <Icon name="mic" size={22} color={talk.recording ? c.onPrimary : c.onPrimaryContainer} />
@@ -261,7 +306,7 @@ const styles = StyleSheet.create({
   bleed: { marginHorizontal: -12 },
   suggestions: { gap: 8, paddingHorizontal: 12 },
   hint: { paddingHorizontal: 4 },
-  row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingRight: EDGE_GAP },
   inputBox: { flex: 1, borderWidth: StyleSheet.hairlineWidth, paddingHorizontal: 14, minHeight: 44, justifyContent: 'center' },
   input: { fontSize: 16, maxHeight: 120, paddingVertical: 10, minHeight: 44, outlineWidth: 0 },
   mic: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },

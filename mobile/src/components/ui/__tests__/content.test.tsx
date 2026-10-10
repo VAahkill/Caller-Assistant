@@ -1,9 +1,9 @@
-import { fireEvent, screen } from '@testing-library/react-native';
+import { act, fireEvent, screen } from '@testing-library/react-native';
 import { StyleSheet } from 'react-native';
 
 import { renderUI } from '../../../test/render';
 import type { TranscriptLine } from '../../../lib/types';
-import { player } from '../../../test/expoAudioMock';
+import { player, recorder } from '../../../test/expoAudioMock';
 import { AudioPlayer } from '../AudioPlayer';
 import { Avatar, initials } from '../Avatar';
 import { ChatBubble } from '../ChatBubble';
@@ -113,6 +113,40 @@ describe('Composer', () => {
     await renderUI(<Composer onSend={onSend} suggestions={['Yes, that works', 'Take a message']} />);
     await fireEvent.press(screen.getByRole('button', { name: 'Take a message' }));
     expect(onSend).toHaveBeenCalledWith('Take a message');
+  });
+
+  test('a quick reply can go its own way, e.g. tagged as English', async () => {
+    const onSend = jest.fn();
+    const onSuggestion = jest.fn();
+    await renderUI(<Composer onSend={onSend} onSuggestion={onSuggestion} suggestions={['Take a message']} />);
+    await fireEvent.press(screen.getByRole('button', { name: 'Take a message' }));
+    expect(onSuggestion).toHaveBeenCalledWith('Take a message');
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  test("while a send is in flight the mic doesn't record, and says why", async () => {
+    recorder.record.mockClear();
+    const finger = { touchActive: true, startPageX: 300, startPageY: 700, startTimeStamp: 1, currentPageX: 300, currentPageY: 700, currentTimeStamp: 1, previousPageX: 300, previousPageY: 700, previousTimeStamp: 1 };
+    const touch = { touchHistory: { touchBank: [finger], numberActiveTouches: 1, indexOfSingleActiveTouch: 0, mostRecentTimeStamp: 1 }, nativeEvent: { timestamp: 1 } };
+    const view = await renderUI(<Composer onSend={jest.fn()} onVoice={jest.fn()} busy busyMessage="Wait for Ava's reply first." />);
+    const mic = screen.getByRole('button', { name: 'Hold to talk' });
+    expect(mic).toBeDisabled();
+    await act(async () => {
+      mic.props.onResponderGrant(touch);
+      await Promise.resolve();
+    });
+    expect(recorder.record).not.toHaveBeenCalled();
+    expect(await screen.findByText("Wait for Ava's reply first.")).toBeTruthy();
+    // The accessibility action is refused the same way.
+    await act(async () => fireEvent(mic, 'accessibilityAction', { nativeEvent: { actionName: 'activate' } }));
+    expect(recorder.record).not.toHaveBeenCalled();
+
+    await view.rerender(<Composer onSend={jest.fn()} onVoice={jest.fn()} />);
+    await act(async () => {
+      screen.getByRole('button', { name: 'Hold to talk' }).props.onResponderGrant(touch);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+    });
+    expect(recorder.record).toHaveBeenCalled();
   });
 
   test('shows the mic when empty and voice is supported', async () => {
