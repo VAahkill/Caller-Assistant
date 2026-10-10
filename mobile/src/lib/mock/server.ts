@@ -67,6 +67,13 @@ const PROFILE_PATCH_KEYS: (keyof Profile)[] = [
 
 const COUNTRY_CODE = /^\+[1-9]\d{0,3}$/;
 
+/** The server's check_rule: numbers for a numbers rule, and no end date in the past on a rule that is on. */
+function ruleProblem(rule: { numbers: string[]; enabled: boolean; expires_at: number | null }, numbersNeeded: boolean): string | null {
+  if (numbersNeeded && !rule.numbers.length) return 'Add the phone numbers this is for.';
+  if (rule.expires_at != null && rule.expires_at <= nowS() && rule.enabled) return 'That end date has already passed.';
+  return null;
+}
+
 export class MockServer {
   state: MockState;
   /** Every request, for tests. */
@@ -119,6 +126,7 @@ export class MockServer {
       }
       case 'PUT /away':
         if (typeof body.message !== 'string' || !body.message.trim()) return unprocessable('Say what to tell callers.');
+        if (typeof body.until === 'number' && body.until <= nowS()) return unprocessable('That end time has already passed.');
         s.profile = {
           ...s.profile,
           away: { preset: String(body.preset ?? 'custom'), message: body.message, until: typeof body.until === 'number' ? body.until : null, set_at: nowS() },
@@ -151,6 +159,8 @@ export class MockServer {
           created_at: at,
           updated_at: at,
         };
+        const bad = ruleProblem(ins, ins.applies_to === 'numbers');
+        if (bad) return unprocessable(bad);
         s.profile = { ...s.profile, instructions: [...s.profile.instructions, ins] };
         return ok(ins);
       }
@@ -158,6 +168,9 @@ export class MockServer {
         const found = s.profile.instructions.find((i) => i.id === id);
         if (!found) return notFound();
         const next = { ...found, ...pick(body, ['text', 'enabled', 'applies_to', 'numbers', 'category', 'expires_at']), updated_at: nowS() } as Instruction;
+        // Like the server, the rule as it would be after the change is checked.
+        const bad = ruleProblem(next, next.applies_to === 'numbers');
+        if (bad) return unprocessable(bad);
         s.profile = { ...s.profile, instructions: s.profile.instructions.map((i) => (i.id === id ? next : i)) };
         return ok(next);
       }
@@ -178,6 +191,8 @@ export class MockServer {
           created_at: at,
           updated_at: at,
         };
+        const bad = ruleProblem(note, note.share_with === 'numbers');
+        if (bad) return unprocessable(bad);
         s.profile = { ...s.profile, knowledge: [...s.profile.knowledge, note] };
         return ok(note);
       }
@@ -185,6 +200,8 @@ export class MockServer {
         const found = s.profile.knowledge.find((k) => k.id === id);
         if (!found) return notFound();
         const next = { ...found, ...pick(body, ['text', 'enabled', 'share_with', 'numbers', 'expires_at']), updated_at: nowS() } as KnowledgeNote;
+        const bad = ruleProblem(next, next.share_with === 'numbers');
+        if (bad) return unprocessable(bad);
         s.profile = { ...s.profile, knowledge: s.profile.knowledge.map((k) => (k.id === id ? next : k)) };
         return ok(next);
       }

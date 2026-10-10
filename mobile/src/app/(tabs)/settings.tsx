@@ -163,7 +163,7 @@ export default function Settings() {
         </Section>
       ) : null}
 
-      <Section title="Notifications" footer="Calls, questions from callers and security alerts arrive as notifications, even when the app is closed.">
+      <Section title="Notifications" footer="Calls, questions from callers and security alerts arrive as notifications while the app is open or was used recently. Getting them when it is fully closed needs a build with push set up (see the setup guide).">
         <ListRow
           icon="notifications-outline"
           title="Notifications"
