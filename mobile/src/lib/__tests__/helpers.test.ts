@@ -1,6 +1,6 @@
 import { awayMessage, spokenTime, untilFor } from '../away';
 import { dialerName, prettyNumber } from '../format';
-import { callerName, engineName, greetingLine, ownName } from '../labels';
+import { awaySentence, callerName, engineName, greetingLine, ownName } from '../labels';
 import { moveLanguage, toggleLanguage } from '../languages';
 import { directionsText, geocodeLine, locationChanged } from '../location';
 import { emptyLocation } from '../normalize';
@@ -168,6 +168,11 @@ describe('greeting', () => {
   test('matches the opening line the server speaks', () => {
     expect(greetingLine('arjun', 'Ava')).toBe("Hi, this is Ava, arjun's assistant. Arjun can't take the call right now. How can I help?");
     expect(greetingLine(' ', '')).toBe("Hi, this is the assistant, the owner's assistant. The owner can't take the call right now. How can I help?");
+    // While away, the away status takes the busy line's place, as the server says it.
+    expect(greetingLine('arjun', 'Ava', { message: 'In a meeting until 3 PM' })).toBe(
+      "Hi, this is Ava, arjun's assistant. Arjun is in a meeting until 3 PM. How can I help?",
+    );
+    expect(greetingLine('Arjun', 'Ava', { message: '' })).toContain("Arjun can't take the call right now.");
   });
 });
 
@@ -214,4 +219,13 @@ describe('dialer name', () => {
     expect(dialerName('none')).toBe('Not set up');
     expect(dialerName('custom')).toBe('Custom');
   });
+});
+
+test('the away sentence reads as the server says it', () => {
+  expect(awaySentence('Arjun', "I'm driving.")).toBe('Arjun is driving.');
+  expect(awaySentence('Arjun', 'I am at the gym until 9 AM!')).toBe('Arjun is at the gym until 9 AM.');
+  expect(awaySentence('Arjun', 'Arjun is on leave')).toBe('Arjun is on leave.');
+  expect(awaySentence('arjun', 'OOO until Monday')).toBe('Arjun is OOO until Monday.');
+  expect(awaySentence('Arjun', 'In a meeting')).toBe('Arjun is in a meeting.');
+  expect(awaySentence('Arjun', '  ')).toBe('');
 });

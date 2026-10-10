@@ -11,7 +11,7 @@ import { SkeletonRows } from '../components/ui/Skeleton';
 import { Text } from '../components/ui/Text';
 import { TextField } from '../components/ui/TextField';
 import { useProfile } from '../hooks/useProfile';
-import { api } from '../lib/api';
+import { api, awayActive } from '../lib/api';
 import { greetingLine, ownName } from '../lib/labels';
 
 /** Your name and your assistant's name, and the greeting callers hear. */
@@ -48,7 +48,8 @@ export default function Persona() {
 
   const dirty = user.trim() !== p.user_name || assistant.trim() !== p.assistant_name;
   const valid = !!user.trim() && !!assistant.trim();
-  const line = greetingLine(user, assistant);
+  const away = awayActive(p.away) ? p.away : null;
+  const line = greetingLine(user, assistant, away);
 
   const save = async () => {
     setSaving(true);
@@ -114,6 +115,7 @@ export default function Persona() {
           </View>
         </Card>
         <Text variant="footnote" color="text2">
+          {away ? 'While your away status is on, callers hear it in the middle. ' : ''}
           The assistant then switches to the caller's language. Change the voice in Voices.
         </Text>
       </Section>

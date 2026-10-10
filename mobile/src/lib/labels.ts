@@ -5,7 +5,7 @@ import type { IconName } from './design';
 import { prettyNumber } from './format';
 import { isPracticeNumber } from './practiceCalls';
 import type { PillTone } from '../components/ui/StatusPill';
-import type { AppliesTo, CallRecord, CallSummary, ShareWith, Task } from './types';
+import type { AppliesTo, Away, CallRecord, CallSummary, ShareWith, Task } from './types';
 
 export const CATEGORY: Record<string, { label: string; icon: IconName; tone: PillTone }> = {
   delivery: { label: 'Delivery', icon: 'bicycle-outline', tone: 'info' },
@@ -69,12 +69,33 @@ export const categoryLabel = (c: string) => INSTRUCTION_CATEGORY[c]?.label ?? c.
  *  so a form starts empty instead of showing it as if it were a name. */
 export const ownName = (n: string): string => (/^\s*the user\s*$/i.test(n) ? '' : n);
 
-/** The line callers hear first (matches the server's opening_line). */
-export function greetingLine(userName: string, assistantName: string): string {
+const isUpper = (s: string) => s !== s.toLowerCase() && s === s.toUpperCase();
+const capitalised = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * "Arjun is in a meeting until 3 PM." from an away message, as the server says
+ * it (prompts.away_sentence): a leading "I'm" or "Arjun is" goes, and the first
+ * letter is lowered unless it starts an acronym.
+ */
+export function awaySentence(userName: string, message: string): string {
+  let msg = message.trim().replace(/[.!]+$/, '');
+  if (!msg) return '';
+  const user = userName.trim();
+  const low = msg.toLowerCase();
+  const lead = ["i'm ", 'i am ', 'im '].find((x) => low.startsWith(x));
+  if (lead) msg = msg.slice(lead.length);
+  else if (user && low.startsWith(`${user.toLowerCase()} is `)) msg = msg.slice(user.length + 4);
+  if (isUpper(msg.charAt(0)) && !isUpper(msg.slice(0, 2))) msg = msg.charAt(0).toLowerCase() + msg.slice(1);
+  return `${capitalised(user || 'the owner')} is ${msg}.`;
+}
+
+/** The line callers hear first, in English (matches the server's opening_line):
+ *  while an away status is on, it takes the place of "can't take the call". */
+export function greetingLine(userName: string, assistantName: string, away?: Pick<Away, 'message'> | null): string {
   const user = userName.trim() || 'the owner';
   const assistant = assistantName.trim() || 'the assistant';
-  const start = user.charAt(0).toUpperCase() + user.slice(1);
-  return `Hi, this is ${assistant}, ${user}'s assistant. ${start} can't take the call right now. How can I help?`;
+  const middle = (away && awaySentence(userName, away.message)) || `${capitalised(user)} can't take the call right now.`;
+  return `Hi, this is ${assistant}, ${user}'s assistant. ${middle} How can I help?`;
 }
 
 const ENGINE: Record<string, string> = { kokoro: 'Kokoro', piper: 'Piper', mms: 'MMS', xtts: 'XTTS', espeak: 'eSpeak' };

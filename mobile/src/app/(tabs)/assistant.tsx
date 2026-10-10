@@ -57,7 +57,7 @@ export default function AssistantHub() {
               icon="person-circle-outline"
               iconTone="primary"
               title="Name and greeting"
-              subtitle={`${p.assistant_name} answers for ${p.user_name || 'you'}: "${greetingLine(p.user_name, p.assistant_name)}"`}
+              subtitle={`${p.assistant_name} answers for ${p.user_name || 'you'}: "${greetingLine(p.user_name, p.assistant_name, awayActive(p.away) ? p.away : null)}"`}
               chevron
               onPress={go('/persona')}
             />
