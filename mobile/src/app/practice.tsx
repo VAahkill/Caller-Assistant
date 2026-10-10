@@ -1,5 +1,5 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { router, Stack } from 'expo-router';
+import { router, Stack, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
@@ -12,6 +12,7 @@ import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Chip } from '../components/ui/Chip';
 import { Composer } from '../components/ui/Composer';
+import { useConfirm } from '../components/ui/ConfirmSheet';
 import { HeaderRight } from '../components/ui/HeaderRight';
 import { IconButton } from '../components/ui/IconButton';
 import { ListRow } from '../components/ui/ListRow';
@@ -62,7 +63,10 @@ const IDEAS: { icon: IconName; title: string; detail: string }[] = [
   { icon: 'language-outline', title: 'Speak Telugu, Hindi or Tamil', detail: 'Read every line in your language as it goes.' },
 ];
 
-type Phase = 'idle' | 'connecting' | 'live' | 'ended';
+type Phase = 'idle' | 'connecting' | 'live' | 'ending' | 'ended';
+
+/** After a hang-up the server sends the summary and closes; past this, stop waiting. */
+const ENDING_TIMEOUT_MS = 30000;
 type Role = 'caller' | 'owner';
 
 const NO_LINES: TranscriptLine[] = [];
@@ -101,19 +105,52 @@ export default function Practice() {
   const [role, setRole] = useState<Role>('caller');
   const [view, setView] = useState<CallView | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
-  const [showTranslation, setShowTranslation] = useState(true);
+  // Until the owner flips it here, translation follows the profile, as on a real call.
+  const [translateChoice, setTranslateChoice] = useState<boolean | null>(null);
   const [ended, setEnded] = useState<{ seconds: number } | null>(null);
   const [dismissedError, setDismissedError] = useState(0);
   const call = useRef<PracticeCall | null>(null);
+  // The start in progress, so leaving or hanging up while it connects cancels it.
+  const starting = useRef<AbortController | null>(null);
+  const endingTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const startedAt = useRef(0);
   const scroll = useRef<ScrollView>(null);
   const audio = useSentencePlayer(setProblem);
   const lines = view?.record.transcript ?? NO_LINES;
-  const outbox = useOutbox(lines);
+  // A recording the server heard no words in gets a turn error, not a line: it fails, with Retry.
+  const outbox = useOutbox(lines, view ? { count: view.turnErrors, detail: view.errors.at(-1)?.detail ?? '' } : null);
 
   const p = profile.data;
   const owner = p?.owner_language ?? 'en';
   const assistant = p?.assistant_name ?? 'Your assistant';
+  const translateLive = p?.translate_live ?? true;
+  const showTranslation = translateChoice ?? translateLive;
+
+  // Leaving while the call is on (back button, gesture or header) asks first,
+  // so a stray back gesture doesn't hang up.
+  const navigation = useNavigation();
+  const confirm = useConfirm();
+  const phaseRef = useRef(phase);
+  useEffect(() => {
+    phaseRef.current = phase;
+  });
+  useEffect(
+    () =>
+      navigation.addListener('beforeRemove', (e) => {
+        if (phaseRef.current !== 'live' && phaseRef.current !== 'connecting') return;
+        e.preventDefault();
+        void confirm({
+          title: 'End the practice call?',
+          message: 'Leaving this screen hangs up.',
+          confirmLabel: 'End call',
+          cancelLabel: 'Stay',
+          destructive: true,
+        }).then((leave) => {
+          if (leave) navigation.dispatch(e.data.action);
+        });
+      }),
+    [navigation, confirm],
+  );
 
   const onEvent = useCallback((ev: ServerEvent) => {
     setView((v) => (v ? reduceCall(v, ev) : v));
@@ -121,6 +158,8 @@ export default function Practice() {
 
   useEffect(
     () => () => {
+      starting.current?.abort();
+      clearTimeout(endingTimer.current);
       call.current?.hangup();
     },
     [],
@@ -134,6 +173,8 @@ export default function Practice() {
     audio.stop();
     setRole('caller');
     setPhase('connecting');
+    const attempt = new AbortController();
+    starting.current = attempt;
     try {
       await audio.prepare().catch((e: unknown) => console.warn('Audio mode not set', e));
       const c = await PracticeCall.start(
@@ -142,18 +183,28 @@ export default function Practice() {
           onEvent,
           onAudio: audio.push,
           onClose: ({ message }) => {
+            clearTimeout(endingTimer.current);
             setPhase('ended');
             setEnded({ seconds: (Date.now() - startedAt.current) / 1000 });
             setView((v) => (v ? { ...v, status: 'idle' } : v));
             if (message) setProblem(message);
           },
         },
+        attempt.signal,
       );
+      starting.current = null;
+      if (attempt.signal.aborted) {
+        c.hangup();
+        return;
+      }
       call.current = c;
       startedAt.current = Date.now();
       setView(callView(practiceRecord(c.callId, lang)));
       setPhase('live');
     } catch (e) {
+      starting.current = null;
+      // Hung up or left while connecting: nothing to report.
+      if (attempt.signal.aborted) return;
       setPhase('idle');
       setProblem(errorMessage(e));
     }
@@ -161,7 +212,20 @@ export default function Practice() {
 
   const hangUp = () => {
     audio.stop();
-    call.current?.hangup();
+    if (phase === 'connecting') {
+      starting.current?.abort();
+      setPhase('idle');
+      return;
+    }
+    if (!call.current || phase !== 'live') return;
+    // The server closes the call only after its summary: show the end at once.
+    setPhase('ending');
+    const ending = call.current;
+    ending.hangup();
+    clearTimeout(endingTimer.current);
+    endingTimer.current = setTimeout(() => {
+      if (call.current === ending && phaseRef.current === 'ending') ending.close();
+    }, ENDING_TIMEOUT_MS);
   };
 
   const active = () => {
@@ -229,6 +293,8 @@ export default function Practice() {
             <HeaderRight>
               {phase === 'ended' ? (
                 <Button title="Call again" size="sm" variant="tonal" icon="refresh" onPress={() => void start()} />
+              ) : phase === 'ending' ? (
+                <Button title="Ending…" size="sm" variant="destructive" icon="call" loading />
               ) : (
                 <Button title="Hang up" size="sm" variant="destructive" icon="call" onPress={hangUp} />
               )}
@@ -238,7 +304,7 @@ export default function Practice() {
       />
       <LiveStatusBar
         testID="practice-status"
-        phase={phase === 'connecting' ? 'connecting' : phase === 'ended' ? 'ended' : 'live'}
+        phase={phase}
         state={view?.status ?? 'listening'}
         detail={view?.statusDetail}
         onHold={view?.record.status === 'on_hold'}
@@ -248,7 +314,7 @@ export default function Practice() {
         confidence={view?.languageConfidence}
         ownerLanguage={owner}
         translate={showTranslation}
-        onTranslateChange={setShowTranslation}
+        onTranslateChange={setTranslateChoice}
         trailing={
           <IconButton
             icon={audio.muted ? 'volume-mute-outline' : 'volume-high-outline'}
@@ -258,7 +324,7 @@ export default function Practice() {
           />
         }
       />
-      {phase !== 'ended' ? (
+      {phase === 'connecting' || phase === 'live' ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.langBar, { borderBottomColor: t.color.border }]} contentContainerStyle={styles.langRow}>
           <Text variant="caption" weight="semibold" color="text2">
             Caller speaks
@@ -290,6 +356,7 @@ export default function Practice() {
           showTranslation={showTranslation}
           ownerLanguage={owner}
           live={phase === 'live'}
+          translating={translateLive}
           pending={outbox.items}
           userLabel="You (owner)"
           onRetry={(id) => void outbox.retry(id)}
@@ -331,9 +398,11 @@ export default function Practice() {
           </Card>
         ) : null}
       </ScrollView>
-      {phase === 'live' ? (
+      {phase === 'live' || phase === 'ending' ? (
         <Composer
           testID="composer"
+          disabled={phase === 'ending'}
+          disabledReason="Ending the call…"
           header={
             <SegmentedControl<Role>
               accessibilityLabel="Speak as"

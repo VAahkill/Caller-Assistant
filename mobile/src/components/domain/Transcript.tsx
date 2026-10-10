@@ -17,6 +17,9 @@ export interface TranscriptProps {
   ownerLanguage: string;
   /** Live calls: a missing translation is on its way. */
   live?: boolean;
+  /** The server translates as the call goes (profile.translate_live). When it
+   *  doesn't, no line shows "Translating…" (default true). */
+  translating?: boolean;
   emptyText?: string;
   /** Sends not in the transcript yet (shown after the lines). */
   pending?: OutboxItem[];
@@ -37,6 +40,7 @@ export function Transcript({
   showTranslation,
   ownerLanguage,
   live,
+  translating = true,
   emptyText,
   pending = [],
   userLabel = 'You',
@@ -63,7 +67,7 @@ export function Transcript({
           showTranslation={showTranslation}
           ownerLanguage={ownerLanguage}
           // Only recent lines can still be waiting for their translation.
-          awaitingTranslation={!!live && i >= lines.length - 2}
+          awaitingTranslation={!!live && translating && i >= lines.length - 2}
         />
       ))}
       {pending.map((item) => (

@@ -49,6 +49,15 @@ interface Pending {
 }
 
 const CUT_OFF = 'The practice call was cut off. Check the connection to your server.';
+/** PracticeCall.start was aborted. */
+export const CANCELLED = 'The practice call was cancelled.';
+const ENDED = 'The call has ended.';
+
+/** Closes a socket now, or as soon as it opens: on Android, close() does nothing while it is still connecting. */
+function closeSoon(socket: SocketLike) {
+  if (socket.readyState === SOCKET_OPEN) socket.close();
+  else socket.onopen = () => socket.close();
+}
 
 function closeMessage(code: number, reason: string): string | null {
   if (code === 1000 || code === 1005) return null;
@@ -67,6 +76,7 @@ export class PracticeCall {
   private handlers: PracticeHandlers;
   private pending: Pending[] = [];
   private closed = false;
+  private hungUp = false;
 
   private constructor(socket: SocketLike, callId: string, handlers: PracticeHandlers) {
     this.socket = socket;
@@ -77,9 +87,14 @@ export class PracticeCall {
     socket.onerror = () => undefined; // onclose follows with the code
   }
 
-  /** Opens the call; resolves once the server says it started. */
-  static async start(options: PracticeOptions, handlers: PracticeHandlers): Promise<PracticeCall> {
+  /**
+   * Opens the call; resolves once the server says it started. Aborting (the
+   * owner left or hung up while it connects) rejects with CANCELLED and closes
+   * the socket, once it is open if it is still connecting.
+   */
+  static async start(options: PracticeOptions, handlers: PracticeHandlers, signal?: AbortSignal): Promise<PracticeCall> {
     await loadConfig();
+    if (signal?.aborted) throw new Error(CANCELLED);
     const url = practiceUrl(options);
     if (!url) throw new Error(NOT_SET_UP);
     const socket = getTransport().openSocket(url);
@@ -90,11 +105,17 @@ export class PracticeCall {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
         reject(new Error(message));
       };
+      const abort = () => {
+        fail(CANCELLED);
+        closeSoon(socket);
+      };
+      signal?.addEventListener('abort', abort);
       const timer = setTimeout(() => {
         fail("The server didn't start the practice call. Check it's running and try again.");
-        socket.close();
+        closeSoon(socket);
       }, START_TIMEOUT_MS);
       socket.onmessage = (m) => {
         const parsed = parseEvent(m.data);
@@ -105,6 +126,7 @@ export class PracticeCall {
         } else if (ev.event === 'started' && !settled) {
           settled = true;
           clearTimeout(timer);
+          signal?.removeEventListener('abort', abort);
           resolve(new PracticeCall(socket, ev.call_id, handlers));
         }
       };
@@ -114,7 +136,7 @@ export class PracticeCall {
   }
 
   get isOpen(): boolean {
-    return !this.closed && this.socket.readyState === SOCKET_OPEN;
+    return !this.closed && !this.hungUp && this.socket.readyState === SOCKET_OPEN;
   }
 
   /** Messages sent and not yet acknowledged. */
@@ -147,9 +169,32 @@ export class PracticeCall {
     return this.send('answer', { action: 'answer', call_id: this.callId, text, hold_id: holdId });
   }
 
+  /**
+   * Hangs up. The server closes the socket only once the call is wrapped up
+   * (its summary can take a while), so what is still waiting fails now and
+   * nothing more can be sent; the call's last events still arrive.
+   */
   hangup(): void {
-    if (this.isOpen) this.socket.send(JSON.stringify({ hangup: true }));
+    if (this.hungUp || this.closed) return;
+    const open = this.isOpen;
+    this.hungUp = true;
+    this.rejectPending(ENDED);
+    if (open) this.socket.send(JSON.stringify({ hangup: true }));
     else this.finish(1000, '');
+  }
+
+  /** Stops waiting for the server to wrap up: closes the socket and ends the call here. */
+  close(): void {
+    this.hungUp = true;
+    if (this.socket.readyState === SOCKET_OPEN) this.socket.close(1000, '');
+    this.finish(1000, '');
+  }
+
+  private rejectPending(message: string) {
+    for (const p of this.pending.splice(0)) {
+      clearTimeout(p.timer);
+      if (!p.timedOut) p.reject(new Error(message));
+    }
   }
 
   private send(kind: string, payload: Record<string, unknown>): Promise<Ack> {
@@ -205,10 +250,7 @@ export class PracticeCall {
   private finish(code: number, reason: string) {
     if (this.closed) return;
     this.closed = true;
-    for (const p of this.pending.splice(0)) {
-      clearTimeout(p.timer);
-      if (!p.timedOut) p.reject(new Error('The practice call ended before the server answered.'));
-    }
+    this.rejectPending('The practice call ended before the server answered.');
     this.handlers.onClose({ code, message: closeMessage(code, reason) });
   }
 }

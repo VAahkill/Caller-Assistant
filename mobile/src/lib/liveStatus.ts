@@ -23,7 +23,7 @@ export interface LiveStatusInput {
   onHold?: boolean;
   /** Audio is playing on this phone (practice), which beats the server's state. */
   speaking?: boolean;
-  phase?: 'connecting' | 'live' | 'ended';
+  phase?: 'connecting' | 'live' | 'ending' | 'ended';
 }
 
 /** Short words for each state, e.g. for a pill. */
@@ -43,6 +43,7 @@ export const WORKING: ReadonlySet<AssistantState> = new Set(['transcribing', 'tr
 export function liveStatus({ state, assistantName, detail, onHold, speaking, phase = 'live' }: LiveStatusInput): LiveStatus {
   const name = assistantName || 'Your assistant';
   if (phase === 'connecting') return { title: 'Connecting…', icon: 'sync-outline', tone: 'neutral', busy: true };
+  if (phase === 'ending') return { title: 'Ending the call…', icon: 'call-outline', tone: 'neutral', busy: true };
   if (phase === 'ended') return { title: 'Call ended', icon: 'call-outline', tone: 'neutral', busy: false };
   if (speaking) return { title: `${name} is speaking`, icon: 'volume-high-outline', tone: 'info', busy: true };
   if (onHold && state !== 'error' && state !== 'speaking' && !WORKING.has(state)) {

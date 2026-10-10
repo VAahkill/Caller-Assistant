@@ -180,6 +180,7 @@ function LiveCall({
           showTranslation={translate}
           ownerLanguage={owner}
           live
+          translating={profile.data?.translate_live !== false}
           pending={outbox.items}
           onRetry={(oid) => void outbox.retry(oid)}
           onRemove={outbox.remove}

@@ -2,11 +2,21 @@
 // test plays the server, so every ack, error, event and audio clip is explicit.
 
 jest.mock('expo-file-system', () => require('../../test/expoFileSystemMock').expoFileSystemMock);
+// The screen's navigation object: tests read the beforeRemove listener from it.
+const mockNavigation = {
+  listeners: {} as Record<string, (e: unknown) => void>,
+  addListener: jest.fn((name: string, fn: (e: unknown) => void) => {
+    mockNavigation.listeners[name] = fn;
+    return () => undefined;
+  }),
+  dispatch: jest.fn(),
+};
 jest.mock('expo-router', () => {
   const { Fragment, createElement } = require('react');
   return {
     ...jest.requireActual('expo-router'),
     router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
+    useNavigation: () => mockNavigation,
     Stack: {
       Screen: ({ options }: { options?: { headerRight?: (p: object) => unknown } }) =>
         createElement(Fragment, null, options?.headerRight ? options.headerRight({}) : null),
@@ -46,7 +56,7 @@ class FakeSimulateSocket implements SocketLike {
 let sock: FakeSimulateSocket;
 let opened: string[] = [];
 const CALL = 'practice-test';
-const base = { call_id: CALL, who: 'Practice caller' };
+const base = { call_id: CALL, who: '+919800000000' };
 let seq = 0;
 
 /** The server sends something (JSON event or a WAV clip). */
@@ -211,6 +221,72 @@ test('hanging up ends the call with a summary and Call again', async () => {
   expect(screen.queryByTestId('composer')).toBeNull();
   await fireEvent.press(card.getByRole('button', { name: 'Done' }));
   expect(router.back).toHaveBeenCalled();
+});
+
+test('hanging up shows the end at once: nothing more can be sent while the server wraps up', async () => {
+  await startCall();
+  await fireEvent.press(screen.getByRole('button', { name: 'Hi, I have a Swiggy order for you. Where should I come?' }));
+  expect(screen.getByTestId('outbox-sending')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: 'Hang up' }));
+  expect(sock.sent.at(-1)).toEqual({ hangup: true });
+  // The server is still writing the summary: the socket is open, but the call is over here.
+  expect(screen.getByTestId('practice-status-title')).toHaveTextContent('Ending the call…');
+  expect(screen.getAllByText('Ending the call…')).toHaveLength(2); // the status and in place of the composer
+  expect(screen.queryByLabelText('Say something as the caller')).toBeNull();
+  expect(screen.getByText('Not sent: The call has ended.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Hang up' })).toBeNull();
+  await act(async () => sock.close(1000, ''));
+  expect(screen.getByTestId('practice-ended')).toBeTruthy();
+});
+
+test('hanging up while it connects goes back to the start, and the call is not left running', async () => {
+  await renderScreen(<Practice />);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Start practice call' }));
+  await waitFor(() => expect(opened.some((u) => u.includes('/ws/simulate'))).toBe(true));
+  await fireEvent.press(screen.getByRole('button', { name: 'Hang up' }));
+  expect(sock.readyState).toBe(3);
+  expect(await screen.findByRole('button', { name: 'Start practice call' })).toBeTruthy();
+  expect(screen.queryByText("Couldn't start the practice call")).toBeNull();
+});
+
+test('leaving while it connects closes the socket, even one that opens only later', async () => {
+  const view = await renderScreen(<Practice />);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Start practice call' }));
+  await waitFor(() => expect(opened.some((u) => u.includes('/ws/simulate'))).toBe(true));
+  // Still connecting, as on a slow server: Android ignores close() until it opens.
+  sock.readyState = 0;
+  const close = jest.spyOn(sock, 'close');
+  await view.unmount();
+  expect(close).not.toHaveBeenCalled();
+  sock.readyState = 1;
+  sock.onopen?.({});
+  expect(close).toHaveBeenCalled();
+});
+
+test('back while the call is on asks before hanging up', async () => {
+  await startCall();
+  const preventDefault = jest.fn();
+  const action = { type: 'GO_BACK' };
+  await act(async () => mockNavigation.listeners.beforeRemove({ preventDefault, data: { action } }));
+  expect(preventDefault).toHaveBeenCalled();
+  expect(await screen.findByText('End the practice call?')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('button', { name: 'End call' }));
+  await waitFor(() => expect(mockNavigation.dispatch).toHaveBeenCalledWith(action));
+});
+
+test('translation follows the profile until changed here: off means no "Translating…"', async () => {
+  const mock = await useMockServer();
+  mock.state.profile = { ...mock.state.profile, translate_live: false, owner_language: 'en' };
+  const real = getTransport();
+  setTransport({ ...real, openSocket: (url) => (url.includes('/ws/simulate') ? (sock = new FakeSimulateSocket(url)) : MockEventsSocket.refused()) });
+  await renderScreen(<Practice />);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Start practice call' }));
+  await waitFor(() => expect(sock).toBeTruthy());
+  await server({ event: 'started', call_id: CALL });
+  await server({ event: 'call_language', ...base, language: 'te', confidence: 0.9 });
+  await server({ event: 'transcript', ...base, line: lineOf('caller', 'నమస్తే', 'te') });
+  expect(screen.queryByText('Translating…')).toBeNull();
+  expect(screen.getByRole('switch', { name: /translat/i })).not.toBeChecked();
 });
 
 test('a call cut off by the network says so', async () => {

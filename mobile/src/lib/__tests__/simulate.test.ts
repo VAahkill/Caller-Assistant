@@ -1,7 +1,7 @@
 import { BAD_TOKEN, saveConfig } from '../api';
 import type { ServerEvent } from '../events';
 import { MOCK_TOKEN } from '../mock/server';
-import { PracticeCall, practiceUrl, type PracticeHandlers } from '../simulate';
+import { CANCELLED, PracticeCall, practiceUrl, type PracticeHandlers } from '../simulate';
 import { setTransport, type SocketLike, type Transport } from '../transport';
 import { resetApi, useMockServer } from '../../test/mockApi';
 
@@ -182,4 +182,41 @@ test.each([
   await tick();
   socket.close(code, reason);
   await expect(p).rejects.toThrow(message);
+});
+
+test('hanging up fails what is still waiting at once, and nothing more can be sent', async () => {
+  await saveConfig({ url: 'http://192.168.1.7:8000', token: 't' });
+  const socket = new HandSocket();
+  setTransport(handTransport(socket));
+  const r = recorder();
+  const p = PracticeCall.start({}, r.handlers);
+  await tick();
+  socket.push({ event: 'started', call_id: 'c1' });
+  const call = await p;
+  const waiting = call.sendText('hello');
+  call.hangup();
+  await expect(waiting).rejects.toThrow('The call has ended.');
+  expect(socket.sent.at(-1)).toBe(JSON.stringify({ hangup: true }));
+  await expect(call.sendText('again')).rejects.toThrow('The practice call has ended. Start a new one.');
+  // The call's last events still arrive until the server closes.
+  socket.push({ event: 'call_ended', call_id: 'c1', who: 'x', call: { id: 'c1', number: '+919800000000' } });
+  expect(r.events.at(-1)).toMatchObject({ event: 'call_ended' });
+  expect(r.closes).toEqual([]);
+});
+
+test('an aborted start rejects and closes the socket once it opens', async () => {
+  await saveConfig({ url: 'http://192.168.1.7:8000', token: 't' });
+  const socket = new HandSocket();
+  socket.readyState = 0;
+  const close = jest.spyOn(socket, 'close');
+  setTransport(handTransport(socket));
+  const attempt = new AbortController();
+  const p = PracticeCall.start({}, recorder().handlers, attempt.signal);
+  await tick();
+  attempt.abort();
+  await expect(p).rejects.toThrow(CANCELLED);
+  expect(close).not.toHaveBeenCalled();
+  socket.readyState = 1;
+  socket.onopen?.({});
+  expect(close).toHaveBeenCalled();
 });
