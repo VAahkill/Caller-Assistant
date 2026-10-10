@@ -47,9 +47,16 @@ Then run the server on the host (not in Docker, since it needs the host's Blueto
 and audio):
 
 ```bash
-cd backend && pip install -e ".[stt,vad,tts,bluetooth]"
+sudo apt install ffmpeg espeak-ng
+cd backend && pip install -c constraints.txt -e ".[stt-indic,lid,vad,mt,tts,piper,indic,bluetooth]"
 OPENCALL_BLUETOOTH_ENABLED=true python -m opencall
 ```
+
+These are the same parts as the Docker image (Indian-language speech models, language
+ID, translation and voices), less the voice cloning extra (`clone`). The language
+model then runs on the host too: install [Ollama](https://ollama.com),
+pull the model named by `OPENCALL_LLM_MODEL` in `.env` (`ollama pull <model>`), and
+set `OPENCALL_LLM_BASE_URL=http://localhost:11434/v1`.
 
 How it behaves:
 - An incoming call rings for `OPENCALL_BLUETOOTH_ANSWER_DELAY_S` seconds (6 by default,
