@@ -214,6 +214,14 @@ def _spelled_words(text: str) -> list[str]:
     return runs
 
 
+def _made_of(run: str, acronyms: set[str]) -> bool:
+    """Whether a run of spelled letters is the text's abbreviations one after another
+    ("sbiatm" from "SBI ATM")."""
+    if not run:
+        return True
+    return any(run.startswith(a) and _made_of(run[len(a):], acronyms) for a in acronyms)
+
+
 SHORT_LETTERS = 12  # a sentence this short ("Thank you!") is judged by its length instead
 SPELLED_S_PER_LETTER = 0.4  # spelling takes about this long a letter; words take under 0.1 s
 
@@ -224,7 +232,7 @@ def spelled_out(said: str, heard: str, seconds: float) -> bool:
     Speech recognition often mishears a lone short word, so a short sentence only has
     to be no longer than spelling it would take."""
     acronyms = {w.lower() for w in re.findall(r"\b[A-Z]{2,6}\b", said)}
-    if any(w not in acronyms for w in _spelled_words(heard)):
+    if any(not _made_of(w, acronyms) for w in _spelled_words(heard)):
         return True
     letters = len(_letters(said))
     if letters < SHORT_LETTERS:

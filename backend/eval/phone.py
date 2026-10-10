@@ -44,16 +44,40 @@ def add_noise(pcm16k: bytes, snr_db: float | None, seed: int = 0) -> bytes:
     x = np.frombuffer(pcm16k, dtype=np.int16).astype(np.float64)
     if not len(x):
         return pcm16k
-    voiced = x[np.abs(x) > 0.05 * (np.abs(x).max() + 1e-9)]
-    level = np.sqrt(np.mean(voiced ** 2)) if len(voiced) else 0.0
+    level = speech_level(x)
     if level == 0:
         return pcm16k
     noisy = x + noise_like(len(x), seed=seed) * level / (10 ** (snr_db / 20))
     return np.clip(noisy, -32768, 32767).astype(np.int16).tobytes()
 
 
-def phone_line(pcm16k: bytes, snr_db: float | None = None, seed: int = 0) -> bytes:
-    """``pcm16k`` (16 kHz PCM16) after background noise and a narrowband phone call."""
+# A handset's automatic gain sends speech at about this level (active speech, dB below
+# full scale). Some FLEURS recordings are 35 dB quieter; through mu-law at that level
+# they lose most of their detail, which no phone call does.
+PHONE_LEVEL_DBFS = -26.0
+
+
+def speech_level(x: np.ndarray) -> float:
+    """RMS of the voiced part (samples above 5% of the peak)."""
+    voiced = x[np.abs(x) > 0.05 * (np.abs(x).max() + 1e-9)]
+    return float(np.sqrt(np.mean(voiced ** 2))) if len(voiced) else 0.0
+
+
+def at_phone_level(pcm16k: bytes, level_dbfs: float = PHONE_LEVEL_DBFS) -> bytes:
+    x = np.frombuffer(pcm16k, dtype=np.int16).astype(np.float64)
+    level = speech_level(x) if len(x) else 0.0
+    if level == 0:
+        return pcm16k
+    x *= 32768 * 10 ** (level_dbfs / 20) / level
+    return np.clip(x, -32768, 32767).astype(np.int16).tobytes()
+
+
+def phone_line(pcm16k: bytes, snr_db: float | None = None, seed: int = 0,
+               level_dbfs: float | None = None) -> bytes:
+    """``pcm16k`` (16 kHz PCM16) after background noise and a narrowband phone call,
+    at a phone's speech level (None: as recorded)."""
+    if level_dbfs is not None:
+        pcm16k = at_phone_level(pcm16k, level_dbfs)
     noisy = add_noise(pcm16k, snr_db, seed)
     x = np.frombuffer(noisy, dtype=np.int16).astype(np.float64)
     band = np.clip(_band(x), -32768, 32767).astype(np.int16).tobytes()

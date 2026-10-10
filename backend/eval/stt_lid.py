@@ -33,7 +33,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from fleurs import cer, fetch  # noqa: E402
-from phone import phone_line  # noqa: E402
+from phone import PHONE_LEVEL_DBFS, phone_line  # noqa: E402
 
 from opencall.audio import float_to_pcm16  # noqa: E402
 
@@ -42,13 +42,14 @@ CONFIGS = {"en": "en_us", "hi": "hi_in", "te": "te_in", "ta": "ta_in"}
 
 def as_heard(pcm16k: bytes, band: str, seed: int) -> bytes:
     """``band``: "16k" (as recorded), "8k" (a phone line) or "8k@<dB>" (a phone line
-    with background noise that many dB below the voice)."""
+    with background noise that many dB below the voice). On a phone line the speech
+    arrives at a phone's level, as a handset's automatic gain sends it."""
     if band == "16k":
         return pcm16k
     if band == "8k":
-        return phone_line(pcm16k)
+        return phone_line(pcm16k, level_dbfs=PHONE_LEVEL_DBFS)
     if band.startswith("8k@"):
-        return phone_line(pcm16k, float(band[3:]), seed)
+        return phone_line(pcm16k, float(band[3:]), seed, level_dbfs=PHONE_LEVEL_DBFS)
     raise ValueError(f"unknown band {band!r}: use 16k, 8k or 8k@<dB>")
 
 
