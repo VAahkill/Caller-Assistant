@@ -287,6 +287,9 @@ describe('reduceCall, one call on its own (practice and the live screen)', () =>
     let v = base;
     for (let i = 0; i < 7; i++) v = reduceCall(v, ev({ event: 'turn_error', call_id: live.id, who, detail: `e${i}` }), at + i);
     expect(v.errors.map((e) => e.detail)).toEqual(['e2', 'e3', 'e4', 'e5', 'e6']);
+    // The count keeps going, so a screen can tell a new one came even when the list is full.
+    expect(v.turnErrors).toBe(7);
+    expect(reduceCall(v, ev({ event: 'error', call_id: live.id, detail: 'refused' })).turnErrors).toBe(7);
   });
 
   test('a hold puts the call on hold; resolving it marks the hold done and resumes', () => {

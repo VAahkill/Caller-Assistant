@@ -154,8 +154,10 @@ export interface CallView {
   /** The caller's language, from call_language (falls back to record.language). */
   language: string;
   languageConfidence: number;
-  /** Turn errors and refused owner actions, newest last. */
+  /** Turn errors and refused owner actions, newest last (the last five). */
   errors: { at: number; detail: string }[];
+  /** How many turn errors the call has had, so a screen can tell a new one arrived. */
+  turnErrors: number;
   /** After a reconnect, until the server's snapshot confirms the call is still live. */
   stale?: boolean;
 }
@@ -168,6 +170,7 @@ export function callView(record: CallRecord): CallView {
     language: record.language,
     languageConfidence: 0,
     errors: [],
+    turnErrors: 0,
   };
 }
 
@@ -225,7 +228,11 @@ export function reduceCall(view: CallView, ev: AnyEvent, now = Date.now() / 1000
       return { ...view, language: ev.language, languageConfidence: ev.confidence, record: { ...r, language: ev.language } };
     case 'turn_error':
     case 'error':
-      return { ...view, errors: [...view.errors, { at: now, detail: ev.detail }].slice(-5) };
+      return {
+        ...view,
+        errors: [...view.errors, { at: now, detail: ev.detail }].slice(-5),
+        turnErrors: ev.event === 'turn_error' ? (view.turnErrors ?? 0) + 1 : view.turnErrors,
+      };
     case 'call_category':
       return { ...view, record: { ...r, category: ev.category } };
     case 'urgent_call':

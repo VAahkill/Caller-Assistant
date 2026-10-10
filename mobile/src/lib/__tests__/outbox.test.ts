@@ -119,4 +119,46 @@ describe('useOutbox', () => {
     expect(fn).toHaveBeenCalledTimes(2);
     expect(result.current.items[0]).toMatchObject({ state: 'sent', error: undefined });
   });
+
+  test('a recording the server heard nothing in fails on the turn error, and never takes the next line', async () => {
+    const lines = [line('g', 'assistant', 'Hello')];
+    type P = { l: TranscriptLine[]; e: { count: number; detail: string } };
+    const { result, rerender } = await renderHook(({ l, e }: P) => useOutbox(l, e), { initialProps: { l: lines, e: { count: 0, detail: '' } } });
+    // The caller sends a recording: the server acks it, then hears no words.
+    await act(async () => {
+      await result.current.send({ speaker: 'caller', kind: 'voice', text: '', lang: 'te', seconds: 2 }, async () => ({ seconds: 2 }));
+    });
+    expect(result.current.items[0]).toMatchObject({ state: 'sent', kind: 'voice' });
+    const unheard = "Couldn't make out any words in that recording. Please try again.";
+    await rerender({ l: lines, e: { count: 1, detail: unheard } });
+    expect(result.current.items).toEqual([expect.objectContaining({ state: 'failed', error: unheard, unheard: true })]);
+
+    // The next typed line gets its own transcript line; the failed recording stays with Retry.
+    await act(async () => {
+      await result.current.send({ speaker: 'caller', kind: 'text', text: 'Where should I come?', lang: 'en' }, async () => undefined);
+    });
+    await rerender({ l: [...lines, line('c1', 'caller', 'Where should I come?')], e: { count: 1, detail: unheard } });
+    expect(result.current.items.map((i) => [i.kind, i.state])).toEqual([['voice', 'failed']]);
+  });
+});
+
+describe('unheard recordings', () => {
+  test('only the oldest recording still waiting is marked; text and settled items are left alone', () => {
+    const items = [item('t', { kind: 'text' }), item('v1', { kind: 'voice', speaker: 'caller' }), item('v2', { kind: 'voice', speaker: 'caller' })];
+    const next = outboxReducer(items, { type: 'unheard', error: 'No words' });
+    expect(next.map((i) => [i.id, i.state])).toEqual([
+      ['t', 'sent'],
+      ['v1', 'failed'],
+      ['v2', 'sent'],
+    ]);
+    expect(outboxReducer([item('t')], { type: 'unheard', error: 'x' })).toEqual([item('t')]);
+  });
+
+  test('if its line turns up after all, the one marked unheard goes too', () => {
+    const marked = [item('v1', { kind: 'voice', speaker: 'caller', state: 'failed', unheard: true, after: 1 })];
+    expect(settleOutbox(marked, [line('a', 'assistant'), line('c', 'caller')])).toEqual([]);
+    // An ordinary failure stays until retried or removed.
+    const failed = [item('v1', { kind: 'voice', speaker: 'caller', state: 'failed', after: 1 })];
+    expect(settleOutbox(failed, [line('a', 'assistant'), line('c', 'caller')])).toBe(failed);
+  });
 });

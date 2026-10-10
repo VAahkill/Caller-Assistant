@@ -26,6 +26,8 @@ export interface OutboxItem {
   error?: string;
   /** Transcript length when it was sent; its line comes after this. */
   after: number;
+  /** Failed because the server heard no words in it (a turn error after the ack). */
+  unheard?: boolean;
 }
 
 export type OutboxAction =
@@ -35,22 +37,30 @@ export type OutboxAction =
   | { type: 'retry'; id: string; after: number }
   | { type: 'remove'; id: string }
   | { type: 'settle'; lines: TranscriptLine[] }
+  /** A turn error arrived: the oldest recording still waiting for its line won't get one. */
+  | { type: 'unheard'; error: string }
   | { type: 'clear' };
 
-/** Drops items whose transcript line has arrived. Failed items stay until retried or removed. */
+/**
+ * Drops items whose transcript line has arrived. Failed items stay until
+ * retried or removed, except a recording marked unheard: if a line for it
+ * turns up after all, one no waiting item claimed, it goes too.
+ */
 export function settleOutbox(items: OutboxItem[], lines: TranscriptLine[]): OutboxItem[] {
   if (!items.length) return items;
   const used = new Set<number>();
-  const kept = items.filter((item) => {
-    if (item.state === 'failed') return true;
+  const claim = (item: OutboxItem) => {
     for (let i = item.after; i < lines.length; i++) {
       if (used.has(i) || lines[i].speaker !== item.speaker) continue;
       used.add(i);
-      return false;
+      return true;
     }
-    return true;
-  });
-  return kept.length === items.length ? items : kept;
+    return false;
+  };
+  const settled = new Set<string>();
+  for (const item of items) if (item.state !== 'failed' && claim(item)) settled.add(item.id);
+  for (const item of items) if (item.state === 'failed' && item.unheard && claim(item)) settled.add(item.id);
+  return settled.size ? items.filter((i) => !settled.has(i.id)) : items;
 }
 
 export function outboxReducer(items: OutboxItem[], action: OutboxAction): OutboxItem[] {
@@ -66,7 +76,12 @@ export function outboxReducer(items: OutboxItem[], action: OutboxAction): Outbox
     case 'failed':
       return items.map((i) => (i.id === action.id ? { ...i, state: 'failed', error: action.error } : i));
     case 'retry':
-      return items.map((i) => (i.id === action.id ? { ...i, state: 'sending', error: undefined, after: action.after } : i));
+      return items.map((i) => (i.id === action.id ? { ...i, state: 'sending', error: undefined, unheard: false, after: action.after } : i));
+    case 'unheard': {
+      const victim = items.find((i) => i.state === 'sent' && i.kind === 'voice');
+      if (!victim) return items;
+      return items.map((i) => (i === victim ? { ...i, state: 'failed', error: action.error, unheard: true } : i));
+    }
     case 'remove':
       return items.filter((i) => i.id !== action.id);
     case 'settle':

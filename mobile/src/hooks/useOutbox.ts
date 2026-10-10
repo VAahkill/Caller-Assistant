@@ -28,15 +28,32 @@ export interface Outbox {
 
 let seq = 0;
 
-/** Pending sends for a live or practice call, settled against the transcript. */
-export function useOutbox(lines: TranscriptLine[]): Outbox {
+/** The call's turn errors so far, and the newest one's words. */
+export interface TurnErrors {
+  count: number;
+  detail: string;
+}
+
+/**
+ * Pending sends for a live or practice call, settled against the transcript.
+ * With `turnErrors`, a new turn error fails the oldest recording still waiting
+ * for its line: the server acks a recording before hearing it, and one with no
+ * words gets a turn error instead of a line.
+ */
+export function useOutbox(lines: TranscriptLine[], turnErrors?: TurnErrors | null): Outbox {
   const [items, dispatch] = useReducer(outboxReducer, []);
   const fns = useRef(new Map<string, SendFn>());
   const linesRef = useRef(lines);
+  const errorsSeen = useRef(turnErrors?.count ?? 0);
+  const errorCount = turnErrors?.count ?? 0;
+  const errorDetail = turnErrors?.detail ?? '';
   useEffect(() => {
     linesRef.current = lines;
     dispatch({ type: 'settle', lines });
-  }, [lines]);
+    const fresh = errorCount > errorsSeen.current;
+    errorsSeen.current = errorCount;
+    if (fresh) dispatch({ type: 'unheard', error: errorDetail || "The server couldn't hear that recording." });
+  }, [lines, errorCount, errorDetail]);
 
   // Forget the send functions of items that are gone.
   useEffect(() => {
