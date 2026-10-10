@@ -30,10 +30,11 @@ from dataclasses import dataclass
 # patterns match plain substrings; each one is specific enough not to hit directions
 # ("pin code" and Tamil "பின்னால்" = "behind" are not credentials).
 _SENSITIVE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("otp", re.compile(r"\b(o\.?\s?t\.?\s?p|one[\s-]?time[\s-]?(pass(word|code)?|code|pin)|verification code|security code|auth(entication)? code|confirmation code)\b", re.I)),
-    ("otp", re.compile(r"(ओटीपी|ओ टी पी|ओटिपी|कोड बताओ|कोड बताइए|कोड बता दो|कोड बोलो|कोड भेजो)", re.I)),
+    # "MOTP": how a phone line often makes speech recognition hear "ka OTP" / "the OTP".
+    ("otp", re.compile(r"\b(m?o\.?\s?t\.?\s?p|one[\s-]?time[\s-]?(pass(word|code)?|code|pin)|verification code|security code|auth(entication)? code|confirmation code)\b", re.I)),
+    ("otp", re.compile(r"(ओटीपी|ओ टी पी|ओटिपी|ओ\.टी\.पी|मोटीपी|कोड बताओ|कोड बताइए|कोड बता दो|कोड बोलो|कोड भेजो)", re.I)),
     ("otp", re.compile(r"\b(otp|code)\s+(bata|bol|bhej|de\s?do|do\b|dijiye|chepp|pamp|sollu|sollunga|kudunga)", re.I)),
-    ("otp", re.compile(r"(ఓటీపీ|ఓటిపి|ఒటిపి|ఓ టీ పీ|ఓ టి పి|కోడ్ చెప్ప|కోడ్ పంప|కోడ్ ఇవ్వ)")),
+    ("otp", re.compile(r"([ఓఒ]\s?ట[ిీ]\s?ప[ిీ]|ఓ టీ పీ|ఓ టి పి|కోడ్ చెప్ప|కోడ్ పంప|కోడ్ ఇవ్వ)")),
     ("otp", re.compile(r"(ஓடிபி|ஓ டி பி|ஓடீபி|ஓ.டி.பி|கோட் சொல்|கோடு சொல்|கோட் அனுப்ப|கோடு அனுப்ப)")),
     ("password", re.compile(r"\b(pass\s?word|passcode|login code|net\s?banking (id|password)|upi pin|m-?pin|atm pin)\b", re.I)),
     ("password", re.compile(r"(पासवर्ड|पिन नंबर|यूपीआई पिन|एटीएम पिन)", re.I)),

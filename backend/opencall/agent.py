@@ -73,11 +73,22 @@ class SecurityAlert:
     detail: str
 
 
-Action = Say | Hold | TakeMessage | EndCall | Category | Outcome | SendLocation | SecurityAlert
+@dataclass
+class Refuse:
+    """The model heard a request for a code or account details that the patterns in
+    guardrails.py missed (often misheard words on a noisy line)."""
+
+    kind: str
+
+
+Action = Say | Hold | TakeMessage | EndCall | Category | Outcome | SendLocation | SecurityAlert | Refuse
 
 
 # ---------------------------------------------------------------- parsing
-_TAG_RE = re.compile(r"\[(HOLD|MESSAGE|END_CALL|CATEGORY|OUTCOME|SEND_LOCATION)(?::\s*([^\]]*))?\]", re.I)
+_TAG_RE = re.compile(r"\[(HOLD|MESSAGE|END_CALL|CATEGORY|OUTCOME|SEND_LOCATION|SECURITY)(?::\s*([^\]]*))?\]",
+                     re.I)
+# What the model may name in [SECURITY: ...]; anything else counts as a code ("otp").
+_SECURITY_KINDS = ("otp", "pin", "password", "card", "account", "balance")
 _SENTENCE_END = re.compile(r"([.!?।]+[\"')\]]?)(\s+|$)|\n+")
 # A model that was handed a prompt without the assistant header writes the header itself
 # ("assistant\n\nSure..."); that word must never be spoken.
@@ -108,6 +119,9 @@ def _tag_to_action(name: str, payload: str) -> Action | None:
         return Category(payload.lower() or "unknown")
     if name == "SEND_LOCATION":
         return SendLocation()
+    if name == "SECURITY":
+        low = payload.lower()
+        return Refuse(next((k for k in _SECURITY_KINDS if k in low), "otp"))
     if name == "OUTCOME":
         status, _, summary = payload.partition("|")
         return Outcome(status.strip().lower() or "unknown", summary.strip())
@@ -404,6 +418,17 @@ class Conversation:
                         continue
                     spoken.append(res.text)
                     yield Say(res.text)
+                elif isinstance(a, Refuse):
+                    # The same as a request the patterns caught: the fixed refusal, an
+                    # alert, and nothing else from the model this turn.
+                    if spoken:  # said before the tag; the refusal follows it in the history
+                        self.history.append({"role": "assistant", "content": " ".join(spoken)})
+                        spoken.clear()
+                    acted = True
+                    yield SecurityAlert(a.kind, self.heard[-1] if self.heard else "")
+                    yield self.fixed_say("refusal")
+                    stop = True
+                    return
                 elif isinstance(a, Category):
                     if a.value == "delivery":
                         self._enter_delivery_mode()
