@@ -50,6 +50,7 @@ export default function Today() {
   const messages = useResource(() => api.messages(), live.refreshKey, configured);
   const health = useResource(() => api.health(), live.connected, configured);
   const [toggling, setToggling] = useState(false);
+  const [availableBusy, setAvailableBusy] = useState(false);
   const [readinessOpen, setReadinessOpen] = useState(false);
 
   // Practice calls and the messages left on them are your own tests: they don't count here.
@@ -101,6 +102,15 @@ export default function Today() {
     setToggling(false);
   };
 
+  const setAvailable = async (available: boolean) => {
+    setAvailableBusy(true);
+    await profile.patch(
+      { available },
+      available ? `${assistant} will put callers on hold to ask you.` : `${assistant} will take messages instead of waiting for you.`,
+    );
+    setAvailableBusy(false);
+  };
+
   const dismiss = (a: SecurityAlert) => {
     live.dismissAlert(a.id);
     toast.undo('Alert dismissed.', () => live.restoreAlert(a));
@@ -140,6 +150,9 @@ export default function Today() {
           health={health.data ?? null}
           liveCalls={liveCalls.length}
           onReadinessPress={() => setReadinessOpen(true)}
+          available={p.available}
+          onAvailableChange={(v) => void setAvailable(v)}
+          availableBusy={availableBusy}
         />
       ) : (
         <Skeleton height={148} radius={t.radius.xl} />

@@ -65,3 +65,15 @@ export function awayMessage(phrase: string, until: number | null, now: number = 
   const p = phrase.trim();
   return until == null ? p : `${p} until ${spokenTime(until, now)}`;
 }
+
+/**
+ * What "I can answer questions now" changes. The server waits up to its hold
+ * timeout (45 s by default) for an available owner, and only 20 s otherwise,
+ * when it also leans towards taking a message.
+ */
+export function availabilityText(available: boolean, assistantName: string): string {
+  const name = assistantName || 'Your assistant';
+  return available
+    ? `${name} may put callers on hold to ask you, and waits up to 45 s for your answer.`
+    : `Callers on hold wait only 20 s, then ${name} takes a message.`;
+}

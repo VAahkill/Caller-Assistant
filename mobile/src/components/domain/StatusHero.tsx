@@ -3,6 +3,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
+import { availabilityText } from '../../lib/away';
 import { clockTime } from '../../lib/format';
 import type { Away, Health } from '../../lib/types';
 import { Switch } from '../ui/Switch';
@@ -21,10 +22,28 @@ export interface StatusHeroProps {
   liveCalls: number;
   /** Opens the details of what the server has ready. */
   onReadinessPress?: () => void;
+  /** The owner can answer hold questions now (profile.available). */
+  available?: boolean;
+  onAvailableChange?: (on: boolean) => void;
+  availableBusy?: boolean;
 }
 
 /** Top of Today: is the assistant answering, is the owner away, is the server ready. */
-export function StatusHero({ assistantName, enabled, onToggle, toggling, away, onAwayPress, connected, health, liveCalls, onReadinessPress }: StatusHeroProps) {
+export function StatusHero({
+  assistantName,
+  enabled,
+  onToggle,
+  toggling,
+  away,
+  onAwayPress,
+  connected,
+  health,
+  liveCalls,
+  onReadinessPress,
+  available = false,
+  onAvailableChange,
+  availableBusy,
+}: StatusHeroProps) {
   const t = useTokens();
   const c = t.color;
   const ready = readinessText(connected, health);
@@ -50,6 +69,20 @@ export function StatusHero({ assistantName, enabled, onToggle, toggling, away, o
         </View>
         <Switch value={enabled} onValueChange={onToggle} busy={toggling} accessibilityLabel="Assistant answers calls" />
       </View>
+      {enabled && onAvailableChange ? (
+        <View style={[styles.row, styles.available, { borderTopColor: c.onHeroOverlay }]} testID="availability">
+          <Icon name={available ? 'hand-left' : 'hand-left-outline'} size={20} color={c.onHero} />
+          <View style={styles.flex}>
+            <Text variant="callout" weight="semibold" color={c.onHero}>
+              I can answer questions now
+            </Text>
+            <Text variant="footnote" color={c.onHero2}>
+              {availabilityText(available, assistantName)}
+            </Text>
+          </View>
+          <Switch value={available} onValueChange={onAvailableChange} busy={availableBusy} accessibilityLabel="I can answer questions now" />
+        </View>
+      ) : null}
       <View style={styles.chips}>
         <Pressable
           onPress={onAwayPress}
@@ -83,6 +116,7 @@ export function StatusHero({ assistantName, enabled, onToggle, toggling, away, o
 const styles = StyleSheet.create({
   hero: { padding: 20, gap: 16 },
   row: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  available: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 14, alignItems: 'flex-start' },
   badge: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
   flex: { flex: 1, gap: 2 },
   chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },

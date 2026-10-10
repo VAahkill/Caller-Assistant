@@ -115,6 +115,17 @@ test("practice calls and their messages don't count on Today", async () => {
   expect(list.queryByText(/Practice/)).toBeNull();
 });
 
+test('"I can answer questions now" on Today saves availability, so holds wait for the owner', async () => {
+  server.state.profile = { ...server.state.profile, available: false };
+  await renderScreen(<Today />);
+  const hero = within(await screen.findByTestId('availability'));
+  expect(hero.getByText('Callers on hold wait only 20 s, then Ava takes a message.')).toBeTruthy();
+  await fireEvent(hero.getByLabelText('I can answer questions now'), 'valueChange', true);
+  expect(await screen.findByText('Ava will put callers on hold to ask you.')).toBeTruthy();
+  expect(server.state.profile.available).toBe(true);
+  expect(requests('PATCH', '/profile').at(-1)?.body).toEqual({ available: true });
+});
+
 test('turning the assistant off saves and says what happens to calls', async () => {
   await renderScreen(<Today />);
   await fireEvent(await screen.findByLabelText('Assistant answers calls'), 'valueChange', false);

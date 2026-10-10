@@ -307,6 +307,16 @@ describe('Setup screens', () => {
     expect(screen.getByLabelText('Away message')).toBeTruthy();
   });
 
+  test('Away: "I can answer questions now" saves availability and says what it changes', async () => {
+    server.state.profile = { ...server.state.profile, available: false };
+    await renderScreen(<Away />);
+    expect(await screen.findByText(/Callers on hold wait only 20 s, then Ava takes a message\./)).toBeTruthy();
+    await fireEvent.press(screen.getByRole('switch', { name: /^I can answer questions now/ }));
+    await waitFor(() => expect(server.state.profile.available).toBe(true));
+    expect(requests('PATCH', '/profile').at(-1)?.body).toEqual({ available: true });
+    expect(screen.getByText(/waits up to 45 s for your answer/)).toBeTruthy();
+  });
+
   test('Away: changing a status that is on starts from its preset', async () => {
     server.state.profile = { ...server.state.profile, away: { ...server.state.profile.away!, preset: 'gym', message: 'At the gym until 9 AM' } };
     await renderScreen(<Away />);

@@ -6,6 +6,7 @@ import { Banner } from '../components/ui/Banner';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Chip } from '../components/ui/Chip';
+import { ListRow } from '../components/ui/ListRow';
 import { Screen } from '../components/ui/Screen';
 import { Section } from '../components/ui/Section';
 import { SkeletonRows } from '../components/ui/Skeleton';
@@ -14,7 +15,7 @@ import { TextField } from '../components/ui/TextField';
 import { useAsyncAction } from '../hooks/useAsyncAction';
 import { useProfile } from '../hooks/useProfile';
 import { api, awayActive } from '../lib/api';
-import { AWAY_PRESETS, DURATIONS, awayMessage, spokenTime, untilFor, type AwayPreset, type Duration } from '../lib/away';
+import { AWAY_PRESETS, DURATIONS, availabilityText, awayMessage, spokenTime, untilFor, type AwayPreset, type Duration } from '../lib/away';
 import { Icon } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
 import { haptic } from '../lib/haptics';
@@ -114,6 +115,18 @@ export default function Away() {
           <Button title="I'm back" icon="sunny-outline" variant="filled" loading={clear.busy} onPress={() => void clear.run()} />
         </Card>
       ) : null}
+
+      <Section title="When a caller needs you" footer={availabilityText(p.available, p.assistant_name)}>
+        <ListRow
+          icon="hand-left-outline"
+          iconTone="primary"
+          title="I can answer questions now"
+          subtitle={active ? 'Off is usual while you are away.' : undefined}
+          switchValue={p.available}
+          onSwitchChange={(available) => void profile.patch({ available })}
+          testID="availability"
+        />
+      </Section>
 
       <Section title={active ? 'Change it' : 'What are you doing?'} grouped={false}>
         <View style={styles.grid}>

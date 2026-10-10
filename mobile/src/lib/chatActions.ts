@@ -29,7 +29,8 @@ export function chatActionChip(a: ChatAction): ActionChip | null {
     case 'note_added':
       return { icon: 'bookmark-outline', label: str(a.text) ? `Noted: ${short(str(a.text))}` : 'Note saved', href: '/notes' };
     case 'availability':
-      return { icon: a.available ? 'checkmark-circle-outline' : 'moon-outline', label: a.available ? 'You are marked available' : 'You are marked busy', href: '/away' };
+      // The "I can answer questions now" switch on Away (and Today) shows and changes it.
+      return { icon: a.available ? 'hand-left-outline' : 'moon-outline', label: a.available ? 'You can be asked on hold' : 'You are marked busy', href: '/away' };
     case 'enabled':
       return { icon: a.enabled ? 'headset-outline' : 'moon-outline', label: a.enabled ? 'Assistant turned on' : 'Assistant turned off' };
     default:
