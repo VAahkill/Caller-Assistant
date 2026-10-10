@@ -84,6 +84,22 @@ describe('a live call', () => {
     expect(screen.getByText('They heard, in Telugu')).toBeTruthy();
   });
 
+  test("typed replies go without a language, so English from a Telugu speaker isn't read as Telugu", async () => {
+    server.state.calls.find((c) => c.id === LIVE_CALL_ID)!.holds[0].answer = 'done';
+    server.state.calls.find((c) => c.id === LIVE_CALL_ID)!.status = 'active';
+    server.state.profile = { ...server.state.profile, owner_language: 'te' };
+    await renderScreen(<CallScreen />);
+    await fireEvent.changeText(await screen.findByLabelText('Reply in Telugu'), 'Please wait at the gate');
+    await fireEvent.press(screen.getByTestId('composer-send'));
+    await waitFor(() => expect(requests('POST', `/calls/${LIVE_CALL_ID}/say`)).toHaveLength(1));
+    expect(requests('POST', `/calls/${LIVE_CALL_ID}/say`)[0].body).toEqual({ text: 'Please wait at the gate' });
+    // The English quick replies say so.
+    await waitFor(() => expect(screen.queryByTestId(/^outbox-/)).toBeNull());
+    await fireEvent.press(screen.getByRole('button', { name: "I'm coming down in 2 minutes" }));
+    await waitFor(() => expect(requests('POST', `/calls/${LIVE_CALL_ID}/say`)).toHaveLength(2));
+    expect(requests('POST', `/calls/${LIVE_CALL_ID}/say`)[1].body).toEqual({ text: "I'm coming down in 2 minutes", lang: 'en' });
+  });
+
   test('a reply that fails stays on screen with the reason and Retry', async () => {
     server.state.calls.find((c) => c.id === LIVE_CALL_ID)!.holds[0].answer = 'done';
     await renderScreen(<CallScreen />);

@@ -29,6 +29,7 @@ import { createAudioPlayer } from 'expo-audio';
 import { router } from 'expo-router';
 
 import Practice from '../../app/practice';
+import type { MockServer } from '../../lib/mock/server';
 import { MockEventsSocket } from '../../lib/mock/socket';
 import { getTransport, setTransport, type SocketLike } from '../../lib/transport';
 import type { TranscriptLine } from '../../lib/types';
@@ -76,9 +77,10 @@ const lineOf = (speaker: TranscriptLine['speaker'], text: string, lang: string, 
   kind: 'speech',
 });
 
+let mockServer: MockServer;
 beforeEach(async () => {
   opened = [];
-  await useMockServer();
+  mockServer = await useMockServer();
   const real = getTransport();
   setTransport({
     ...real,
@@ -186,15 +188,24 @@ test("the assistant's sentences play one after another, never together", async (
   expect(screen.getByRole('button', { name: 'Unmute Ava' })).toBeTruthy();
 });
 
-test('as the owner, a reply goes as "say" in your language', async () => {
-  await startCall('Telugu');
+test('as the owner, typed words go without a language so the server reads the script; quick replies go as English', async () => {
+  mockServer.state.profile = { ...mockServer.state.profile, owner_language: 'te' };
+  await startCall('Hindi');
   await fireEvent.press(screen.getByRole('tab', { name: 'As you, the owner' }));
-  expect(screen.getByText("Reply in English, I'll say it in Telugu.")).toBeTruthy();
-  await fireEvent.changeText(screen.getByLabelText('Reply in English'), 'Please leave it at the gate');
+  expect(screen.getByText("Reply in Telugu, I'll say it in Hindi.")).toBeTruthy();
+  // English typed by a Telugu speaker is English, not Telugu.
+  await fireEvent.changeText(screen.getByLabelText('Reply in Telugu'), 'Please leave it at the gate');
   await fireEvent.press(screen.getByTestId('composer-send'));
-  expect(sock.sent.at(-1)).toEqual({ action: 'say', call_id: CALL, text: 'Please leave it at the gate', lang: 'en' });
+  expect(sock.sent.at(-1)).toEqual({ action: 'say', call_id: CALL, text: 'Please leave it at the gate' });
+  // The bubble says what the server will take it as.
+  expect(within(screen.getByTestId('outbox-sending')).getByText('EN')).toBeTruthy();
   await server({ event: 'ack', kind: 'say' });
   expect(screen.getByText('Sent · Ava is saying it')).toBeTruthy();
+  await server({ event: 'transcript', ...base, line: lineOf('user', 'कृपया गेट पर छोड़ दीजिए', 'hi', 'Please leave it at the gate') });
+
+  // The built-in quick replies are English whatever the owner's language.
+  await fireEvent.press(screen.getByRole('button', { name: 'Please leave it with security at the gate' }));
+  expect(sock.sent.at(-1)).toEqual({ action: 'say', call_id: CALL, text: 'Please leave it with security at the gate', lang: 'en' });
 });
 
 test('a hold question can be answered right in the practice call', async () => {

@@ -31,7 +31,7 @@ import { callView, openHold, reduceCall, type CallView, type ServerEvent } from 
 import { duration } from '../lib/format';
 import { languageName } from '../lib/languages';
 import { liveQuickReplies } from '../lib/quickReplies';
-import { scriptLanguage } from '../lib/script';
+import { ownerTextLanguage, scriptLanguage } from '../lib/script';
 import { PRACTICE_NUMBER, PracticeCall, recordingBase64 } from '../lib/simulate';
 import type { TranscriptLine } from '../lib/types';
 
@@ -235,13 +235,15 @@ export default function Practice() {
   };
 
   const callerLang = view?.language || lang;
-  const sendText = (text: string) =>
+  // As the owner, typed words go without a language so the server reads it from
+  // the script, and the built-in quick replies are English (see the call screen).
+  const sendText = (text: string, ownerLang?: string) =>
     role === 'caller'
       ? outbox.send({ speaker: 'caller', kind: 'text', text, lang: lang || scriptLanguage(text) || callerLang }, async () => {
           await active().sendText(text, lang || undefined);
         })
-      : outbox.send({ speaker: 'user', kind: 'text', text, lang: owner }, async () => {
-          await active().say(text, owner);
+      : outbox.send({ speaker: 'user', kind: 'text', text, lang: ownerLang ?? ownerTextLanguage(text, owner) }, async () => {
+          await active().say(text, ownerLang);
         });
 
   const sendVoice = (r: Recording) =>
@@ -426,7 +428,8 @@ export default function Practice() {
           }
           suggestions={role === 'caller' ? (callerSpoke ? undefined : STARTERS[lang] ?? STARTERS['']) : liveQuickReplies('delivery')}
           busy={outbox.busy}
-          onSend={sendText}
+          onSend={(text) => sendText(text)}
+          onSuggestion={(text) => sendText(text, role === 'owner' ? 'en' : undefined)}
           onVoice={sendVoice}
         />
       ) : null}

@@ -35,6 +35,7 @@ import { languageName } from '../../lib/languages';
 import { useLive } from '../../lib/live';
 import { isPracticeCall } from '../../lib/practiceCalls';
 import { liveQuickReplies } from '../../lib/quickReplies';
+import { ownerTextLanguage } from '../../lib/script';
 import type { CallRecord } from '../../lib/types';
 
 /** One call: live (status, transcript with translation, reply in your own
@@ -110,9 +111,12 @@ function LiveCall({
   const [dismissedError, setDismissedError] = useState(0);
   const lastError = view.errors.length > dismissedError ? view.errors[view.errors.length - 1] : null;
 
-  const say = (text: string) =>
-    outbox.send({ speaker: 'user', kind: 'text', text, lang: owner }, async () => {
-      await api.say(id, text, owner);
+  // Typed words go without a language so the server reads it from the script
+  // (English typed by a Telugu speaker is English); the built-in quick replies
+  // are English. Recordings carry the owner's language as the speech hint.
+  const say = (text: string, lang?: string) =>
+    outbox.send({ speaker: 'user', kind: 'text', text, lang: lang ?? ownerTextLanguage(text, owner) }, async () => {
+      await api.say(id, text, lang);
     });
   const sayAudio = (r: Recording) =>
     outbox.send({ speaker: 'user', kind: 'voice', text: '', lang: owner, seconds: r.durationMs / 1000 }, async () => {
@@ -120,7 +124,7 @@ function LiveCall({
       return { text: res.heard };
     });
   const answer = (text: string) =>
-    outbox.send({ speaker: 'user', kind: 'text', text, lang: owner }, async () => {
+    outbox.send({ speaker: 'user', kind: 'text', text, lang: ownerTextLanguage(text, owner) }, async () => {
       await api.answer(id, text, question?.holdId);
     });
 
@@ -221,7 +225,8 @@ function LiveCall({
           }
           suggestions={liveQuickReplies(call.category)}
           busy={outbox.busy}
-          onSend={say}
+          onSend={(text) => say(text)}
+          onSuggestion={(text) => say(text, 'en')}
           onVoice={sayAudio}
         />
       )}
