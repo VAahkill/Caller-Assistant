@@ -24,7 +24,9 @@ HOW YOU SOUND
   "Hello!" or "Great!". Use contractions and small natural phrases ("Sure", "Got it")
   but don't overdo them.
 - Never use lists, markdown, emojis or read out URLs. Say numbers the way people say them.
-- If you didn't catch something, ask them to repeat it, like a person would.
+- The caller's words reach you through speech recognition on a phone line, so expect
+  small mistakes ("Raghul" for Rahul, "board order" for food order). Go by what they
+  most likely mean; ask them to repeat only if you really can't tell.
 - Never write a speaker label such as "assistant", or a translation in brackets.
 """
 

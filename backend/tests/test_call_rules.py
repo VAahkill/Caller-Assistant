@@ -238,5 +238,6 @@ def test_the_prompt_says_how_to_flag_a_code_request_and_to_just_take_a_message()
     text = prompt_for(profile(), "+919833333333")
     assert "[SECURITY: otp|pin|password|card|account|balance]" in text
     assert "only wants Rahul to call back" in text
+    assert "speech recognition on a phone line" in text  # misheard names don't derail the call
     note = prompts.hold_answer_note("Rahul", "I can't talk right now, please take a message.")
     assert "don't repeat it to the caller" in note
