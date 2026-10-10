@@ -162,7 +162,10 @@ def speak(engine, text: str, voice: str, lang: str) -> bytes:
     return pcm
 
 
-def pad(pcm: bytes, before: float = 0.4, after: float = 1.2) -> bytes:
+PAD_BEFORE_S = 0.4
+
+
+def pad(pcm: bytes, before: float = PAD_BEFORE_S, after: float = 1.2) -> bytes:
     return b"\x00\x00" * int(before * RATE) + pcm + b"\x00\x00" * int(after * RATE)
 
 
@@ -516,8 +519,22 @@ class CallRun:
             if mode == "recording":
                 entry["t0"] = time.monotonic()
                 session.submit_recording(line, sc["hint"])
+            elif args.pace:
+                # Live audio as a phone line delivers it, 20 ms at a time: the turn
+                # detector ends the turn after its silence, and the clock starts when
+                # the caller stops talking (the end-of-turn wait counts too).
+                speech_end = int((PAD_BEFORE_S * RATE + len(pcm) / 2)) * 2
+                frame = 640
+                start = time.monotonic()
+                for n, i in enumerate(range(0, len(line), frame)):
+                    if entry["t0"] is None and i >= speech_end:
+                        entry["t0"] = time.monotonic()
+                    bridge.feed(line[i:i + frame])
+                    await asyncio.sleep(max(0.0, start + (n + 1) * 0.02 - time.monotonic()))
+                if entry["t0"] is None:
+                    entry["t0"] = time.monotonic()
             else:
-                # Live audio: the turn detector ends the turn after its silence.
+                # Live audio at once: the turn detector ends the turn after its silence.
                 bridge.feed(line)
                 while not bridge.inbound.empty():
                     await asyncio.sleep(0.01)
@@ -801,7 +818,7 @@ async def main_async(args) -> None:
     log.info("Warm-up took %.0f s", time.monotonic() - started)
     meta = {"fixed": fixed_texts(engine), "llm_model": args.llm_model, "llm_url": args.llm_url, "llm_extra_body": args.llm_extra_body,
             "temperature": args.temperature, "snr": args.snr, "date": time.strftime("%Y-%m-%d %H:%M"),
-            "roundtrip": not args.no_roundtrip, "summaries": args.summary, "warm_up_s": round(time.monotonic() - started)}
+            "roundtrip": not args.no_roundtrip, "summaries": args.summary, "paced": args.pace, "warm_up_s": round(time.monotonic() - started)}
     results = [previous[sc["id"]] for sc in scenarios() if sc["id"] in previous and sc not in todo]
     for sc in todo:
         if sc["id"] in previous and args.resume:
@@ -850,6 +867,9 @@ def main() -> None:
     ap.add_argument("--only", nargs="*", help="regexes of call ids to run")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--no-roundtrip", action="store_true", help="don't read the replies back from their speech")
+    ap.add_argument("--pace", action=argparse.BooleanOptionalAction, default=True,
+                    help="feed a live caller's audio in real time (--no-pace: all at once, quicker but the"
+                         " latency then leaves out the end-of-turn wait and the time the caller spends talking)")
     ap.add_argument("--summary", choices=["on", "off"], default="on", help="the end-of-call summary")
     ap.add_argument("--recheck", action="store_true", help="only run the checks again on the report in --out")
     args = ap.parse_args()
