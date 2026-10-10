@@ -4,6 +4,7 @@ import { Linking, StyleSheet, View } from 'react-native';
 import { useAsyncAction } from '../../hooks/useAsyncAction';
 import { api } from '../../lib/api';
 import { prettyNumber, timeAgo } from '../../lib/format';
+import { isPracticeMessage } from '../../lib/inbox';
 import { categoryOf } from '../../lib/labels';
 import type { CallSummary, CallerMessage } from '../../lib/types';
 import { Avatar } from '../ui/Avatar';
@@ -32,7 +33,8 @@ export function MessageCard({ message: m, call, onOpen, onChanged, testID }: Mes
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState('');
   const [callBack, setCallBack] = useState(true);
-  const name = m.caller_name || prettyNumber(m.number);
+  const practice = isPracticeMessage(m, call);
+  const name = m.caller_name || (practice ? 'Practice call' : prettyNumber(m.number));
 
   const reply = useAsyncAction(() => api.replyMessage(m.id, text.trim(), callBack), {
     success: callBack ? `Your assistant will call ${name} back with your reply.` : 'Reply saved.',
@@ -66,7 +68,7 @@ export function MessageCard({ message: m, call, onOpen, onChanged, testID }: Mes
           </Text>
           <Text variant="footnote" color="text2" numberOfLines={1}>
             {timeAgo(m.created_at)}
-            {call && call.category !== 'unknown' ? ` · ${categoryOf(call.category).label}` : ''}
+            {practice ? ' · Practice' : call && call.category !== 'unknown' ? ` · ${categoryOf(call.category).label}` : ''}
             {call?.urgent ? (
               <Text variant="footnote" weight="semibold" color="danger">
                 {' · Urgent'}

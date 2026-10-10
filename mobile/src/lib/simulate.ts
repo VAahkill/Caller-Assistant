@@ -7,6 +7,7 @@ import { File } from 'expo-file-system';
 
 import { BAD_TOKEN, loadConfig, NOT_SET_UP, wsUrl } from './api';
 import { parseEvent, type ServerEvent, type SimulateEvent } from './events';
+import { PRACTICE_NUMBER } from './practiceCalls';
 import { getTransport, refusedToken, SOCKET_OPEN, type SocketLike } from './transport';
 
 export interface PracticeOptions {
@@ -25,7 +26,6 @@ export interface PracticeHandlers {
   onClose: (info: { code: number; message: string | null }) => void;
 }
 
-export const PRACTICE_NUMBER = '+919800000000';
 const START_TIMEOUT_MS = 15000;
 const ACK_TIMEOUT_MS = 20000;
 
@@ -58,6 +58,8 @@ function closeMessage(code: number, reason: string): string | null {
   if (code === 1006 || !reason) return CUT_OFF;
   return `The practice call was cut off: ${reason}`;
 }
+
+export { PRACTICE_NUMBER };
 
 export class PracticeCall {
   readonly callId: string;

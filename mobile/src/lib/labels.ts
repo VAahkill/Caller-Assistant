@@ -3,6 +3,7 @@
 
 import type { IconName } from './design';
 import { prettyNumber } from './format';
+import { isPracticeNumber } from './practiceCalls';
 import type { PillTone } from '../components/ui/StatusPill';
 import type { AppliesTo, CallRecord, CallSummary, ShareWith, Task } from './types';
 
@@ -18,6 +19,7 @@ export const categoryOf = (c: string) => CATEGORY[c] ?? { label: c.charAt(0).toU
 
 /** The caller's saved name, else their number spaced for reading. */
 export function callerName(c: Pick<CallRecord, 'contact_name' | 'number'>): string {
+  if (!c.contact_name && isPracticeNumber(c.number)) return 'Practice call';
   return c.contact_name || (c.number ? prettyNumber(c.number) : '') || 'Unknown caller';
 }
 

@@ -10,6 +10,7 @@ import { Pressable, Text } from 'react-native';
 import { LiveProvider, SNAPSHOT_GRACE_MS, useLive } from '../live';
 import { LIVE_CALL_ID } from '../mock/fixtures';
 import type { MockServer } from '../mock/server';
+import { PracticeCall } from '../simulate';
 import { setTransport, type SocketLike } from '../transport';
 import { resetApi, useMockServer } from '../../test/mockApi';
 
@@ -90,6 +91,30 @@ test('a VIP calling raises an urgent alert and marks the call urgent', async () 
     content: expect.objectContaining({ title: 'VIP Amma is calling', categoryIdentifier: undefined }),
     trigger: { channelId: 'calls-urgent' },
   });
+});
+
+test('a practice call raises no notification and never shows as live, but is stored like the server does', async () => {
+  const Notifications = jest.requireMock<typeof import('expo-notifications')>('expo-notifications');
+  await render(
+    <LiveProvider>
+      <Calls />
+    </LiveProvider>,
+  );
+  await tick(10);
+  jest.mocked(Notifications.scheduleNotificationAsync).mockClear();
+  const started = PracticeCall.start({}, { onEvent: () => undefined, onAudio: () => undefined, onClose: () => undefined });
+  await tick(20);
+  const call = await started;
+  const sent = call.sendText('Hi, I have a Swiggy order for you.');
+  await tick(50);
+  await expect(sent).resolves.toEqual({ kind: 'text' });
+  expect(screen.getByTestId('calls')).toHaveTextContent(`connected:${LIVE_CALL_ID}`);
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
+  expect(server.state.calls[0]).toMatchObject({ id: call.callId, number: '+919800000000' });
+  call.hangup();
+  await tick(200);
+  expect(server.state.calls[0].ended_at).not.toBeNull();
+  expect(Notifications.scheduleNotificationAsync).not.toHaveBeenCalled();
 });
 
 test('a call still live after reconnecting is never dropped from the screen', async () => {

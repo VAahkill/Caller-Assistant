@@ -49,6 +49,8 @@ export interface CallRecord {
   reject_reason: string;
   urgent: boolean;
   action_items: string[];
+  /** A practice call (/ws/simulate), not a real caller. */
+  practice?: boolean;
 }
 
 /** GET /calls leaves the transcript out. */

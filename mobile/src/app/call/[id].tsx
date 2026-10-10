@@ -33,6 +33,7 @@ import { clockTime, duration, prettyNumber, timeAgo } from '../../lib/format';
 import { callerName, categoryOf } from '../../lib/labels';
 import { languageName } from '../../lib/languages';
 import { useLive } from '../../lib/live';
+import { isPracticeCall } from '../../lib/practiceCalls';
 import { liveQuickReplies } from '../../lib/quickReplies';
 import type { CallRecord } from '../../lib/types';
 
@@ -276,7 +277,11 @@ function CallIntro({ call, compact }: { call: CallRecord; compact?: boolean }) {
           {length ? ` · ${length}` : ''}
         </Text>
         <View style={styles.pills}>
-          <StatusPill label={blocked ? 'Blocked' : cat.label} tone={blocked ? 'danger' : cat.tone} icon={blocked ? 'ban-outline' : cat.icon} />
+          {isPracticeCall(call) ? (
+            <StatusPill label="Practice" tone="neutral" icon="headset-outline" />
+          ) : (
+            <StatusPill label={blocked ? 'Blocked' : cat.label} tone={blocked ? 'danger' : cat.tone} icon={blocked ? 'ban-outline' : cat.icon} />
+          )}
           {call.language ? <StatusPill label={languageName(call.language)} tone="info" icon="language-outline" /> : null}
           {call.urgent ? <StatusPill label="Urgent" tone="danger" icon="alert-circle-outline" /> : null}
         </View>
@@ -330,7 +335,7 @@ function FinishedCall({
       ) : null}
       <CallIntro call={call} />
       <SummaryCard call={call} />
-      {call.number ? <CallActions call={call} profile={profile} /> : null}
+      {call.number && !isPracticeCall(call) ? <CallActions call={call} profile={profile} /> : null}
       {recording ? (
         <AudioPlayer source={recording} title="Call recording" knownDuration={call.ended_at ? call.ended_at - call.started_at : null} testID="recording" />
       ) : null}

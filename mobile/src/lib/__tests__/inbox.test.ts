@@ -103,8 +103,25 @@ describe('days', () => {
 });
 
 test('filter values from a link are checked', () => {
-  expect(INBOX_FILTERS.map((f) => f.label)).toEqual(['All', 'Contacts', 'Unknown', 'Delivery', 'Spam', 'Blocked']);
+  expect(INBOX_FILTERS.map((f) => f.label)).toEqual(['All', 'Contacts', 'Unknown', 'Delivery', 'Spam', 'Blocked', 'Practice']);
   expect(isInboxFilter('spam')).toBe(true);
   expect(isInboxFilter('everything')).toBe(false);
   expect(isInboxFilter(undefined)).toBe(false);
+});
+
+describe('practice calls', () => {
+  const practice = { ...fx.calls.find((c) => c.id === 'call-rajesh')!, id: 'call-practice', number: '+919800000000', contact_name: '', practice: true };
+  const message = { ...fx.messages[0], id: 'msg-practice', call_id: practice.id, number: practice.number, caller_name: '' };
+
+  test('show only under Practice, never under All or the others', () => {
+    for (const f of INBOX_FILTERS) expect([f.value, callMatches(f.value, practice)]).toEqual([f.value, f.value === 'practice']);
+    for (const f of INBOX_FILTERS) expect([f.value, messageMatches(f.value, message, practice)]).toEqual([f.value, f.value === 'practice']);
+    // A message is known by its number even before its call has loaded.
+    expect(messageMatches('all', message, undefined)).toBe(false);
+  });
+
+  test('a server that marks them is understood, whatever the number', () => {
+    expect(callMatches('all', { ...fx.calls[0], practice: true })).toBe(false);
+    expect(callMatches('practice', fx.calls[0])).toBe(false);
+  });
 });

@@ -2,9 +2,10 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer,
 import { AppState, Platform, Vibration } from 'react-native';
 
 import { loadConfig, wsUrl } from './api';
-import { initialLive, liveReducer, parseEvent, type LiveData, type SecurityAlert, type ServerEvent } from './events';
+import { initialLive, isPracticeEvent, liveReducer, parseEvent, type LiveData, type SecurityAlert, type ServerEvent } from './events';
 import { liveNotice } from './liveNotices';
 import { notifyLocal, pushRegistered } from './notifications';
+import { isPracticeCall } from './practiceCalls';
 import { getTransport, refusedToken, SOCKET_OPEN, type SocketLike } from './transport';
 
 export type { CallView, PendingQuestion, SecurityAlert } from './events';
@@ -57,6 +58,8 @@ export function LiveProvider({ children }: { children: ReactNode }) {
   const [attempt, setAttempt] = useState(0);
   const failures = useRef(0);
   const ws = useRef<SocketLike | null>(null);
+  // Practice calls seen so far, so their events raise no notifications.
+  const practice = useRef(new Set<string>());
 
   useEffect(() => {
     let cancelled = false;
@@ -92,8 +95,9 @@ export function LiveProvider({ children }: { children: ReactNode }) {
             return;
           }
           const ev = parsed.event as ServerEvent;
+          if ('call' in ev && ev.call && isPracticeCall(ev.call)) practice.current.add(ev.call.id);
           dispatch({ type: 'event', event: ev });
-          notifyFor(ev);
+          if (!isPracticeEvent(ev, (id) => practice.current.has(id))) notifyFor(ev);
         };
         socket.onerror = () => undefined; // onclose follows and schedules the retry
         socket.onclose = (e) => {

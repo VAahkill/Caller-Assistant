@@ -16,6 +16,7 @@ import { Icon, type IconName } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
 import { greeting, isToday, prettyNumber, timeAgo } from '../../lib/format';
 import { useLive, type SecurityAlert } from '../../lib/live';
+import { isPracticeCall, isPracticeNumber } from '../../lib/practiceCalls';
 import type { CallerMessage } from '../../lib/types';
 
 const QUICK_ACTIONS: { icon: IconName; label: string; href: Href }[] = [
@@ -51,22 +52,28 @@ export default function Today() {
   const [toggling, setToggling] = useState(false);
   const [readinessOpen, setReadinessOpen] = useState(false);
 
-  const today = useMemo(() => (calls.data ?? []).filter((c) => isToday(c.started_at)), [calls.data]);
+  // Practice calls and the messages left on them are your own tests: they don't count here.
+  const realCalls = useMemo(() => (calls.data ?? []).filter((c) => !isPracticeCall(c)), [calls.data]);
+  const realMessages = useMemo(() => {
+    const practice = new Set((calls.data ?? []).filter(isPracticeCall).map((c) => c.id));
+    return (messages.data ?? []).filter((m) => !isPracticeNumber(m.number) && !practice.has(m.call_id));
+  }, [messages.data, calls.data]);
+  const today = useMemo(() => realCalls.filter((c) => isToday(c.started_at)), [realCalls]);
   const stats = useMemo(
     () => ({
       answered: today.filter((c) => c.direction === 'inbound' && c.status !== 'rejected').length,
-      messages: (messages.data ?? []).filter((m) => isToday(m.created_at)).length,
+      messages: realMessages.filter((m) => isToday(m.created_at)).length,
       blocked: today.filter((c) => c.status === 'rejected' || c.category === 'spam').length,
     }),
-    [today, messages.data],
+    [today, realMessages],
   );
   const liveCalls = Object.values(live.calls);
-  const latest = useMemo(() => {
-    const list = messages.data ?? [];
+  const latest = useMemo(
     // New ones first, then the most recent of the rest.
-    return [...list.filter((m) => m.status === 'new'), ...list.filter((m) => m.status !== 'new')].slice(0, 3);
-  }, [messages.data]);
-  const unread = (messages.data ?? []).filter((m) => m.status === 'new').length;
+    () => [...realMessages.filter((m) => m.status === 'new'), ...realMessages.filter((m) => m.status !== 'new')].slice(0, 3),
+    [realMessages],
+  );
+  const unread = realMessages.filter((m) => m.status === 'new').length;
   const p = profile.data;
   const assistant = p?.assistant_name ?? 'Your assistant';
 

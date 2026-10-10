@@ -7,6 +7,7 @@ import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-
 import { router } from 'expo-router';
 
 import Today from '../../app/(tabs)/index';
+import { isToday } from '../../lib/format';
 import { LIVE_CALL_ID } from '../../lib/mock/fixtures';
 import type { MockServer } from '../../lib/mock/server';
 import { resetApi, useMockServer } from '../../test/mockApi';
@@ -97,6 +98,21 @@ test('latest messages: new first; opening one marks it read', async () => {
   expect(push).toHaveBeenCalledWith('/call/call-amma');
   await waitFor(() => expect(requests('POST', '/messages/msg-amma/read')).toHaveLength(1));
   expect(list.getByText('New messages · 1')).toBeTruthy();
+});
+
+test("practice calls and their messages don't count on Today", async () => {
+  const answered = server.state.calls.filter((c) => isToday(c.started_at) && c.direction === 'inbound' && c.status !== 'rejected').length;
+  const practice = { ...server.state.calls[0], id: 'call-practice', number: '+919800000000', contact_name: '', status: 'ended' as const, started_at: Date.now() / 1000 };
+  server.state.calls = [practice, ...server.state.calls];
+  server.state.messages = [
+    { ...server.state.messages[0], id: 'msg-practice', call_id: practice.id, number: practice.number, caller_name: '', status: 'new', created_at: Date.now() / 1000 },
+    ...server.state.messages,
+  ];
+  await renderScreen(<Today />);
+  expect(await screen.findByRole('button', { name: `Answered: ${answered}` })).toBeTruthy();
+  const list = within(screen.getByTestId('latest-messages'));
+  expect(list.getByText('New messages · 2')).toBeTruthy();
+  expect(list.queryByText(/Practice/)).toBeNull();
 });
 
 test('turning the assistant off saves and says what happens to calls', async () => {

@@ -2,6 +2,7 @@
 // older shapes. These fill in the v2 fields with the documented defaults so
 // screens can rely on them, whichever server version answers.
 
+import { isPracticeNumber } from './practiceCalls';
 import type {
   CallRecord,
   CallSummary,
@@ -154,6 +155,8 @@ export function normalizeCall(raw: unknown): CallRecord {
     holds: Array.isArray(c.holds) ? (c.holds as Raw[]).map(normalizeHold) : [],
     urgent: bool(c.urgent, false),
     action_items: strings(c.action_items),
+    // Set only on practice calls, so a real call's record keeps its shape.
+    ...(c.practice === true || (c as { simulated?: unknown }).simulated === true || isPracticeNumber(str(c.number)) ? { practice: true } : {}),
   } as CallRecord;
 }
 

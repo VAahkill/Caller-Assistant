@@ -1,9 +1,10 @@
 // Filters, search and day grouping for the Inbox. Messages are filtered by the
 // call they came from (joined on call_id), so one set of chips works on both tabs.
 
+import { isPracticeCall, isPracticeNumber } from './practiceCalls';
 import type { CallSummary, CallerMessage } from './types';
 
-export type InboxFilter = 'all' | 'contacts' | 'unknown' | 'delivery' | 'spam' | 'blocked';
+export type InboxFilter = 'all' | 'contacts' | 'unknown' | 'delivery' | 'spam' | 'blocked' | 'practice';
 
 export const INBOX_FILTERS: { value: InboxFilter; label: string }[] = [
   { value: 'all', label: 'All' },
@@ -12,14 +13,18 @@ export const INBOX_FILTERS: { value: InboxFilter; label: string }[] = [
   { value: 'delivery', label: 'Delivery' },
   { value: 'spam', label: 'Spam' },
   { value: 'blocked', label: 'Blocked' },
+  // Shown only when there are practice calls; they appear nowhere else.
+  { value: 'practice', label: 'Practice' },
 ];
 
 export function isInboxFilter(v: unknown): v is InboxFilter {
   return INBOX_FILTERS.some((f) => f.value === v);
 }
 
-/** Does this call belong under the chip? Blocked calls only show under Blocked and Spam. */
+/** Does this call belong under the chip? Blocked calls only show under Blocked
+ *  and Spam; practice calls only under Practice. */
 export function callMatches(filter: InboxFilter, c: CallSummary): boolean {
+  if (isPracticeCall(c)) return filter === 'practice';
   const blocked = c.status === 'rejected';
   switch (filter) {
     case 'all':
@@ -34,14 +39,22 @@ export function callMatches(filter: InboxFilter, c: CallSummary): boolean {
       return c.category === 'spam';
     case 'blocked':
       return blocked;
+    case 'practice':
+      return false;
   }
 }
 
 /** A message matches when its call does; without the call, only All and (by name) Unknown can tell. */
 export function messageMatches(filter: InboxFilter, m: CallerMessage, call: CallSummary | undefined): boolean {
+  if (isPracticeMessage(m, call)) return filter === 'practice';
   if (filter === 'all') return true;
   if (call) return callMatches(filter, call);
   return filter === 'unknown' && !m.caller_name;
+}
+
+/** A message left on a practice call, by you playing the caller. */
+export function isPracticeMessage(m: CallerMessage, call?: CallSummary): boolean {
+  return isPracticeNumber(m.number) || isPracticeCall(call);
 }
 
 /** Case-insensitive search across fields; digits also match a number typed with spaces or +91. */

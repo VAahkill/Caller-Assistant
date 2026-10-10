@@ -2,6 +2,7 @@
 // per API contract v2, and the reducer that turns them into app state.
 
 import { normalizeCall, normalizeLine, normalizeTask } from './normalize';
+import { isPracticeCall, isPracticeNumber } from './practiceCalls';
 import { addTaskStep, type TaskStep } from './tasks';
 import type { AssistantState, CallRecord, CallerMessage, HoldQuestion, Task, TranscriptLine, VoiceStatus } from './types';
 
@@ -291,9 +292,50 @@ export interface LiveData {
   profileKey: number;
   /** Bumps when a recorded voice changes status (voice_status). */
   voicesKey: number;
+  /** Practice calls seen on the events socket; their events are kept out of the app's live state. */
+  practiceIds: string[];
 }
 
-export const initialLive: LiveData = { calls: {}, questions: [], alerts: [], tasks: {}, taskSteps: {}, refreshKey: 0, profileKey: 0, voicesKey: 0 };
+export const initialLive: LiveData = {
+  calls: {},
+  questions: [],
+  alerts: [],
+  tasks: {},
+  taskSteps: {},
+  refreshKey: 0,
+  profileKey: 0,
+  voicesKey: 0,
+  practiceIds: [],
+};
+
+/**
+ * Is this event about a practice call? A call event says so by its record;
+ * the others by a call id seen before, or by the practice number as the
+ * caller (the server names a caller without a contact by their number).
+ */
+export function isPracticeEvent(ev: AnyEvent, known: (callId: string) => boolean): boolean {
+  if ('call' in ev && ev.call) return isPracticeCall(ev.call);
+  if (ev.event === 'message_taken') return isPracticeNumber(ev.message.number) || known(ev.message.call_id);
+  if ('call_id' in ev && ev.call_id && known(ev.call_id)) return true;
+  return 'who' in ev && isPracticeNumber(ev.who);
+}
+
+/** A practice call's events only tell the lists to reload (Inbox shows them under Practice). */
+function practiceEvent(state: LiveData, ev: ServerEvent): LiveData {
+  switch (ev.event) {
+    case 'call_snapshot':
+    case 'call_started': {
+      const ids = state.practiceIds.includes(ev.call.id) ? state.practiceIds : [...state.practiceIds, ev.call.id].slice(-20);
+      return { ...state, practiceIds: ids, refreshKey: ev.event === 'call_started' ? state.refreshKey + 1 : state.refreshKey };
+    }
+    case 'call_ended':
+    case 'call_rejected':
+    case 'message_taken':
+      return { ...state, refreshKey: state.refreshKey + 1 };
+    default:
+      return state;
+  }
+}
 
 export type LiveAction =
   | { type: 'event'; event: ServerEvent; now?: number }
@@ -341,6 +383,7 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
   }
   const ev = action.event;
   const now = action.now ?? Date.now() / 1000;
+  if (isPracticeEvent(ev, (id) => state.practiceIds.includes(id))) return practiceEvent(state, ev);
   switch (ev.event) {
     case 'call_snapshot':
     case 'call_started': {

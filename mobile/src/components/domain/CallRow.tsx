@@ -2,8 +2,9 @@ import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
-import { prettyNumber, timeAgo } from '../../lib/format';
+import { timeAgo } from '../../lib/format';
 import { callLine, callerName, categoryOf } from '../../lib/labels';
+import { isPracticeCall } from '../../lib/practiceCalls';
 import type { CallSummary } from '../../lib/types';
 import { Avatar } from '../ui/Avatar';
 import { StatusPill } from '../ui/StatusPill';
@@ -25,6 +26,7 @@ export function CallRow({ call, live, vip, onPress, testID }: CallRowProps) {
   const name = callerName(call);
   const blocked = call.status === 'rejected';
   const outbound = call.direction === 'outbound';
+  const practice = isPracticeCall(call);
   return (
     <Pressable
       testID={testID}
@@ -35,12 +37,16 @@ export function CallRow({ call, live, vip, onPress, testID }: CallRowProps) {
       android_ripple={{ color: c.surface3 }}
       style={({ pressed }) => [styles.row, { paddingHorizontal: t.space.lg, opacity: pressed ? 0.85 : 1 }]}
     >
-      <Avatar name={call.contact_name || call.number} icon={call.category === 'delivery' ? 'bicycle' : blocked ? 'ban' : undefined} ring={vip} />
+      <Avatar
+        name={call.contact_name || call.number}
+        icon={practice ? 'headset' : call.category === 'delivery' ? 'bicycle' : blocked ? 'ban' : undefined}
+        ring={vip}
+      />
       <View style={styles.body}>
         <View style={styles.top}>
           {outbound ? <Icon name="arrow-up-outline" size={14} color={c.text2} /> : null}
           <Text variant="headline" numberOfLines={1} style={styles.flex}>
-            {call.contact_name || prettyNumber(call.number) || 'Unknown caller'}
+            {name}
           </Text>
           <Text variant="footnote" color="text2" tabular>
             {timeAgo(call.started_at)}
@@ -53,7 +59,11 @@ export function CallRow({ call, live, vip, onPress, testID }: CallRowProps) {
           {live ? <StatusPill label="Live" tone="success" dot pulse /> : null}
           {call.status === 'on_hold' ? <StatusPill label="Waiting for you" tone="warning" icon="hand-left-outline" /> : null}
           {call.urgent ? <StatusPill label="Urgent" tone="danger" icon="alert-circle-outline" /> : null}
-          <StatusPill label={blocked ? 'Blocked' : cat.label} tone={blocked ? 'danger' : cat.tone} icon={blocked ? 'ban-outline' : cat.icon} />
+          {practice ? (
+            <StatusPill label="Practice" tone="neutral" icon="headset-outline" />
+          ) : (
+            <StatusPill label={blocked ? 'Blocked' : cat.label} tone={blocked ? 'danger' : cat.tone} icon={blocked ? 'ban-outline' : cat.icon} />
+          )}
         </View>
       </View>
     </Pressable>

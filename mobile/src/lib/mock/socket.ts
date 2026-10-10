@@ -2,6 +2,7 @@
 // same order as the real server: ack or error for every message, then the
 // call's transcript, translation, status and language events.
 
+import { PRACTICE_NUMBER } from '../practiceCalls';
 import { scriptLanguage } from '../script';
 import type { SocketLike } from '../transport';
 import type { CallRecord, TranscriptLine } from '../types';
@@ -12,6 +13,8 @@ type Json = Record<string, unknown>;
 let lineSeq = 0;
 const lineId = () => `mock-line-${Date.now().toString(36)}-${lineSeq++}`;
 const nowS = () => Date.now() / 1000;
+/** How long the mock takes to wrap up a practice call after the hang-up, in tests. */
+export const SUMMARY_MS = 40;
 
 abstract class MockSocketBase implements SocketLike {
   readyState = 0;
@@ -203,21 +206,62 @@ export function ownerTurn(sock: { push: (ev: Json, after: number) => void }, cal
 // ---------------------------------------------------------------- /ws/simulate
 
 export class MockSimulateSocket extends MockSocketBase {
-  private readonly callId = `practice-${Date.now().toString(36)}`;
+  private readonly callId = `practice-${Date.now().toString(36)}-${lineSeq++}`;
   private lang: string;
   private ended = false;
+  private record: CallRecord | null = null;
+  private readonly number: string;
 
-  constructor(server: MockServer, query: URLSearchParams) {
+  constructor(
+    private readonly server: MockServer,
+    query: URLSearchParams,
+  ) {
     super(server.latencyMs ? 500 : 0);
     this.lang = query.get('lang') ?? '';
+    this.number = query.get('number') || PRACTICE_NUMBER;
   }
 
   private base() {
-    return { call_id: this.callId, who: 'Practice caller' };
+    // Like the server: a caller without a contact is named by their number.
+    return { call_id: this.callId, who: this.number };
+  }
+
+  /** Like the server, a practice call is an ordinary call: stored, and its
+   *  events published on the bus, so every events socket sees them too. */
+  private publish(ev: Json, after = 0) {
+    this.emit(ev, after);
+    for (const sk of this.server.liveSockets) sk.push(ev, after);
+    if (ev.event === 'transcript' && this.record) {
+      const line = ev.line as TranscriptLine;
+      this.record.transcript = [...this.record.transcript, line];
+    }
   }
 
   protected opened() {
     this.emit({ event: 'started', call_id: this.callId });
+    const record: CallRecord = {
+      id: this.callId,
+      direction: 'inbound',
+      number: this.number,
+      contact_name: '',
+      category: 'unknown',
+      status: 'active',
+      language: this.lang || 'en',
+      started_at: nowS(),
+      ended_at: null,
+      transcript: [],
+      holds: [],
+      summary: '',
+      message: '',
+      recording: '',
+      task_id: null,
+      reject_reason: '',
+      urgent: false,
+      action_items: [],
+    };
+    this.record = record;
+    this.server.state.calls = [record, ...this.server.state.calls];
+    this.publish({ event: 'call_started', ...this.base(), call: record });
     const g = phrase(this.lang || 'en', 'greeting');
     this.assistantSays(g, 0);
   }
@@ -225,12 +269,12 @@ export class MockSimulateSocket extends MockSocketBase {
   private assistantSays(p: { text: string; lang: string; translation: string }, after: number) {
     const b = this.base();
     const ln = makeLine('assistant', p.text, p.lang, p.translation);
-    this.emit({ event: 'assistant_status', ...b, state: 'speaking' }, after);
-    this.emit({ event: 'transcript', ...b, line: ln }, after);
+    this.publish({ event: 'assistant_status', ...b, state: 'speaking' }, after);
+    this.publish({ event: 'transcript', ...b, line: ln }, after);
     if (p.translation) {
-      this.emit({ event: 'transcript_update', ...b, line_id: ln.id, translation: p.translation, translation_lang: 'en' }, after + this.stepMs);
+      this.publish({ event: 'transcript_update', ...b, line_id: ln.id, translation: p.translation, translation_lang: 'en' }, after + this.stepMs);
     }
-    this.emit({ event: 'assistant_status', ...b, state: 'listening' }, after + this.stepMs * 2);
+    this.publish({ event: 'assistant_status', ...b, state: 'listening' }, after + this.stepMs * 2);
   }
 
   send(data: string) {
@@ -262,9 +306,9 @@ export class MockSimulateSocket extends MockSocketBase {
       const said = phrase(lang, 'owner');
       const written = msg.action === 'say_audio' ? 'Please leave it with security at Gate 2.' : text;
       const ln: TranscriptLine = { ...makeLine('user', lang === 'en' ? written : said.text, lang), translation: written, translation_lang: 'en' };
-      this.emit({ event: 'assistant_status', ...b, state: 'translating' }, step);
-      this.emit({ event: 'transcript', ...b, line: ln }, step * 2);
-      this.emit({ event: 'assistant_status', ...b, state: 'listening' }, step * 3);
+      this.publish({ event: 'assistant_status', ...b, state: 'translating' }, step);
+      this.publish({ event: 'transcript', ...b, line: ln }, step * 2);
+      this.publish({ event: 'assistant_status', ...b, state: 'listening' }, step * 3);
       return;
     }
     let heard: { text: string; lang: string; translation: string };
@@ -275,7 +319,7 @@ export class MockSimulateSocket extends MockSocketBase {
       }
       this.emit({ event: 'ack', kind: 'audio', seconds: 2.4 });
       heard = phrase(this.lang || 'te', 'heard');
-      this.emit({ event: 'assistant_status', ...b, state: 'transcribing' }, step / 2);
+      this.publish({ event: 'assistant_status', ...b, state: 'transcribing' }, step / 2);
     } else if ('text' in msg) {
       const text = String(msg.text ?? '').trim();
       if (!text) {
@@ -291,28 +335,47 @@ export class MockSimulateSocket extends MockSocketBase {
     }
     if (!this.lang) this.lang = heard.lang;
     const caller = makeLine('caller', heard.text, heard.lang, heard.translation);
-    this.emit({ event: 'transcript', ...b, line: caller }, step);
-    this.emit({ event: 'call_language', ...b, language: heard.lang, confidence: 0.96 }, step);
+    this.publish({ event: 'transcript', ...b, line: caller }, step);
+    this.publish({ event: 'call_language', ...b, language: heard.lang, confidence: 0.96 }, step);
     if (heard.lang !== 'en') {
-      this.emit({ event: 'assistant_status', ...b, state: 'translating' }, step);
+      this.publish({ event: 'assistant_status', ...b, state: 'translating' }, step);
       const english = PHRASES[heard.lang] ? phrase(heard.lang, 'heard').translation : '';
-      this.emit(
+      this.publish(
         { event: 'transcript_update', ...b, line_id: caller.id, translation: 'audio_b64' in msg ? english : englishFor(heard.text), translation_lang: 'en' },
         step * 2,
       );
     }
-    this.emit({ event: 'assistant_status', ...b, state: 'thinking' }, step * 2);
+    this.publish({ event: 'assistant_status', ...b, state: 'thinking' }, step * 2);
     this.assistantSays(phrase(this.lang, topicOf(heard.text + ('audio_b64' in msg ? ' order' : ''))), step * 3);
   }
 
   private hangup() {
     if (this.ended) return;
     this.ended = true;
-    const b = this.base();
-    const record = { id: this.callId, number: '+919800000000', status: 'ended', started_at: nowS() - 60, ended_at: nowS(), transcript: [], holds: [] };
-    this.emit({ event: 'assistant_status', ...b, state: 'idle' });
-    this.emit({ event: 'call_ended', ...b, call: record });
-    this.later(this.stepMs + 1, () => this.close(1000, ''));
+    this.publish({ event: 'assistant_status', ...this.base(), state: 'idle' });
+    // Like the server, the socket closes only once the call is wrapped up
+    // (the summary takes a while), so the app must not wait on it to show the end.
+    this.later(this.server.latencyMs ? 2500 : SUMMARY_MS, () => {
+      this.endRecord();
+      this.publish({ event: 'call_ended', ...this.base(), call: this.record });
+      this.later(1, () => this.close(1000, ''));
+    });
+  }
+
+  private endRecord() {
+    if (!this.record || this.record.ended_at) return;
+    this.record.status = 'ended';
+    this.record.ended_at = nowS();
+    this.record.summary = this.record.transcript.some((l) => l.speaker === 'caller') ? 'A practice call.' : '';
+  }
+
+  close(code = 1000, reason = '') {
+    // The app went away mid-call: the server hangs the call up.
+    if (this.record && !this.record.ended_at) {
+      this.endRecord();
+      for (const sk of this.server.liveSockets) sk.push({ event: 'call_ended', ...this.base(), call: this.record }, 0);
+    }
+    super.close(code, reason);
   }
 }
 

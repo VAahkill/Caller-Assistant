@@ -17,7 +17,16 @@ import { useToast } from '../../components/ui/Toast';
 import { errorMessage, useAsyncAction } from '../../hooks/useAsyncAction';
 import { useResource } from '../../hooks/useResource';
 import { api } from '../../lib/api';
-import { callMatches, groupByDay, INBOX_FILTERS, isInboxFilter, messageMatches, searchMatches, type InboxFilter } from '../../lib/inbox';
+import {
+  callMatches,
+  groupByDay,
+  INBOX_FILTERS,
+  isInboxFilter,
+  isPracticeMessage,
+  messageMatches,
+  searchMatches,
+  type InboxFilter,
+} from '../../lib/inbox';
 import { useLive } from '../../lib/live';
 import type { CallSummary, CallerMessage } from '../../lib/types';
 
@@ -66,7 +75,13 @@ export default function Inbox() {
     }
     return out;
   }, [tab, messages.data, calls.data, callById]);
-  const unread = (messages.data ?? []).filter((m) => m.status === 'new');
+  // Practice messages are your own tests: they don't count as new.
+  const unread = (messages.data ?? []).filter((m) => m.status === 'new' && !isPracticeMessage(m, callById.get(m.call_id)));
+  const hasPractice =
+    filter === 'practice' ||
+    (calls.data ?? []).some((c) => callMatches('practice', c)) ||
+    (messages.data ?? []).some((m) => isPracticeMessage(m, callById.get(m.call_id)));
+  const filters = hasPractice ? INBOX_FILTERS : INBOX_FILTERS.filter((f) => f.value !== 'practice');
 
   const markAll = useAsyncAction(async () => {
     const ids = unread.map((m) => m.id);
@@ -132,7 +147,7 @@ export default function Inbox() {
           accessibilityLabel={tab === 'messages' ? 'Search messages' : 'Search calls'}
         />
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bleed} contentContainerStyle={styles.filters} keyboardShouldPersistTaps="handled">
-          {INBOX_FILTERS.map((f) => (
+          {filters.map((f) => (
             <Chip
               key={f.value}
               label={f.label}

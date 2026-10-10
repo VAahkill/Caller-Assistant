@@ -57,7 +57,7 @@ const STARTERS: Record<string, string[]> = {
 const IDEAS: { icon: IconName; title: string; detail: string }[] = [
   { icon: 'bicycle-outline', title: 'A delivery at your gate', detail: 'Ask where to come. It gives the way to your door.' },
   { icon: 'shield-checkmark-outline', title: 'Someone asks for an OTP', detail: 'It refuses, every time, and alerts you.' },
-  { icon: 'chatbox-ellipses-outline', title: 'Leave a message', detail: 'It takes it down for your Inbox.' },
+  { icon: 'chatbox-ellipses-outline', title: 'Leave a message', detail: 'It takes it down. Find it in Inbox, under Practice.' },
   { icon: 'hand-left-outline', title: 'Ask something only you know', detail: 'It puts you on hold and asks you here.' },
   { icon: 'language-outline', title: 'Speak Telugu, Hindi or Tamil', detail: 'Read every line in your language as it goes.' },
 ];

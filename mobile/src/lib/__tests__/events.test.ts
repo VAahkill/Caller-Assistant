@@ -173,6 +173,26 @@ describe('liveReducer', () => {
     expect(ev({ event: 'urgent_call', call_id: LIVE_CALL_ID })).toMatchObject({ reason: '', title: '', who: '' });
   });
 
+  test('a practice call stays out of live calls, questions and alerts, but refreshes the lists', () => {
+    const practice = { ...live, id: 'p1', number: '+919800000000', contact_name: '', status: 'on_hold' as const };
+    const base = { call_id: 'p1', who: '+919800000000' };
+    const s = apply(
+      initialLive,
+      ev({ event: 'call_started', call: practice, ...base }),
+      ev({ event: 'hold_question', ...base, hold_id: 'ph', question: 'Gate or door?', title: '', task_id: null }),
+      ev({ event: 'sensitive_request', ...base, kind: 'otp', text: 'Asked for an OTP', said: '' }),
+      ev({ event: 'urgent_call', ...base, reason: 'summary', title: 'Urgent' }),
+      ev({ event: 'message_taken', message: { ...fx.messages[0], call_id: 'p1', number: '+919800000000' }, call_id: 'p1', who: '' }),
+    );
+    expect(s.calls).toEqual({});
+    expect(s.questions).toEqual([]);
+    expect(s.alerts).toEqual([]);
+    expect(s.practiceIds).toEqual(['p1']);
+    expect(s.refreshKey).toBe(2); // started and the message: Inbox lists them under Practice
+    // Known by its id once started, even if the server names the caller.
+    expect(apply(s, ev({ event: 'hold_question', call_id: 'p1', who: 'Ravi', hold_id: 'x', question: '?' })).questions).toEqual([]);
+  });
+
   test('events for unknown calls change nothing', () => {
     const s = apply(withLive, ev({ event: 'assistant_status', call_id: 'other', who, state: 'speaking' }));
     expect(s).toBe(withLive);

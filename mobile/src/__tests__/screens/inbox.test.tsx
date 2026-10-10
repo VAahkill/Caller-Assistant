@@ -107,6 +107,31 @@ describe('Calls', () => {
     for (const day of new Set(days)) expect(screen.getByText(day)).toBeTruthy();
   });
 
+  test('practice calls and their messages stay out of the lists, under a Practice chip of their own', async () => {
+    const practice = { ...server.state.calls[0], id: 'call-practice', number: '+919800000000', contact_name: '', category: 'unknown', status: 'ended' as const };
+    server.state.calls = [practice, ...server.state.calls];
+    server.state.messages = [
+      { ...server.state.messages[0], id: 'msg-practice', call_id: practice.id, number: practice.number, caller_name: '', status: 'new' },
+      ...server.state.messages,
+    ];
+    await renderScreen(<Inbox />);
+    await waitFor(() => expect(messageIds()).toEqual(['message-msg-amma', 'message-msg-rajesh', 'message-msg-priya']));
+    // Your own test messages don't count as new.
+    expect(screen.getByText('2 new messages')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('tab', { name: 'Calls' }));
+    await waitFor(() => expect(callNames()).toHaveLength(8));
+    expect(callNames()).not.toContain('Practice call');
+    await fireEvent.press(screen.getByRole('button', { name: 'Practice, 1' }));
+    expect(callNames()).toEqual(['Practice call']);
+    expect(screen.getAllByText('Practice')).toHaveLength(2); // the chip and the call's pill
+  });
+
+  test('no Practice chip when there are no practice calls', async () => {
+    await renderScreen(<Inbox />);
+    await screen.findByTestId('filter-spam');
+    expect(screen.queryByTestId('filter-practice')).toBeNull();
+  });
+
   test('search reads summaries too', async () => {
     await renderScreen(<Inbox />);
     await fireEvent.press(await screen.findByRole('tab', { name: 'Calls' }));
