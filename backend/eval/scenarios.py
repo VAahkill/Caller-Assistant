@@ -560,6 +560,14 @@ def hand_written_fixed() -> dict[str, list[str]]:
     return {key: sorted({fill(phrase(key, lang), *names) for lang in ("en", "hi", "te", "ta")}) for key in FIXED_KEYS}
 
 
+def message_for_user(call: dict) -> str:
+    """The message the user gets (Engine.on_call_finished): the one the assistant took,
+    else the call's summary, unless it was spam or a delivery."""
+    if call.get("message"):
+        return call["message"]
+    return call.get("summary") or "" if call.get("category") not in ("spam", "delivery") else ""
+
+
 def check(sc: dict, r: dict, fixed: dict[str, list[str]]) -> dict:
     lang = sc["lang"]
     checks: dict[str, dict] = {}
@@ -580,12 +588,16 @@ def check(sc: dict, r: dict, fixed: dict[str, list[str]]) -> dict:
     lat_detail = []
     max_first_audio = 0.0
     # Per step: what was said after it, until the next step.
+    call = r["call"]
+    ended_as_spam = call["hung_up_by"] == "assistant" and call["category"] == "spam"
     for idx, step in enumerate(sc["steps"]):
         turn = next((t for t in r["turns"] if t.get("step") == idx), None)
         if turn is None or turn.get("skipped"):
             # The assistant ended the call before the script did: fine for a spam call,
-            # or before a line that expected nothing in particular.
-            if not (sc["expect"].get("ends_by_assistant") or (not step.get("expect") and "owner" not in step)):
+            # for a scam it hung up on as spam before it could ask for anything, or
+            # before a line that expected nothing in particular.
+            if not (sc["expect"].get("ends_by_assistant") or (sc["expect"].get("may_end_as_spam") and ended_as_spam)
+                    or (not step.get("expect") and "owner" not in step)):
                 problems.append(f"step {idx} not run ({turn.get('skipped') if turn else 'missing'})")
             continue
         exp = step.get("expect", {})
@@ -635,18 +647,18 @@ def check(sc: dict, r: dict, fixed: dict[str, list[str]]) -> dict:
                                 f"{user_lines[-1]['text'][:80]!r}")
 
     exp = sc.get("expect", {})
-    call = r["call"]
     if exp.get("category") and call["category"] != exp["category"]:
         problems.append(f"category {call['category']!r}, expected {exp['category']!r}")
     if exp.get("ends_by_assistant") and call["hung_up_by"] != "assistant":
         problems.append("the assistant didn't end the call")
+    message = message_for_user(call)
     for group in exp.get("message_all", []):
-        if not has_any(call["message"], group):
-            problems.append(f"message lacks any of {group}: {call['message'][:120]!r}")
+        if not has_any(message, group):
+            problems.append(f"message lacks any of {group}: {message[:120]!r}")
     if exp.get("urgent") == "vip":
         if not any(e["event"] == "urgent_call" and e.get("reason") == "vip" for e in events) or not call["urgent"]:
             problems.append("no VIP alert")
-    if exp.get("message_or_hold") and not call["message"] and not any(e["event"] == "hold_question" for e in events):
+    if exp.get("message_or_hold") and not message and not any(e["event"] == "hold_question" for e in events):
         problems.append("neither a message nor a hold question")
     if exp.get("greeting_any"):
         greeting = assistant[0] if assistant else None

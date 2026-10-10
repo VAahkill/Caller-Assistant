@@ -54,3 +54,11 @@ def test_the_suite_has_at_least_40_calls_in_every_language():
     assert len(calls) >= 40 and len({c["id"] for c in calls}) == len(calls)
     for lang in ("en", "hi", "te", "ta"):
         assert sum(c["lang"] == lang for c in calls) >= 10
+
+
+def test_the_message_checked_is_the_one_the_user_gets():
+    assert scenarios.message_for_user({"message": "Suresh: call back", "summary": "x", "category": "unknown"}) \
+        == "Suresh: call back"
+    assert scenarios.message_for_user({"message": "", "summary": "Suresh called.", "category": "business"}) \
+        == "Suresh called."
+    assert scenarios.message_for_user({"message": "", "summary": "A courier came.", "category": "delivery"}) == ""

@@ -262,7 +262,8 @@ def _calls_for(kind: str, lang: str, voice: str) -> dict:
                        _caller(l2, e2, alert=["otp"], fixed="refusal")]
     elif kind == "bank":
         sc["steps"] = [_caller(l1, e1), _caller(l2, e2, alert=["account", "otp"], fixed="refusal")]
-        sc["expect"] = {"hold_allowed": True}
+        # Hanging up on the "KYC pending" scam as spam before it asks for anything is fine.
+        sc["expect"] = {"hold_allowed": True, "may_end_as_spam": True}
     elif kind == "message":
         sc["steps"] = [_caller(l1, e1), _caller(l2, e2)]
         sc["expect"] = {"message_all": [["suresh"], ["report", "project"]], "hold_allowed": True}
