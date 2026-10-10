@@ -50,6 +50,20 @@ PHRASES: dict[str, dict[str, str]] = {
         "te": "ఇప్పుడు నేను వెళ్ళాలి. {user} గారికి చెబుతాను. నమస్కారం!",
         "ta": "இப்போது நான் போக வேண்டும். {user} அவர்களிடம் சொல்கிறேன். வணக்கம்!",
     },
+    # The model took a message but said nothing: confirm it to the caller.
+    "message_taken": {
+        "en": "Got it. I'll pass your message on to {user}.",
+        "hi": "ठीक है। मैं आपका संदेश {user} तक पहुँचा दूँगी।",
+        "te": "సరే. మీ సందేశాన్ని {user} గారికి తెలియజేస్తాను.",
+        "ta": "சரி. உங்கள் செய்தியை {user} அவர்களிடம் தெரிவிக்கிறேன்.",
+    },
+    # ...and the same again later in the call: the caller is usually saying goodbye.
+    "message_again": {
+        "en": "Thank you. {User} will get your message. Have a good day!",
+        "hi": "धन्यवाद। {user} को आपका संदेश मिल जाएगा। आपका दिन शुभ हो!",
+        "te": "ధన్యవాదాలు. మీ సందేశం {user} గారికి అందుతుంది. మంచి రోజు!",
+        "ta": "நன்றி. உங்கள் செய்தி {user} அவர்களுக்குக் கிடைக்கும். நல்ல நாளாக அமையட்டும்!",
+    },
     # Spoken when a turn fails (LLM down or too slow, a crash): never leave silence.
     "fallback": {
         "en": "Sorry, something went wrong on my side. Could you please say that again?",

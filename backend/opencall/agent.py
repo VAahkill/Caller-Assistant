@@ -73,11 +73,22 @@ class SecurityAlert:
     detail: str
 
 
-Action = Say | Hold | TakeMessage | EndCall | Category | Outcome | SendLocation | SecurityAlert
+@dataclass
+class Refuse:
+    """The model heard a request for a code or account details that the patterns in
+    guardrails.py missed (often misheard words on a noisy line)."""
+
+    kind: str
+
+
+Action = Say | Hold | TakeMessage | EndCall | Category | Outcome | SendLocation | SecurityAlert | Refuse
 
 
 # ---------------------------------------------------------------- parsing
-_TAG_RE = re.compile(r"\[(HOLD|MESSAGE|END_CALL|CATEGORY|OUTCOME|SEND_LOCATION)(?::\s*([^\]]*))?\]", re.I)
+_TAG_RE = re.compile(r"\[(HOLD|MESSAGE|END_CALL|CATEGORY|OUTCOME|SEND_LOCATION|SECURITY)(?::\s*([^\]]*))?\]",
+                     re.I)
+# What the model may name in [SECURITY: ...]; anything else counts as a code ("otp").
+_SECURITY_KINDS = ("otp", "pin", "password", "card", "account", "balance")
 _SENTENCE_END = re.compile(r"([.!?।]+[\"')\]]?)(\s+|$)|\n+")
 # A model that was handed a prompt without the assistant header writes the header itself
 # ("assistant\n\nSure..."); that word must never be spoken.
@@ -108,6 +119,9 @@ def _tag_to_action(name: str, payload: str) -> Action | None:
         return Category(payload.lower() or "unknown")
     if name == "SEND_LOCATION":
         return SendLocation()
+    if name == "SECURITY":
+        low = payload.lower()
+        return Refuse(next((k for k in _SECURITY_KINDS if k in low), "otp"))
     if name == "OUTCOME":
         status, _, summary = payload.partition("|")
         return Outcome(status.strip().lower() or "unknown", summary.strip())
@@ -233,14 +247,19 @@ class Conversation:
     # Whether this turn goes through English: the caller's words were translated into
     # English for the model, and its English reply is translated back for the caller.
     pivot: bool = False
+    # Whether the call can translate (the model then always writes English), and the
+    # languages it can speak when it can't.
+    translates: bool = False
+    speakable: list[str] = field(default_factory=lambda: ["en"])
     heard: list[str] = field(default_factory=list)  # the other party's own words
     _delivery: bool = False
     _turns: int = 0
+    _messages_taken: int = 0
 
     @classmethod
     def inbound(cls, profile: Profile, llm: LLM, number: str, contact_name: str, speakable: list[str],
                 can_text: bool = False, vip: bool = False,
-                english: Callable[[str], str] | None = None) -> "Conversation":
+                english: Callable[[str], str] | None = None, translates: bool = False) -> "Conversation":
         can_text = can_text and bool(number)
         english = english or (lambda t: t)
         prompt = prompts.inbound_system_prompt(profile, number, contact_name, speakable, can_text,
@@ -248,15 +267,16 @@ class Conversation:
                                                english=english)
         return cls(profile, llm, prompt, caller_number=number, is_contact=bool(contact_name),
                    category="contact" if contact_name else "unknown", can_text=can_text, vip=vip,
-                   english=english, opening=opening_line(profile, english))
+                   english=english, opening=opening_line(profile, english), translates=translates,
+                   speakable=list(speakable))
 
     @classmethod
     def for_task(cls, profile: Profile, llm: LLM, task: Task, speakable: list[str],
-                 english: Callable[[str], str] | None = None) -> "Conversation":
+                 english: Callable[[str], str] | None = None, translates: bool = False) -> "Conversation":
         english = english or (lambda t: t)
         prompt = prompts.outbound_system_prompt(profile, task, speakable, english)
         return cls(profile, llm, prompt, caller_number=task.number, outbound=True, category="task",
-                   english=english)
+                   english=english, translates=translates, speakable=list(speakable))
 
     # What the assistant is allowed to say out loud, number-wise.
     def allowed_numbers(self) -> set[str]:
@@ -275,14 +295,35 @@ class Conversation:
         return published_numbers(*texts)
 
     def system_message(self) -> str:
-        parts = [self.system_prompt.rstrip()]
+        """The call's prompt for this turn. What changes during a call goes at the end,
+        after the part a local LLM keeps cached: once it's a delivery, the delivery
+        details, then the caller's language (when it is translated)."""
+        note = prompts.language_note(self.language, self.pivot, self.translates, self.speakable)
+        parts = [self.system_prompt.replace(prompts.LANGUAGE_SLOT, note, 1).rstrip()]
         if self._delivery:
             rules = prompts.call_rules(self.profile, prompts.Caller(self.caller_number, self.is_contact, self.vip),
                                        self.english)
             parts.append(prompts.delivery_context(self.profile, self.can_text, rules.delivery, rules.delivery_facts,
                                                   self.english))
-        parts.append(prompts.language_note(self.language, self.pivot))
+        if self.pivot:
+            parts.append(prompts.caller_language_line(self.language))
         return "\n\n".join(parts)
+
+    def first_turn_warm_up_messages(self, language: str) -> list[Message]:
+        """The start of this call's first reply request as it will most likely be: a
+        delivery partner speaking ``language``. Sent while the greeting plays and the
+        caller talks, so a local LLM has it cached by the time their words are in:
+        for a delivery in that language only their words are then new, and otherwise
+        only what follows the delivery details (the language line, the greeting, their
+        words), instead of the whole end of the prompt."""
+        saved = self.language, self.pivot, self._delivery
+        self.language = language
+        self.pivot = self.translates and language != "en"
+        self._delivery = not self.outbound
+        try:
+            return self._messages(self.history + [{"role": "user", "content": "Hello?"}])
+        finally:
+            self.language, self.pivot, self._delivery = saved
 
     def _messages(self, history: list[Message] | None = None) -> list[Message]:
         """System message first, then strictly alternating turns ending with a user turn
@@ -383,9 +424,13 @@ class Conversation:
         allowed = self.allowed_numbers()
         stop = False
         acted = False  # put them on hold, ended the call or texted them
+        # The model can decide it's a delivery mid-reply. Its words then were written
+        # without the delivery details (small models make an address up), so the reply
+        # is started again with them in the prompt.
+        again = False
 
         def handle(actions: list[Action]):
-            nonlocal stop, acted
+            nonlocal stop, acted, again
             for a in actions:
                 if isinstance(a, Say):
                     res = scrub_outgoing(a.text, allowed)
@@ -394,11 +439,26 @@ class Conversation:
                         continue
                     spoken.append(res.text)
                     yield Say(res.text)
+                elif isinstance(a, Refuse):
+                    # The same as a request the patterns caught: the fixed refusal, an
+                    # alert, and nothing else from the model this turn.
+                    if spoken:  # said before the tag; the refusal follows it in the history
+                        self.history.append({"role": "assistant", "content": " ".join(spoken)})
+                        spoken.clear()
+                    acted = True
+                    yield SecurityAlert(a.kind, self.heard[-1] if self.heard else "")
+                    yield self.fixed_say("refusal")
+                    stop = True
+                    return
                 elif isinstance(a, Category):
                     if a.value == "delivery":
+                        again = not self._delivery and not self.outbound
                         self._enter_delivery_mode()
                     self.category = a.value if not self.outbound else self.category
                     yield a
+                    if again:
+                        stop = True
+                        return
                 else:
                     if isinstance(a, (Hold, EndCall)) and not spoken and not acted:
                         # Small models sometimes do this without a word; nobody is put on
@@ -406,7 +466,13 @@ class Conversation:
                         log.warning("The model chose %s without saying anything; saying a fixed line first.",
                                     type(a).__name__)
                         yield self.fixed_say("filler" if isinstance(a, Hold) else "goodbye")
-                    acted = acted or isinstance(a, (Hold, EndCall, SendLocation))
+                    elif isinstance(a, TakeMessage) and not spoken and not acted:
+                        # A message tag on its own: tell the caller it was taken, rather
+                        # than asking them to say it again.
+                        yield self.fixed_say("message_again" if self._messages_taken else "message_taken")
+                    if isinstance(a, TakeMessage):
+                        self._messages_taken += 1
+                    acted = acted or isinstance(a, (Hold, EndCall, SendLocation, TakeMessage))
                     yield a
                     if isinstance(a, Hold):
                         stop = True  # wait for the user before saying anything else
@@ -424,7 +490,7 @@ class Conversation:
             if not stop:
                 for out in handle(parser.close()):
                     yield out
-                if not spoken and not acted:
+                if not again and not spoken and not acted:
                     # An empty reply (or one that was all tags) would leave the caller
                     # waiting in silence.
                     log.warning("The model's reply had nothing to say to the caller; asking them to repeat.")
@@ -433,6 +499,13 @@ class Conversation:
             # Keep what was actually said, even if the turn was cut short.
             if spoken:
                 self.history.append({"role": "assistant", "content": " ".join(spoken)})
+        if again:
+            if spoken:
+                # Said before the tag: the new reply goes on from it.
+                self.history.append({"role": "user", "content": prompts.delivery_known_note(self.profile.user_name)})
+            async with aclosing(self._generate()) as actions:
+                async for action in actions:
+                    yield action
 
     async def summarize(self, transcript: str) -> "CallSummary":
         msgs: list[Message] = [

@@ -59,7 +59,44 @@ async def test_the_prompt_is_cached_again_after_a_call_summary(engine):
     await task
     assert s.record.summary == "A short summary."
     await engine._llm_warming
+    # First this call's own first turn (while the greeting played), then, after the
+    # summary, the prompt for the next caller.
+    first, after = engine.llm.warmed
+    assert "+919876543210" in first[0]["content"] and "+919876543210" not in after[0]["content"]
+
+
+async def test_each_call_warms_its_first_reply_request_in_a_local_llm(engine):
+    engine.llm = WarmableLLM()
+    profile = engine.store.profile
+    profile.location.address = "Road No. 12, Banjara Hills"
+    conv = engine.open_session(QueueBridge("c2", "+919876543210")).conv
+    conv.translates = True  # as with the translation models installed
+    await engine.warm_up_call(conv, "te")
+    messages = engine.llm.warmed[-1]
+    system = messages[0]["content"]
+    # Delivery details, then the caller's language, last: for a delivery partner who
+    # speaks Telugu only their words are new when they've spoken.
+    assert system.index("Road No. 12") < system.index("The caller speaks Telugu")
+    assert system.rstrip().endswith("translated into English.")
+    assert [m["role"] for m in messages[1:]] == ["user", "assistant", "user"]
+    assert not conv._delivery and conv.language == ""  # the call itself is unchanged
+    conv.language, conv.pivot, conv._delivery = "te", True, True
+    conv.history.append({"role": "user", "content": "Where is the house?"})
+    assert conv._messages()[0] == messages[0]  # the same system message, cached
+
+    engine.settings.llm_base_url = "https://api.groq.com/openai/v1"  # a cloud LLM: no warm-up
+    await engine.warm_up_call(conv, "te")
     assert len(engine.llm.warmed) == 1
+
+
+def test_which_llm_servers_count_as_local(engine):
+    for url, local in [("http://ollama:11434/v1", True), ("http://localhost:11434/v1", True),
+                       ("http://127.0.0.1:8080/v1", True), ("http://192.168.1.20:11434/v1", True),
+                       ("http://host.docker.internal:11434/v1", True),
+                       ("https://api.groq.com/openai/v1", False),
+                       ("https://generativelanguage.googleapis.com/v1beta/openai/", False)]:
+        engine.settings.llm_base_url = url
+        assert engine.llm_is_local() is local, url
 
 
 def test_speech_warm_up_sets_ready_and_keeps_fixed_lines_in_memory(engine):
@@ -116,7 +153,8 @@ async def test_a_profile_change_during_a_call_waits_for_the_call_to_end(engine):
     engine.sessions["c1"].conv.llm = engine.llm
     engine.store.profile.user_name = "Priya"
     engine.store.save_profile()
-    assert engine.llm.warmed == []  # not while the caller is using the model
+    # Not while the caller is using the model (only this call's own first turn).
+    assert all("+919876543210" in w[0]["content"] for w in engine.llm.warmed)
     await bridge.hangup()
     await task
     await engine._llm_warming

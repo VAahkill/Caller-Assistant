@@ -210,6 +210,7 @@ class CallSession:
                 # In the language chosen for a practice call, else the one callers speak most.
                 self._language = self.language_hint or self.tracker.language
                 await self._greet()
+                self.spawn(self.engine.warm_up_call(self.conv, self._language), "llm warm-up")
             else:
                 self.spawn(self._outbound_kickoff(), "outbound kickoff")
             self._greeted.set()

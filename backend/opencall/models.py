@@ -78,9 +78,10 @@ class Location(BaseModel):
             return ""
         return f"https://www.google.com/maps/search/?api=1&query={self.lat},{self.lng}"
 
-    def describe(self, english: Callable[[str], str] = lambda t: t) -> str:
+    def describe(self, english: Callable[[str], str] = lambda t: t, can_text: bool = True) -> str:
         """The details for the assistant; ``english`` gives the English of what the
-        user wrote in another language (the map hint is kept as the map gives it)."""
+        user wrote in another language (the map hint is kept as the map gives it).
+        ``can_text``: whether this call can text the caller the map link."""
         parts = [
             ("Address", english(self.address)),
             ("Building", english(self.building)),
@@ -89,7 +90,7 @@ class Location(BaseModel):
             ("Gate / entry", english(self.gate_instructions)),
             ("Nearby (from map pin)", self.geocoded_hint),
             # The link itself is long and never read out; it is texted with [SEND_LOCATION].
-            ("Map pin", "saved, a map link can be texted" if self.maps_link() else ""),
+            ("Map pin", "saved, a map link can be texted" if can_text and self.maps_link() else ""),
         ]
         return "\n".join(f"- {k}: {v}" for k, v in parts if v)
 

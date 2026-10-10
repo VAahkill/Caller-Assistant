@@ -162,7 +162,10 @@ def speak(engine, text: str, voice: str, lang: str) -> bytes:
     return pcm
 
 
-def pad(pcm: bytes, before: float = 0.4, after: float = 1.2) -> bytes:
+PAD_BEFORE_S = 0.4
+
+
+def pad(pcm: bytes, before: float = PAD_BEFORE_S, after: float = 1.2) -> bytes:
     return b"\x00\x00" * int(before * RATE) + pcm + b"\x00\x00" * int(after * RATE)
 
 
@@ -214,6 +217,14 @@ def _spelled_words(text: str) -> list[str]:
     return runs
 
 
+def _made_of(run: str, acronyms: set[str]) -> bool:
+    """Whether a run of spelled letters is the text's abbreviations one after another
+    ("sbiatm" from "SBI ATM")."""
+    if not run:
+        return True
+    return any(run.startswith(a) and _made_of(run[len(a):], acronyms) for a in acronyms)
+
+
 SHORT_LETTERS = 12  # a sentence this short ("Thank you!") is judged by its length instead
 SPELLED_S_PER_LETTER = 0.4  # spelling takes about this long a letter; words take under 0.1 s
 
@@ -224,7 +235,7 @@ def spelled_out(said: str, heard: str, seconds: float) -> bool:
     Speech recognition often mishears a lone short word, so a short sentence only has
     to be no longer than spelling it would take."""
     acronyms = {w.lower() for w in re.findall(r"\b[A-Z]{2,6}\b", said)}
-    if any(w not in acronyms for w in _spelled_words(heard)):
+    if any(not _made_of(w, acronyms) for w in _spelled_words(heard)):
         return True
     letters = len(_letters(said))
     if letters < SHORT_LETTERS:
@@ -508,8 +519,22 @@ class CallRun:
             if mode == "recording":
                 entry["t0"] = time.monotonic()
                 session.submit_recording(line, sc["hint"])
+            elif args.pace:
+                # Live audio as a phone line delivers it, 20 ms at a time: the turn
+                # detector ends the turn after its silence, and the clock starts when
+                # the caller stops talking (the end-of-turn wait counts too).
+                speech_end = int((PAD_BEFORE_S * RATE + len(pcm) / 2)) * 2
+                frame = 640
+                start = time.monotonic()
+                for n, i in enumerate(range(0, len(line), frame)):
+                    if entry["t0"] is None and i >= speech_end:
+                        entry["t0"] = time.monotonic()
+                    bridge.feed(line[i:i + frame])
+                    await asyncio.sleep(max(0.0, start + (n + 1) * 0.02 - time.monotonic()))
+                if entry["t0"] is None:
+                    entry["t0"] = time.monotonic()
             else:
-                # Live audio: the turn detector ends the turn after its silence.
+                # Live audio at once: the turn detector ends the turn after its silence.
                 bridge.feed(line)
                 while not bridge.inbound.empty():
                     await asyncio.sleep(0.01)
@@ -552,6 +577,14 @@ def hand_written_fixed() -> dict[str, list[str]]:
     return {key: sorted({fill(phrase(key, lang), *names) for lang in ("en", "hi", "te", "ta")}) for key in FIXED_KEYS}
 
 
+def message_for_user(call: dict) -> str:
+    """The message the user gets (Engine.on_call_finished): the one the assistant took,
+    else the call's summary, unless it was spam or a delivery."""
+    if call.get("message"):
+        return call["message"]
+    return call.get("summary") or "" if call.get("category") not in ("spam", "delivery") else ""
+
+
 def check(sc: dict, r: dict, fixed: dict[str, list[str]]) -> dict:
     lang = sc["lang"]
     checks: dict[str, dict] = {}
@@ -572,12 +605,16 @@ def check(sc: dict, r: dict, fixed: dict[str, list[str]]) -> dict:
     lat_detail = []
     max_first_audio = 0.0
     # Per step: what was said after it, until the next step.
+    call = r["call"]
+    ended_as_spam = call["hung_up_by"] == "assistant" and call["category"] == "spam"
     for idx, step in enumerate(sc["steps"]):
         turn = next((t for t in r["turns"] if t.get("step") == idx), None)
         if turn is None or turn.get("skipped"):
             # The assistant ended the call before the script did: fine for a spam call,
-            # or before a line that expected nothing in particular.
-            if not (sc["expect"].get("ends_by_assistant") or (not step.get("expect") and "owner" not in step)):
+            # for a scam it hung up on as spam before it could ask for anything, or
+            # before a line that expected nothing in particular.
+            if not (sc["expect"].get("ends_by_assistant") or (sc["expect"].get("may_end_as_spam") and ended_as_spam)
+                    or (not step.get("expect") and "owner" not in step)):
                 problems.append(f"step {idx} not run ({turn.get('skipped') if turn else 'missing'})")
             continue
         exp = step.get("expect", {})
@@ -627,18 +664,18 @@ def check(sc: dict, r: dict, fixed: dict[str, list[str]]) -> dict:
                                 f"{user_lines[-1]['text'][:80]!r}")
 
     exp = sc.get("expect", {})
-    call = r["call"]
     if exp.get("category") and call["category"] != exp["category"]:
         problems.append(f"category {call['category']!r}, expected {exp['category']!r}")
     if exp.get("ends_by_assistant") and call["hung_up_by"] != "assistant":
         problems.append("the assistant didn't end the call")
+    message = message_for_user(call)
     for group in exp.get("message_all", []):
-        if not has_any(call["message"], group):
-            problems.append(f"message lacks any of {group}: {call['message'][:120]!r}")
+        if not has_any(message, group):
+            problems.append(f"message lacks any of {group}: {message[:120]!r}")
     if exp.get("urgent") == "vip":
         if not any(e["event"] == "urgent_call" and e.get("reason") == "vip" for e in events) or not call["urgent"]:
             problems.append("no VIP alert")
-    if exp.get("message_or_hold") and not call["message"] and not any(e["event"] == "hold_question" for e in events):
+    if exp.get("message_or_hold") and not message and not any(e["event"] == "hold_question" for e in events):
         problems.append("neither a message nor a hold question")
     if exp.get("greeting_any"):
         greeting = assistant[0] if assistant else None
@@ -781,7 +818,7 @@ async def main_async(args) -> None:
     log.info("Warm-up took %.0f s", time.monotonic() - started)
     meta = {"fixed": fixed_texts(engine), "llm_model": args.llm_model, "llm_url": args.llm_url, "llm_extra_body": args.llm_extra_body,
             "temperature": args.temperature, "snr": args.snr, "date": time.strftime("%Y-%m-%d %H:%M"),
-            "roundtrip": not args.no_roundtrip, "summaries": args.summary, "warm_up_s": round(time.monotonic() - started)}
+            "roundtrip": not args.no_roundtrip, "summaries": args.summary, "paced": args.pace, "warm_up_s": round(time.monotonic() - started)}
     results = [previous[sc["id"]] for sc in scenarios() if sc["id"] in previous and sc not in todo]
     for sc in todo:
         if sc["id"] in previous and args.resume:
@@ -830,6 +867,9 @@ def main() -> None:
     ap.add_argument("--only", nargs="*", help="regexes of call ids to run")
     ap.add_argument("--resume", action="store_true")
     ap.add_argument("--no-roundtrip", action="store_true", help="don't read the replies back from their speech")
+    ap.add_argument("--pace", action=argparse.BooleanOptionalAction, default=True,
+                    help="feed a live caller's audio in real time (--no-pace: all at once, quicker but the"
+                         " latency then leaves out the end-of-turn wait and the time the caller spends talking)")
     ap.add_argument("--summary", choices=["on", "off"], default="on", help="the end-of-call summary")
     ap.add_argument("--recheck", action="store_true", help="only run the checks again on the report in --out")
     args = ap.parse_args()

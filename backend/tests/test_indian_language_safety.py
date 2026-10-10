@@ -63,6 +63,13 @@ def test_the_english_translation_is_checked_too():
         ("code cheppandi sir", "otp"),
         ("balance kitna hai", "balance"),
         ("send me your bank details", "account"),
+        # How speech recognition writes "OTP" through a noisy phone line.
+        ("ఈ డెలివరీకి ఓటిపీ చెప్పండి", "otp"),
+        ("ఓటీపీని చెప్పండి", "otp"),
+        ("ఓ టి పి చెప్పండి", "otp"),
+        ("सर इस डिलीवरी का MOTP बता दीजिए.", "otp"),
+        ("सर इस डिलीवरी का मोटीपी बता दीजिए.", "otp"),
+        ("Sir, tell me the MOTP of this delivery.", "otp"),
     ],
 )
 def test_credential_requests_are_caught_in_every_language(text, kind):
@@ -76,6 +83,9 @@ def test_credential_requests_are_caught_in_every_language(text, kind):
         "మీ పిన్ కోడ్ ఏమిటి?",  # postal PIN code
         "கோவிலுக்கு பின்னால் வாங்க",  # "come behind the temple"
         "पिन कोड क्या है?",
+        "ఓటు వేయండి",  # "vote"
+        "మోటార్ బైక్ మీద వచ్చాను",
+        "remote control",
         "నేను గేట్ దగ్గర ఉన్నాను",
         "நான் கேட் கிட்ட இருக்கேன்",
     ],

@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import threading
 import time
 from collections import OrderedDict
+from urllib.parse import urlparse
 
 from .agent import Conversation, greeting_parts
 from .config import Settings
@@ -266,7 +268,7 @@ class Engine:
             self.ready["llm"] = True
             return
         messages = Conversation.inbound(self.store.profile, self.llm, "", "", self._speakable(),
-                                        english=self.owner_english).warm_up_messages()
+                                        english=self.owner_english, translates=self.mt.available).warm_up_messages()
         delay = 15.0
         while True:
             started = time.monotonic()
@@ -287,6 +289,35 @@ class Engine:
                 self._warm_again = False
                 self._llm_warming = self._spawn(self.warm_up_llm(retry=False))
             return
+
+    def llm_is_local(self) -> bool:
+        """Whether the LLM runs on this computer or this network (Ollama, llama.cpp),
+        where a warm-up fills its prompt cache; a cloud LLM's free tier would only
+        spend requests on it."""
+        host = (urlparse(self.settings.llm_base_url).hostname or "").lower()
+        if host in ("localhost", "host.docker.internal") or "." not in host:  # "ollama": a Compose service
+            return True
+        try:
+            ip = ipaddress.ip_address(host)
+        except ValueError:
+            return host.endswith((".local", ".lan", ".internal"))
+        return ip.is_private or ip.is_loopback
+
+    async def warm_up_call(self, conv: Conversation, language: str) -> None:
+        """Caches the start of this call's first reply request (see
+        ``Conversation.first_turn_warm_up_messages``) in a local LLM, while the
+        greeting plays and the caller talks. On a CPU that is one to two seconds less
+        before the first reply. A failure only costs that time."""
+        warm = getattr(self.llm, "warm_up", None)
+        if warm is None or not self.llm_is_local() or conv.outbound:
+            return
+        started = time.monotonic()
+        try:
+            await warm(conv.first_turn_warm_up_messages(language))
+        except LLMError as e:
+            log.warning("Couldn't warm the LLM for this call (%s); its first reply may be slower.", e)
+            return
+        log.info("The LLM has this call's prompt cached (%.1f s).", time.monotonic() - started)
 
     def _start_llm_warm_up(self, retry: bool) -> None:
         if self._llm_warming and not self._llm_warming.done():
@@ -402,7 +433,8 @@ class Engine:
         if task:
             rec = CallRecord(id=bridge.call_id, direction=CallDirection.outbound, number=task.number,
                              contact_name=task.target_name, category="task", task_id=task.id)
-            conv = Conversation.for_task(profile, self.llm, task, self._speakable(), self.owner_english)
+            conv = Conversation.for_task(profile, self.llm, task, self._speakable(), self.owner_english,
+                                         translates=self.mt.available)
         else:
             contact = find_contact(profile, bridge.number)
             number = normalize_number(bridge.number, profile.home_country_code)
@@ -411,7 +443,7 @@ class Engine:
                              category="contact" if contact else "unknown", urgent=vip)
             conv = Conversation.inbound(profile, self.llm, number, rec.contact_name, self._speakable(),
                                         can_text=getattr(bridge, "can_sms", False), vip=vip,
-                                        english=self.owner_english)
+                                        english=self.owner_english, translates=self.mt.available)
         session = CallSession(self, bridge, rec, conv)
         self.sessions[rec.id] = session
         return session

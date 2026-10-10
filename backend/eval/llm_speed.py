@@ -31,8 +31,8 @@ from opencall.models import Profile  # noqa: E402
 def prompts() -> tuple[list[dict], list[dict]]:
     profile = Profile.model_validate(BASE_PROFILE)
     speakable = ["en", "hi", "te", "ta"]
-    warm = Conversation.inbound(profile, None, "", "", speakable).warm_up_messages()
-    call = Conversation.inbound(profile, None, "+919876500101", "", speakable)
+    warm = Conversation.inbound(profile, None, "", "", speakable, translates=True).warm_up_messages()
+    call = Conversation.inbound(profile, None, "+919876500101", "", speakable, translates=True)
     call.language, call.pivot, call._delivery = "te", True, True
     call.history.append({"role": "user", "content": "Hello, I'm calling from Swiggy. I have an order for Rahul."
                                                     " Where is the house?"})
