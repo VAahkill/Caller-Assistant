@@ -6,6 +6,7 @@ import type {
   CallRecord,
   CallSummary,
   Health,
+  HoldQuestion,
   Profile,
   ReadyFlags,
   Task,
@@ -118,6 +119,21 @@ export function normalizeLine(raw: unknown, fallbackId: string): TranscriptLine 
   };
 }
 
+/** A hold the server marks resolved (resolved_at, or timed_out) counts as
+ *  answered: nobody is waiting on it any more. */
+function normalizeHold(raw: Raw): HoldQuestion {
+  const answeredAt = numOrNull(raw.answered_at) ?? numOrNull(raw.resolved_at) ?? (raw.timed_out === true ? num(raw.asked_at, 0) || 1 : null);
+  return {
+    ...(raw as unknown as HoldQuestion),
+    id: str(raw.id),
+    question: str(raw.question),
+    asked_at: num(raw.asked_at, 0),
+    answer: typeof raw.answer === 'string' ? raw.answer : null,
+    answered_at: answeredAt,
+    sensitive: !!raw.sensitive,
+  };
+}
+
 export function normalizeCall(raw: unknown): CallRecord {
   const c = (isObj(raw) ? raw : {}) as Loose<CallRecord>;
   const id = str(c.id);
@@ -135,7 +151,7 @@ export function normalizeCall(raw: unknown): CallRecord {
     recording: str(c.recording),
     reject_reason: str(c.reject_reason),
     transcript: (Array.isArray(c.transcript) ? c.transcript : []).map((l, i) => normalizeLine(l, `${id}-${i}`)),
-    holds: Array.isArray(c.holds) ? (c.holds as CallRecord['holds']).map((h) => ({ ...h, sensitive: !!h.sensitive })) : [],
+    holds: Array.isArray(c.holds) ? (c.holds as Raw[]).map(normalizeHold) : [],
     urgent: bool(c.urgent, false),
     action_items: strings(c.action_items),
   } as CallRecord;

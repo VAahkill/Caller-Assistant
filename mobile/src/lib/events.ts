@@ -3,7 +3,7 @@
 
 import { normalizeCall, normalizeLine, normalizeTask } from './normalize';
 import { addTaskStep, type TaskStep } from './tasks';
-import type { AssistantState, CallRecord, CallerMessage, Task, TranscriptLine, VoiceStatus } from './types';
+import type { AssistantState, CallRecord, CallerMessage, HoldQuestion, Task, TranscriptLine, VoiceStatus } from './types';
 
 interface CallEventBase {
   call_id: string;
@@ -170,6 +170,20 @@ export function callView(record: CallRecord): CallView {
   };
 }
 
+/**
+ * The hold question the caller is waiting on, if any. Holds run one at a
+ * time, and a hold that timed out is stored like an open one (no answer, no
+ * answered_at), so only the latest unanswered hold of a call on hold counts.
+ */
+export function openHold(record: CallRecord): HoldQuestion | null {
+  if (record.status !== 'on_hold') return null;
+  for (let i = record.holds.length - 1; i >= 0; i--) {
+    const h = record.holds[i];
+    if (!h.answer && !h.answered_at) return h;
+  }
+  return null;
+}
+
 function upsertLine(lines: TranscriptLine[], line: TranscriptLine): TranscriptLine[] {
   const i = lines.findIndex((l) => l.id === line.id);
   if (i === -1) return [...lines, line];
@@ -332,8 +346,9 @@ export function liveReducer(state: LiveData, action: LiveAction): LiveData {
     case 'call_started': {
       const prev = state.calls[ev.call.id];
       const view: CallView = { ...(prev ? reduceCall(prev, ev, now) : callView(ev.call)), stale: false };
-      // The snapshot is the truth about holds: keep questions still open in it, add new ones.
-      const openHolds = ev.call.status === 'on_hold' ? ev.call.holds.filter((h) => !h.answer && !h.answered_at) : [];
+      // The snapshot is the truth about holds: keep the question still open in it, add it if new.
+      const open = openHold(ev.call);
+      const openHolds = open ? [open] : [];
       const kept = state.questions.filter((q) => q.callId !== ev.call.id || openHolds.some((h) => h.id === q.holdId));
       const added = openHolds.filter((h) => !kept.some((q) => q.holdId === h.id));
       const who = ev.call.contact_name || ev.call.number;

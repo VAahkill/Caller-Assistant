@@ -198,6 +198,31 @@ describe('liveReducer', () => {
     expect(after.questions.filter((q) => q.holdId === LIVE_HOLD_ID)).toHaveLength(1);
   });
 
+  test('a hold that timed out does not come back with a later one in the snapshot', () => {
+    // As the server stores it: h1 timed out (no answer, no answered_at), h2 is open now.
+    const call = {
+      ...live,
+      status: 'on_hold' as const,
+      holds: [
+        { id: 'h1', question: 'Can he come at 5?', asked_at: 1010, answer: null, answered_at: null, sensitive: false },
+        { id: 'h2', question: 'Is the parcel prepaid?', asked_at: 1100, answer: null, answered_at: null, sensitive: false },
+      ],
+    };
+    const r = apply(liveReducer(initialLive, { type: 'reset' }), ev({ event: 'call_snapshot', call }));
+    expect(r.questions.map((q) => q.holdId)).toEqual(['h2']);
+    // Not on hold any more: neither is open.
+    expect(apply(initialLive, ev({ event: 'call_snapshot', call: { ...call, status: 'active' } })).questions).toEqual([]);
+  });
+
+  test('a server that marks timed-out holds is understood too', () => {
+    const call = {
+      ...live,
+      status: 'on_hold' as const,
+      holds: [{ id: 'h1', question: 'Can he come at 5?', asked_at: 1010, answer: null, answered_at: null, timed_out: true }],
+    };
+    expect(apply(initialLive, ev({ event: 'call_snapshot', call })).questions).toEqual([]);
+  });
+
   test('a snapshot showing the hold was answered while away removes its question', () => {
     const answered = { ...live, status: 'active' as const, holds: live.holds.map((h) => ({ ...h, answer: 'Bring it up', answered_at: 1 })) };
     const r = apply(liveReducer(withLive, { type: 'reset' }), ev({ event: 'call_snapshot', call: answered }));

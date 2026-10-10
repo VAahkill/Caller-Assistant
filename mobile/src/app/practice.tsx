@@ -26,7 +26,7 @@ import { useProfile } from '../hooks/useProfile';
 import { useSentencePlayer } from '../hooks/useSentencePlayer';
 import { Icon, type IconName } from '../lib/design';
 import { useTokens } from '../lib/design/theme';
-import { callView, reduceCall, type CallView, type ServerEvent } from '../lib/events';
+import { callView, openHold, reduceCall, type CallView, type ServerEvent } from '../lib/events';
 import { duration } from '../lib/format';
 import { languageName } from '../lib/languages';
 import { liveQuickReplies } from '../lib/quickReplies';
@@ -216,7 +216,7 @@ export default function Practice() {
     );
   }
 
-  const hold = view?.record.holds.find((h) => !h.answer && !h.answered_at);
+  const hold = view ? openHold(view.record) : null;
   const lastError = view && view.errors.length > dismissedError ? view.errors[view.errors.length - 1] : null;
   const callerSpoke = lines.some((l) => l.speaker === 'caller') || outbox.items.some((i) => i.speaker === 'caller');
   const other = callerLang && callerLang !== owner ? languageName(callerLang) : '';
