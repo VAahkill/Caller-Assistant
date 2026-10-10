@@ -295,18 +295,34 @@ class Conversation:
 
     def system_message(self) -> str:
         """The call's prompt for this turn. What changes during a call goes at the end,
-        after the part a local LLM keeps cached: the caller's language (when it is
-        translated) and, once it's a delivery, the delivery details."""
+        after the part a local LLM keeps cached: once it's a delivery, the delivery
+        details, then the caller's language (when it is translated)."""
         note = prompts.language_note(self.language, self.pivot, self.translates, self.speakable)
         parts = [self.system_prompt.replace(prompts.LANGUAGE_SLOT, note, 1).rstrip()]
-        if self.pivot:
-            parts.append(prompts.caller_language_line(self.language))
         if self._delivery:
             rules = prompts.call_rules(self.profile, prompts.Caller(self.caller_number, self.is_contact, self.vip),
                                        self.english)
             parts.append(prompts.delivery_context(self.profile, self.can_text, rules.delivery, rules.delivery_facts,
                                                   self.english))
+        if self.pivot:
+            parts.append(prompts.caller_language_line(self.language))
         return "\n\n".join(parts)
+
+    def first_turn_warm_up_messages(self, language: str) -> list[Message]:
+        """The start of this call's first reply request as it will most likely be: a
+        delivery partner speaking ``language``. Sent while the greeting plays and the
+        caller talks, so a local LLM has it cached by the time their words are in:
+        for a delivery in that language only their words are then new, and otherwise
+        only what follows the delivery details (the language line, the greeting, their
+        words), instead of the whole end of the prompt."""
+        saved = self.language, self.pivot, self._delivery
+        self.language = language
+        self.pivot = self.translates and language != "en"
+        self._delivery = not self.outbound
+        try:
+            return self._messages(self.history + [{"role": "user", "content": "Hello?"}])
+        finally:
+            self.language, self.pivot, self._delivery = saved
 
     def _messages(self, history: list[Message] | None = None) -> list[Message]:
         """System message first, then strictly alternating turns ending with a user turn
