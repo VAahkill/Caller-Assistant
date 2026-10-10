@@ -420,6 +420,16 @@ know**, **Who gets through** and **Away**.
 
 If you already ran the first version, you keep your calls, contacts and settings.
 
+0. **Check the disk first.** The update needs about 15 GB free where Docker keeps its
+   data. In Docker Desktop click the gear, **Resources**, **Advanced**, and look at
+   **Disk image location**. Then see how much room each drive has:
+
+   ```powershell
+   Get-PSDrive C, D
+   ```
+
+   If Docker's disk image is on C: and C: has less than 15 GB **Free**, move it to D:
+   first (step 2.6), or C: fills up and Docker breaks, as it did the first time.
 1. Update the code and free the space the old AI brain used (about 5 GB):
 
    ```powershell
@@ -436,6 +446,13 @@ If you already ran the first version, you keep your calls, contacts and settings
 
    ```powershell
    docker compose up -d --build
+   ```
+
+   When it's running, remove the old version's leftovers (a few GB):
+
+   ```powershell
+   docker image prune -f
+   docker builder prune -f
    ```
 
 4. Install the new app over the old one from the `platform-tools` folder (USB
