@@ -3,6 +3,7 @@ import { AppState, Platform, Vibration } from 'react-native';
 
 import { loadConfig, wsUrl } from './api';
 import { initialLive, liveReducer, parseEvent, type LiveData, type SecurityAlert, type ServerEvent } from './events';
+import { liveNotice } from './liveNotices';
 import { notifyLocal, pushRegistered } from './notifications';
 import { getTransport, refusedToken, SOCKET_OPEN, type SocketLike } from './transport';
 
@@ -39,29 +40,11 @@ const warn = (what: string) => (e: unknown) => console.warn(what, e);
 // the notifications itself from the event stream.
 function notifyFor(ev: ServerEvent) {
   if (Platform.OS === 'web') return;
-  const local = (title: string, body: string, data: Record<string, unknown>, hold = false) => {
-    if (!pushRegistered) notifyLocal(title, body, data, hold).catch(warn("Couldn't show a notification"));
-  };
-  switch (ev.event) {
-    case 'call_started':
-      local('Assistant answering', `${ev.who || 'Unknown caller'}. Tap to follow live.`, { call_id: ev.call_id });
-      break;
-    case 'hold_question':
-    case 'task_needs_decision':
-      Vibration.vibrate([0, 400, 200, 400]);
-      local(`${ev.who} is waiting`, ev.question, { call_id: ev.call_id, hold_id: ev.hold_id }, true);
-      break;
-    case 'sensitive_request':
-      Vibration.vibrate(600);
-      local('Security alert', `${ev.who}: ${ev.text}`, { call_id: ev.call_id });
-      break;
-    case 'message_taken':
-      local(`Message from ${ev.who}`, ev.message.text, { message_id: ev.message.id });
-      break;
-    case 'task_update':
-      if (ev.task.status === 'done' || ev.task.status === 'failed') local('Call task finished', ev.title, { task_id: ev.task.id });
-      break;
-  }
+  const notice = liveNotice(ev);
+  if (!notice) return;
+  if (notice.vibrate) Vibration.vibrate(notice.vibrate);
+  if (pushRegistered) return;
+  notifyLocal(notice.title, notice.body, notice.data, { kind: notice.kind, id: notice.id }).catch(warn("Couldn't show a notification"));
 }
 
 /** How long after (re)connecting the snapshots of live calls must have arrived. */

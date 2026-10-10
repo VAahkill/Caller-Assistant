@@ -67,6 +67,31 @@ test('a call that ended while offline goes once the new snapshots are in', async
   expect(screen.getByTestId('calls')).toHaveTextContent(/^connected:$/);
 });
 
+test('a VIP calling raises an urgent alert and marks the call urgent', async () => {
+  const Notifications = jest.requireMock<typeof import('expo-notifications')>('expo-notifications');
+  jest.mocked(Notifications.scheduleNotificationAsync).mockClear();
+  function Urgent() {
+    const live = useLive();
+    return <Text testID="urgent">{live.calls[LIVE_CALL_ID]?.record.urgent ? 'urgent' : 'calm'}</Text>;
+  }
+  server.state.calls.find((c) => c.id === LIVE_CALL_ID)!.urgent = false;
+  await render(
+    <LiveProvider>
+      <Urgent />
+    </LiveProvider>,
+  );
+  await tick(10);
+  expect(screen.getByTestId('urgent')).toHaveTextContent('calm');
+  for (const s of server.liveSockets) s.push({ event: 'urgent_call', call_id: LIVE_CALL_ID, who: 'Amma', reason: 'vip', title: 'VIP Amma is calling' }, 0);
+  await tick(10);
+  expect(screen.getByTestId('urgent')).toHaveTextContent('urgent');
+  expect(Notifications.scheduleNotificationAsync).toHaveBeenCalledWith({
+    identifier: `call-${LIVE_CALL_ID}`,
+    content: expect.objectContaining({ title: 'VIP Amma is calling', categoryIdentifier: undefined }),
+    trigger: { channelId: 'calls-urgent' },
+  });
+});
+
 test('a call still live after reconnecting is never dropped from the screen', async () => {
   await render(
     <LiveProvider>

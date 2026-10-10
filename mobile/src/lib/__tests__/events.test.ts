@@ -42,6 +42,7 @@ describe('parseEvent', () => {
       { event: 'hold_question', call_id: live.id, who, hold_id: 'h', question: 'Security or door?', title: 't', task_id: null },
       { event: 'hold_resolved', call_id: live.id, who, hold_id: 'h', answered: true },
       { event: 'sensitive_request', call_id: live.id, who, kind: 'otp', text: 'Asked for an OTP', said: 'OTP chepandi' },
+      { event: 'urgent_call', call_id: live.id, who: 'Amma', reason: 'vip', title: 'VIP Amma is calling' },
       { event: 'call_ended', call: live, call_id: live.id, who },
       { event: 'message_taken', message: fx.messages[0], call_id: 'x', who: 'Amma' },
       { event: 'task_update', task: fx.tasks[0], task_id: fx.tasks[0].id, title: 'Calling' },
@@ -159,6 +160,17 @@ describe('liveReducer', () => {
       event: { event: 'voice_status', voice_id: 'clone:a-1', status: 'failed', detail: 'Too quiet' },
     });
     expect(parseEvent({ event: 'voice_status', voice_id: 'clone:a-1', status: 'ready' })).toMatchObject({ ok: true, event: { detail: '' } });
+  });
+
+  test('urgent_call marks the live call urgent, once', () => {
+    const calm = apply(initialLive, ev({ event: 'call_snapshot', call: { ...live, urgent: false } }));
+    const urgent = ev({ event: 'urgent_call', call_id: LIVE_CALL_ID, who, reason: 'summary', title: `Urgent: ${who}: Needs the gate code now` });
+    expect(urgent).toMatchObject({ reason: 'summary', title: expect.stringContaining('gate code') });
+    const s = apply(calm, urgent);
+    expect(s.calls[LIVE_CALL_ID].record.urgent).toBe(true);
+    expect(apply(s, urgent)).toBe(s);
+    // An older server may leave out the reason and title.
+    expect(ev({ event: 'urgent_call', call_id: LIVE_CALL_ID })).toMatchObject({ reason: '', title: '', who: '' });
   });
 
   test('events for unknown calls change nothing', () => {

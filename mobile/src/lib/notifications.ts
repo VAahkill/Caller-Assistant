@@ -4,6 +4,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 import { api } from './api';
+import type { NoticeKind } from './liveNotices';
 
 // "hold" notifications carry a reply box, so the user can answer a caller's
 // question straight from the notification shade without opening the app.
@@ -131,15 +132,24 @@ export async function sendTestNotification(): Promise<void> {
   await notifyLocal('Test notification', 'This is how calls and questions from callers will reach you.', {});
 }
 
-export async function notifyLocal(title: string, body: string, data: Record<string, unknown>, hold = false) {
+export interface LocalOptions {
+  /** normal: the "calls" channel; urgent: "calls-urgent" (max priority);
+   *  hold: urgent plus the Answer box. Default normal. */
+  kind?: NoticeKind;
+  /** A later notification with the same id replaces this one. */
+  id?: string;
+}
+
+export async function notifyLocal(title: string, body: string, data: Record<string, unknown>, { kind = 'normal', id }: LocalOptions = {}) {
   await Notifications.scheduleNotificationAsync({
+    ...(id ? { identifier: id } : {}),
     content: {
       title,
       body,
       data,
-      categoryIdentifier: hold ? HOLD_CATEGORY : undefined,
+      categoryIdentifier: kind === 'hold' ? HOLD_CATEGORY : undefined,
       sound: 'default',
     },
-    trigger: Platform.OS === 'android' ? { channelId: hold ? 'calls-urgent' : 'calls' } : null,
+    trigger: Platform.OS === 'android' ? { channelId: kind === 'normal' ? 'calls' : 'calls-urgent' } : null,
   });
 }

@@ -31,6 +31,8 @@ export type ServerEvent =
     } & CallEventBase)
   | ({ event: 'hold_resolved'; hold_id: string; answered: boolean } & CallEventBase)
   | ({ event: 'sensitive_request'; kind: string; text: string; said: string } & CallEventBase)
+  /** A VIP is calling (reason vip), or the summary says the call needs the owner soon (reason summary). */
+  | ({ event: 'urgent_call'; reason: string; title: string } & CallEventBase)
   | { event: 'message_taken'; message: CallerMessage; call_id: string; who: string }
   | { event: 'task_update'; task: Task; task_id: string; title: string }
   | { event: 'profile_updated' }
@@ -67,6 +69,7 @@ const REQUIRED: Record<AnyEvent['event'], string[]> = {
   task_needs_decision: ['call_id', 'hold_id', 'question'],
   hold_resolved: ['call_id', 'hold_id'],
   sensitive_request: ['call_id'],
+  urgent_call: ['call_id'],
   message_taken: ['message'],
   task_update: ['task'],
   profile_updated: [],
@@ -124,6 +127,10 @@ export function parseEvent(data: unknown): ParseResult {
     ev.task_id = s(ev.task_id) || null;
   }
   if (name === 'hold_resolved') ev.answered = !!ev.answered;
+  if (name === 'urgent_call') {
+    ev.reason = s(ev.reason);
+    ev.title = s(ev.title);
+  }
   if (name === 'voice_status') {
     ev.status = ['ready', 'preparing', 'failed'].includes(s(ev.status)) ? ev.status : 'ready';
     ev.detail = s(ev.detail);
@@ -206,6 +213,8 @@ export function reduceCall(view: CallView, ev: AnyEvent, now = Date.now() / 1000
       return { ...view, errors: [...view.errors, { at: now, detail: ev.detail }].slice(-5) };
     case 'call_category':
       return { ...view, record: { ...r, category: ev.category } };
+    case 'urgent_call':
+      return r.urgent ? view : { ...view, record: { ...r, urgent: true } };
     case 'hold_question':
     case 'task_needs_decision':
       if (r.holds.some((h) => h.id === ev.hold_id)) return { ...view, record: { ...r, status: 'on_hold' } };
