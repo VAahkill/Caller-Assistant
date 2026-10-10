@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openai_compat"  # openai_compat | scripted
     llm_base_url: str = "http://localhost:11434/v1"
     llm_api_key: str = "ollama"
-    llm_model: str = "llama3.1:8b"
+    llm_model: str = "qwen3:4b-instruct"
     llm_temperature: float = 0.4
     llm_max_tokens: int = 300
     # Extra request fields, as JSON. Thinking is off: a model that reasons before each

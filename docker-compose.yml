@@ -2,7 +2,8 @@
 # is free and runs on your own computer.
 #   cp .env.example .env   (then edit it)
 #   docker compose up -d
-#   docker compose exec ollama ollama pull llama3.1:8b
+# The first start downloads the language model (OPENCALL_LLM_MODEL, about 3 GB);
+# follow it with: docker compose logs -f ollama
 # The Bluetooth phone link needs the host's Bluetooth stack, so for that route
 # run the server directly on the host instead (see docs/TELEPHONY.md).
 # GSM modem route: docker compose --profile asterisk up -d
@@ -35,10 +36,33 @@ services:
 
   ollama:
     image: ollama/ollama
+    # Starts Ollama, then pulls the model the server uses if it isn't there yet
+    # (only when the server talks to this Ollama, not to a cloud LLM).
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        ollama serve &
+        server=$$!
+        trap 'kill $$server' TERM INT
+        until ollama list >/dev/null 2>&1; do sleep 1; done
+        case "$$OPENCALL_LLM_BASE_URL" in
+          *ollama:11434*)
+            ollama show "$$OPENCALL_LLM_MODEL" >/dev/null 2>&1 ||
+              ollama pull "$$OPENCALL_LLM_MODEL" ||
+              echo "Couldn't pull $$OPENCALL_LLM_MODEL; the server will keep asking for it. Check the name and your internet connection."
+            ;;
+        esac
+        wait $$server
     environment:
+      OPENCALL_LLM_MODEL: ${OPENCALL_LLM_MODEL:-qwen3:4b-instruct}
+      OPENCALL_LLM_BASE_URL: ${OPENCALL_LLM_BASE_URL:-http://ollama:11434/v1}
       # Keep the model in memory between calls. Ollama unloads it after 5 idle
       # minutes by default, and reloading it on a CPU makes the next caller wait.
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+      # One call at a time: one copy of the model's working memory, and the call
+      # prompt stays in its cache between calls. 8192 tokens is plenty for a call.
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
+      OLLAMA_CONTEXT_LENGTH: ${OLLAMA_CONTEXT_LENGTH:-8192}
     volumes:
       - ollama:/root/.ollama
     restart: unless-stopped

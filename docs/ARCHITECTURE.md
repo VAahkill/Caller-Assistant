@@ -14,15 +14,20 @@ caller audio ──► turn detector ──► language ID ──► speech to t
 
 1. **Turn detection** (`providers/vad.py`, `TurnDetector`). Live audio comes in 20 ms
    frames. Silero (the default) decides which frames are speech. A turn ends after
-   `OPENCALL_END_OF_TURN_SILENCE_MS` of silence. If Silero isn't installed, the simple
-   energy detector is used and the log says so once.
+   `OPENCALL_END_OF_TURN_SILENCE_MS` of silence, and keeps the 500 ms from before
+   speech was detected (the first sound of a word is soft). If the caller goes on
+   talking before a turn's words were understood, that turn is cancelled and its
+   audio is heard again with the rest, so a pause mid-sentence loses nothing. If
+   Silero isn't installed, the simple energy detector is used and the log says so once.
 2. **Language ID** (`providers/lid.py`, `languages.py`). Decides which of the user's
    caller languages is being spoken; see [Languages](#languages) below.
 3. **Speech to text** (`providers/stt.py`). The turn is transcribed in the call's
    language, by that language's own model. The silence around the words is cut
-   first. Whisper writes at most 224 tokens per piece of audio, and Telugu or Tamil
-   can need 20 a second. So a turn longer than 9 s is cut at its pauses
-   (`audio.split_at_pauses`) and transcribed piece by piece.
+   first, and half a second of silence is put back before them: given audio that
+   starts right at the first sound, the fine-tuned models often skipped the first
+   word or sentence. Whisper writes at most 224 tokens per piece of audio, and
+   Telugu or Tamil can need 20 a second. So a turn longer than 9 s is cut at its
+   pauses (`audio.split_at_pauses`) and transcribed piece by piece.
 4. **Into English** (`session.py`, `_english`). A line in another language is
    translated into English for the model; the transcript keeps both. See
    [Thinking in English](#thinking-in-english).
@@ -60,18 +65,27 @@ sent as `call_language {language, confidence}`. If the model can't load, Whisper
 own guess is used, and the log says so.
 
 Measured on held-out FLEURS test clips (30 per language, choosing among en, hi, te
-and ta; `eval/stt_lid.py`). The simulated calls replay those clips' scores through
-the tracker, cut to 2, 3 or 5 s or left whole, in four orders of short and long
-turns:
+and ta; `eval/stt_lid.py`). "Phone line" is the clip through 300-3400 Hz, 8 kHz and
+μ-law; "with noise" adds street-like noise (pink, with a slow wobble) 20 dB below
+the voice first (`eval/phone.py`). A simulated call is four turns from consecutive
+clips (the first 3 s of one, a whole one, 2 s, 5 s), replayed through the tracker:
 
-| | 16 kHz | phone line (8 kHz, μ-law) |
-|---|---|---|
-| One clip on its own, right language | 118/120 (98%) | 111/120 (92.5%) |
-| Simulated calls of 6 turns (2 s to 14 s each; 480 calls): right on every turn | 97.2% | 92.7% |
-| The same calls, right after the last turn | 480/480 | 471/480 (98%) |
+| | 16 kHz | phone line | phone line with noise |
+|---|---|---|---|
+| One clip on its own, right language | 118/120 (98%) | 111/120 (92.5%) | 111/120 (92.5%) |
+| Simulated calls (120): right after the first, 3 s turn | 91.7% | - | 81.7% |
+| ...right on every turn | 90.8% | - | 80.0% |
+| ...right after the last turn | 120/120 | - | 120/120 |
 
-Most mistakes are on the first, short turn of a phone call; later turns correct
-them.
+The phone-line column is from the first measurement, without noise; the simulated
+calls were then six turns long, and are now four. Per language with noise, one clip
+on its own: Telugu 29/30, Tamil 28/30, Hindi 28/30, English 26/30. All but one
+mistake were guesses of Telugu (Tamil, Hindi and English heard as Telugu; one Telugu
+clip heard as Tamil). So the first, short turn of a noisy call is in the wrong
+language about one time in five; the turns after it correct it.
+Offsets added to each language's score, fitted on FLEURS *validation* clips, took
+those from 89.7% to 93.3% right but made the test clips worse (92.5% to 91.7%), so
+none are used. The 95% target for one clip on a phone line is not met.
 
 **Hearing each language** (`providers/stt.py`). Telugu, Tamil and Hindi have models
 of their own: Whisper small fine-tuned on each language by vasista22 (Apache-2.0,
@@ -83,23 +97,35 @@ the main one, with a warning.
 
 Character error rate on 30 held-out FLEURS test clips per language (`eval/stt_lid.py
 --no-lid`: the language given, the same silence trimming as a call, punctuation and
-spaces ignored), mean with the median in brackets; lower is better:
+spaces ignored), mean with the median in brackets; lower is better. The first four
+columns are from the first measurement, the last from this round:
 
-| | Whisper large-v3-turbo, 16 kHz | own model, 16 kHz | turbo, phone line | own model, phone line |
-|---|---|---|---|---|
-| Telugu | 0.292 (0.182) | 0.085 (0.032) | 0.309 (0.268) | 0.130 (0.077) |
-| Tamil | 0.216 (0.195) | 0.122 (0.077) | 0.234 (0.209) | 0.159 (0.111) |
-| Hindi | 0.146 (0.111) | 0.087 (0.052) | 0.183 (0.134) | 0.150 (0.115) |
-| English | 0.045 (0.028) | - | 0.083 (0.046) | - |
+| | Whisper large-v3-turbo, 16 kHz | own model, 16 kHz | turbo, phone line | own model, phone line | own model, phone line with noise |
+|---|---|---|---|---|---|
+| Telugu | 0.292 (0.182) | 0.085 (0.032) | 0.309 (0.268) | 0.130 (0.077) | 0.147 (0.084) |
+| Tamil | 0.216 (0.195) | 0.122 (0.077) | 0.234 (0.209) | 0.159 (0.111) | 0.202 (0.135) |
+| Hindi | 0.146 (0.111) | 0.087 (0.052) | 0.183 (0.134) | 0.150 (0.115) | 0.226 (0.149) |
+| English | 0.045 (0.028) | - | 0.083 (0.046) | - | 0.098 (0.071) (turbo) |
 
 Each language's own model is clearly better than the main model told the language,
 on both kinds of audio, so they are the default. They are also about twice as fast
-(real-time factor 0.4 to 0.8 against 0.7 to 1.5 on a shared 4-core CPU). On the phone
-line Tamil (0.159) and Hindi (0.150) are still above the 0.15 and 0.10 targets, and
-English (0.083) just above 0.08. In the worst clips the models write numbers out in
-words where the reference has digits (no harm to a reply), mishear foreign names,
-and the Hindi model sometimes leaves out English words ("calcium", "potassium") that
-the main model keeps.
+(real-time factor 0.4 to 0.8 against 0.7 to 1.5 on a shared 4-core CPU). Against the
+targets on a noisy phone line (Telugu and Tamil 0.15, Hindi 0.10, English 0.08), only
+Telugu passes. Many of the remaining errors are numbers written out in words where
+the reference has digits ("403" as "நானூற்று மூன்று"; harmless in a reply), foreign
+names, and, in noise, the Hindi model stopping after a few words of a long sentence.
+What was tried:
+
+- **Beam search** (`OPENCALL_WHISPER_BEAM_SIZE=5`; default 1): with noise Tamil
+  0.202 to 0.174, Telugu 0.147 to 0.145, Hindi 0.226 to 0.220, English 0.098 to
+  0.096, at 1.3 to 1.8 times the time. Not worth it except perhaps for Tamil.
+- **Whisper small for English callers** (instead of turbo, about 3 times quicker):
+  0.048 at 16 kHz but 0.221 with noise. Turbo stays.
+- **Whisper medium fine-tuned on Hindi** (vasista22/whisper-hindi-medium,
+  Apache-2.0): 0.049 at 16 kHz and 0.158 with noise, but 0.5 GB more memory, about
+  2.4 times the time (real-time factor 0.9 to 1.0) and a 3 GB download to convert.
+  It can be chosen with `OPENCALL_STT_MODELS=hi=vasista22/whisper-hindi-medium@d53532a4dc1d0d89e484ed8f7acfb2228a7d3785`;
+  small stays the default for speed.
 
 **Replies in the caller's language** (`providers/mt.py`). IndicTrans2 distilled
 200M models as int8 ONNX (MIT; the hari31416 mirrors, pinned to a revision and
@@ -229,16 +255,41 @@ languages without a model of their own.
   trailing system message made the model write "assistant" itself, then a reply and
   an unwanted translation. `Conversation._messages()` raises if this rule is broken,
   and `tests/test_message_order.py` checks it on every path.
-- **Everything about this call goes in the one system message, at its end.** That
-  covers who is calling, availability, the delivery details once the call is known
-  to be a delivery, and which language to reply in. The fixed part comes first, so
-  the model's prompt cache is reused from call to call.
+- **Everything about this call goes in the one system message, at its end.** The part
+  that is the same for every caller comes first (the rules, the user's status, how to
+  answer delivery partners, the language note: with translation the model always
+  writes English), so a local model's prompt cache is reused from call to call. Then
+  who is calling, the delivery details once the call is known to be a delivery, and
+  last the caller's language.
+- **Each call's first reply request is read ahead.** When a call is answered, the
+  engine sends a local LLM that request as it will most likely look (a delivery
+  partner speaking the greeting's language) with a one-token reply, while the greeting
+  plays and the caller talks (`Engine.warm_up_call`). By the time their words are in,
+  only those are new, or for another caller what follows the delivery details:
+  about 250 fewer tokens to read before the first word, 2 to 3 s on a CPU. Cloud LLMs
+  aren't sent this.
+- **Codes are refused even when misheard.** Through a noisy line "OTP" can come out as
+  "MOTP", "मोटीपी" or an unusual Telugu spelling; those are in the patterns too. For a
+  request the patterns still miss, the model writes `[SECURITY: otp|pin|password|card|
+  account|balance]`: the fixed refusal is said, the user is alerted, and nothing else
+  the model wrote that turn is spoken.
+- **The model is told the words may be misheard** ("Raghul" for Rahul, "board order"
+  for food order) and to go by what they most likely mean. Without it a 4B model
+  doubted a Telugu Swiggy partner's "board order from Raghul Garu" and held.
 - **Notes from the user's side are `user` messages that start with
   `[Private note from <name>'s side; the caller did not say this]`.** These are hold
   answers, hold timeouts and the outbound kickoff. Numbers in them are never treated
   as something the caller said.
+- **An answered call's turns start with the greeting.** First a private note ("A
+  call has come in. Answer it."), then the greeting the caller heard, as the
+  assistant's own turn. Told about the greeting only in the system message, a 4B
+  model answered a Swiggy partner's question by saying the greeting again.
 - **Consecutive messages with the same role are merged, and leading assistant
   messages are dropped,** because some templates (Gemma) require strict turns.
+- **Sentences are cut at their end, not at an abbreviation.** The reply is spoken
+  (and translated) a sentence at a time; a full stop after "Dr", "Mr", "St" and
+  the like, or after "No" before a number ("Road No. 12"), doesn't end one
+  (`languages.full_stop_ends_sentence`).
 - A speaker label the model writes anyway ("assistant:") is cut from the start of
   the reply before anything is spoken.
 
@@ -255,7 +306,10 @@ a recording or a hold answer.
   call goes on.
 - **Slow replies get a filler.** If no words come within `OPENCALL_FILLER_AFTER_S`
   (2.5 s), the caller hears "One moment, please". If there are still none after
-  `OPENCALL_FILLER_AGAIN_S` (15 s), they hear a second line.
+  `OPENCALL_FILLER_AGAIN_S` (15 s), they hear a second line. The time counts from
+  when the caller stops talking (right after language ID, so the filler is in their
+  language), not from when their words have been transcribed: on a slow CPU the
+  speech model alone can take longer than 2.5 s.
 - **A reply with nothing to say is never silence.** Small models sometimes answer
   with only a tag. A hang-up or a hold with no words first says the goodbye or
   "One moment, please" line; an empty reply (or one that was all tags) asks the
@@ -281,6 +335,52 @@ summary. It also warms when the user changes something the prompt is made from
 call is live, that waits until the call ends. Docker Compose sets `OLLAMA_KEEP_ALIVE=24h`, so Ollama doesn't unload the
 model between calls. `GET /health` shows `ready: {stt, tts, llm, mt, lid}` and
 `llm_model`.
+
+## Choosing the language model
+
+The default model was chosen by measurement on this repository's own call check
+(`eval/scenarios.py`, below), among small free models that fit in 12 GB beside the
+speech stack. Each was run on its own, through llama.cpp's `llama-server` (build
+b11400, CPU, 4 threads, 8192 context, one slot), loading the same GGUF file Ollama
+downloads for it from registry.ollama.ai, with thinking off and the sampling settings
+its makers recommend. `eval/llm_speed.py` measured its speed on the real call prompt.
+The machine was a shared 4-vCPU cloud sandbox with no GPU; check `top` before timing.
+
+First, 16 calls (delivery, OTP, bank and message calls in the four languages, through
+the noisy phone line). "First word" is how long the model took to start its reply on
+the real call prompt after the warm-up (`eval/llm_speed.py`); "first real reply" is
+from the end of the caller's turn until they hear the answer, after the "One moment,
+please" that covers the wait:
+
+| Model (Ollama tag) | Calls passed | First word | Tokens per second | First real reply, median |
+|---|---|---|---|---|
+| `qwen3:4b-instruct` | **10/16** | 3.3 s | 7.4 | 8.8 s |
+| `qwen3.5:4b` | 7/16 | 9.0 s | 5.7 | 11.5 s |
+| `gemma4:e2b` | 7/16 | 2.3 s | 11.7 | 7.5 s |
+| `llama3.2:3b` | 5/16 | 2.7 s | 7.5 | 7.6 s |
+| `gemma3:4b` | 0/2 (run not finished) | 6.6 s | 9.1 | 15.3 s |
+
+`qwen3:4b-instruct` is the default: it got the most calls right, and it can't
+"think" before answering, so nothing has to be turned off. gemma4:e2b is quicker but
+gave fewer right answers.
+
+Then all 48 calls of the check, with the default model: **30/48 (62%)**, below the
+90% target. By kind: delivery 8/8, VIP 4/4, bank 3/4, facts 3/4, interjection 3/4,
+spam 3/4, booking 2/4, message 2/4, OTP 2/4, away 0/4, hold 0/4. By language: English
+10/12, Telugu 9/14, Hindi 7/11, Tamil 4/11. Every call passed the latency check (the
+caller heard something within 5 s, median 3.1 s) and no call errored. No OTP or
+balance was ever said; the OTP failures were requests the speech model misheard
+("OTP" as "मोटी", "thick", in Hindi; as "ஓடிவிட்டு" in Tamil), so neither the
+patterns nor the model saw a request to refuse. Most of the rest were the model
+treating a plumber's visit as a delivery (all four hold calls), and, worse, then
+describing a made-up address. Two fixes followed: such a reply is now made again
+once the delivery details are in the prompt, and the prompt says what is and isn't a
+delivery. The away calls took a message without saying when the user is free; the
+prompt now asks for the status first.
+
+A bigger model would most likely do better on these, but none was measured here: it
+doesn't fit beside the speech models in 12 GB. The free cloud tiers in `.env.example`
+are an option where the call's words may leave the computer.
 
 ## The practice call (`/ws/simulate`)
 
@@ -407,4 +507,5 @@ Reply quality is the model's. Asked 8 times each, the 1.5B model gave an unhelpf
 "I'm sorry, I can't help with that" to 1 or 2 of 8 first lines from a delivery
 partner, whether the English was the raw translation, tidied, or the Hindi call's;
 the rest gave the landmark and gate or asked them to leave it with the guard. Use the
-default 8B model, or at least 3B, for real calls.
+default model (see [Choosing the language model](#choosing-the-language-model)) or a
+bigger one for real calls.

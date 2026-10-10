@@ -7,12 +7,15 @@ hear your assistant answer. You don't need a phone line, a SIM or any paid servi
 On a Mac or Linux, run the commands from the README's Quick start in a terminal
 instead of the PowerShell ones below; from step 5 on, only the firewall step differs.
 
+**Already running the first version?** Skip to
+[Updating from the first version](#updating-from-the-first-version).
+
 **What you need**
 - A Windows 10 (version 22H2) or Windows 11 computer with 16 GB of memory (8 GB
   works if you use the free Groq option in step 4.4) and about 30 GB of free disk
   (it can be a second drive such as D:, see step 2.6).
 - An Android phone on the **same Wi-Fi** as the computer.
-- One to two hours, most of it waiting for free downloads (about 12 GB in all).
+- One to two hours, most of it waiting for free downloads (about 13 GB in all).
 
 Every command below goes into **Windows PowerShell**: press the Windows key, type
 `powershell`, press Enter. Copy a command, paste it with a right-click, press Enter.
@@ -146,15 +149,12 @@ notepad .env
 
 Copy the 32 letters and numbers it prints.
 
-**3.3 Change these lines in Notepad:**
+**3.3 Change one line in Notepad:** replace `OPENCALL_API_TOKEN=change-me` with
+`OPENCALL_API_TOKEN=` followed by the password you just copied.
 
-| Line | Change it to |
-|---|---|
-| `OPENCALL_API_TOKEN=change-me` | `OPENCALL_API_TOKEN=` followed by the password you just copied |
-| `OPENCALL_CALLER_LANGUAGES=` | the languages your callers speak, e.g. `OPENCALL_CALLER_LANGUAGES=en,hi,te` (Telugu) or `en,hi,ta` (Tamil) |
-
-Leave everything else as it is. Save with **Ctrl+S** and close Notepad. Keep the
-password handy: the app asks for it in step 7.
+Leave everything else as it is. You choose your callers' languages in the app, in
+step 7. Save with **Ctrl+S** and close Notepad. Keep the password somewhere safe; the
+app can pair without it (step 7), but it's your way in if pairing doesn't work.
 
 ---
 
@@ -175,39 +175,46 @@ docker compose ps
 
 You should see `opencall` and `ollama`, both **running** (or **Up**).
 
-**4.2 Download the AI brain** (about 5 GB, once):
+**4.2 The AI brain downloads by itself** the first time (Qwen3 4B, about 2.5 GB,
+chosen because it handled the most test calls correctly of the free models that fit
+in 16 GB). To watch it:
 
 ```powershell
-docker compose exec ollama ollama pull llama3.1:8b
+docker compose logs -f ollama
 ```
 
-It ends with `success`.
+It's done when a line says `success`. Press **Ctrl+C** to stop watching.
 
 **4.3 Wait until the assistant is ready.** The first time it starts, it also
-downloads its voices and speech recognition (about 2 GB). Watch it with:
+downloads its voices, speech recognition for English, Telugu, Tamil and Hindi, and
+translation (about 5 GB). Watch it with:
 
 ```powershell
 docker compose logs -f opencall
 ```
 
-It's ready when you see `Speech models loaded, ready for calls.` Lines that say
-`Warning` or `FutureWarning` on the way are normal. Press **Ctrl+C** to stop
-watching; the assistant keeps running. Later starts are ready in under a minute.
+Lines like `Preparing the vasista22/whisper-telugu-small speech model` are the
+one-time downloads. It's ready when you see `Speech models loaded, ready for calls.`
+Lines that say `Warning` or `FutureWarning` on the way are normal. Press **Ctrl+C** to
+stop watching; the assistant keeps running. Later starts are ready in a minute or two.
 
 **4.4 Only if your computer has 8 GB of memory, or replies are very slow:** use
-Groq's free tier instead of the local AI. It's free with no card.
+Groq's free tier instead of the local AI. It's free with no card, but what callers
+say then goes to Groq to be answered, so it's less private than the local AI.
 1. Sign up at <https://console.groq.com>, open **API Keys**, and create a key.
-2. In `.env`, change the three `OPENCALL_LLM_` lines to:
+2. In `.env`, change the `OPENCALL_LLM_` lines to these four (remove the `#` at the
+   start of each):
 
    ```
    OPENCALL_LLM_BASE_URL=https://api.groq.com/openai/v1
    OPENCALL_LLM_API_KEY=your-groq-key
-   OPENCALL_LLM_MODEL=llama-3.3-70b-versatile
+   OPENCALL_LLM_MODEL=openai/gpt-oss-20b
+   OPENCALL_LLM_EXTRA_BODY={"reasoning_effort": "low"}
    ```
 
    If Groq has renamed that model, pick one from <https://console.groq.com/docs/models>.
-   A bigger model also writes better Telugu and Tamil.
-3. Apply it with `docker compose up -d`. You can skip step 4.2.
+   `.env` also has the lines for Google Gemini's free tier, another option.
+3. Apply it with `docker compose up -d`. The local AI brain then isn't downloaded.
 
 **4.5 Check from the computer.** Open <http://localhost:8000/health> in your
 browser. It should show `{"ok":true, ...}`.
@@ -338,37 +345,65 @@ can take up to 24 hours after leaving the account program.
 
 ---
 
-## Step 7. Connect the app to the assistant
+## Step 7. Set up the app
 
-1. Open **OpenCall** and go to the **Settings** tab.
-2. **Server address:** `http://YOUR-ADDRESS:8000` (your address from step 5.1,
-   with `http://` before it and `:8000` after it).
-3. **API token:** the password from step 3.2. It's 32 characters and the box hides
-   them, so paste it rather than typing it: send it to your phone in a message to
-   yourself, copy it there and paste it here. Turn on **Show token** to check it.
-4. Tap **Connect**. It should say **Connected**. Allow notifications when asked.
-5. Fill in your name and your assistant's name.
-6. Tap **Voices** and press ▶ to hear each one, including Telugu and Tamil. Tap a
-   voice to choose it.
-7. Tap **Delivery location**, long-press your door on the map, and add landmarks.
+Open **OpenCall**. It walks you through setup, one screen at a time; you can change
+everything later.
+
+1. **Connect to your server.** Type `http://YOUR-ADDRESS:8000` (your address from
+   step 5.1, with `http://` before it and `:8000` after it). Then pair the phone, so
+   you don't have to type the long password:
+   1. Tap **Pair with code**, then **Get a code**.
+   2. On the computer, run:
+
+      ```powershell
+      docker compose logs opencall | Select-String "Pairing code"
+      ```
+
+      The last line shows a 6-digit code, valid for 5 minutes.
+   3. Type it on the phone and tap **Pair**. It says **Connected**.
+
+   Or paste the password from step 3.2 into **Access token** and tap **Connect**.
+2. **You and your assistant.** Your name and your assistant's name, which callers
+   hear when it picks up.
+3. **Country and languages.** Leave the country as India (+91): it's how the
+   assistant tells local calls from international ones. Tap the languages your
+   callers speak, most common first, such as Telugu, Hindi, English. The assistant
+   works out which one each caller is speaking.
+4. **Let your contacts through.** Tap **Sync contacts** and allow access, so saved
+   contacts always get through.
+5. **Choose a voice.** Tap ▶ to hear each one (tap again to stop) and pick one for
+   each language. **Use your own voice** records 15 seconds of you; it plays back
+   so you can check it, and appears under **My voices**. Without an NVIDIA graphics
+   card the computer speaks a recorded voice far too slowly for a live call, so keep
+   a built-in voice for calls for now.
+6. Allow notifications when asked.
+
+Afterwards, the **Assistant** tab has the rest: **Delivery location** (long-press
+your door on the map, or paste a Google Maps link, then add landmarks),
+**Instructions** (how to handle calls, with ready-made examples), **What callers may
+know**, **Who gets through** and **Away**.
 
 ---
 
 ## Step 8. Make a practice call
 
-1. Go to the **Home** tab and tap **Try a practice call**, then **Start practice call**.
-2. You'll hear your assistant answer. Its first reply to you can take up to a
-   minute while the AI brain loads; after that it's a few seconds. Replies to
-   speech take a little longer than replies to typed lines, because the computer
-   first has to work out what you said.
+1. On the **Today** tab, tap **Practice call**, pick the language you'll speak as the
+   caller (or leave it on **Auto**), and tap **Start practice call**.
+2. You'll hear your assistant answer. The first reply after the computer starts can
+   take a while as the AI brain loads; then replies take a few seconds. If it needs a
+   moment it says "One moment, please" so the caller knows it's there.
 3. Talk to it as a caller: tap one of the example lines, type and press **Send**,
-   or tap 🎤, speak, and tap ■ when you're done (allow the microphone).
+   or tap 🎤, speak, and tap ■ when you're done (allow the microphone). Each line
+   shows in the transcript, with a translation into your language when the caller
+   speaks another one.
 4. Things to try:
    - a delivery partner asking for directions, in Telugu or Tamil;
-   - asking for an OTP (it refuses and alerts you);
+   - asking for an OTP or a bank balance (it refuses and alerts you);
    - asking something only you can answer, like "Is he free for dinner on
-     Saturday?". A yellow card appears; tap **Answer** and type your reply;
-   - leaving a message, then opening the **Calls** tab.
+     Saturday?". A card appears; type your answer in your own language and it's
+     translated and spoken to the caller;
+   - leaving a message, then opening the **Inbox** tab.
 5. Tap **Hang up** when you're done.
 
 ---
@@ -380,6 +415,40 @@ can take up to 24 hours after leaving the account program.
 - Stop the assistant: `cd $HOME\Caller-Assistant` then `docker compose stop`.
 - Start it again: `docker compose up -d`.
 - Get a newer version: `git pull`, then `docker compose up -d --build`.
+
+## Updating from the first version
+
+If you already ran the first version, you keep your calls, contacts and settings.
+
+1. Update the code and free the space the old AI brain used (about 5 GB):
+
+   ```powershell
+   cd $HOME\Caller-Assistant
+   git pull
+   docker compose exec ollama ollama rm llama3.1:8b
+   ```
+
+2. Open `.env` with `notepad .env` and change `OPENCALL_LLM_MODEL=llama3.1:8b` to
+   `OPENCALL_LLM_MODEL=qwen3:4b-instruct`. Save and close. (If you use Groq, change
+   its lines as in step 4.4 instead.)
+3. Rebuild and start it. This downloads about 8 GB the first time (step 4.2 and 4.3
+   say what to watch for):
+
+   ```powershell
+   docker compose up -d --build
+   ```
+
+4. Install the new app over the old one from the `platform-tools` folder (USB
+   debugging on, as in step 6.1). Your server address and token stay:
+
+   ```powershell
+   cd $HOME\platform-tools
+   Copy-Item $HOME\Downloads\OpenCall.apk . -Force
+   .\adb install -r OpenCall.apk
+   ```
+
+5. In the app, open **Assistant**, **Languages**, and tap your callers' languages.
+   The `OPENCALL_CALLER_LANGUAGES` line in `.env` isn't used any more.
 
 ## Real phone calls
 
@@ -401,7 +470,9 @@ let Docker use the computer's Bluetooth or USB modem.
 | The app says `Server said: bad token` or `The server didn't accept the token` | The app reached the server but the token doesn't match. Paste it into the app again instead of typing it (step 7). To see the token the server is using, run `docker compose exec opencall printenv OPENCALL_API_TOKEN`. If that isn't the one in `.env` (for example it says `change-me`), save `.env` and run `docker compose up -d --force-recreate opencall`. |
 | The app says `Couldn't reach` | Check the address starts with `http://` (not `https://`), uses your own address from step 5.1 and ends in `:8000`, and that the health page from step 5.3 opens on the phone. |
 | No sound in the practice call | Turn up the phone's media volume. |
-| Replies take very long | Use Groq (step 4.4), or put `OPENCALL_WHISPER_MODEL=small` in `.env` and run `docker compose up -d`. |
+| The app's pairing says the code didn't match or ran out | Tap **Ask for a new code** and run the `Select-String` command from step 7 again; use the last code it shows. |
+| The log says `Couldn't pull qwen3:4b-instruct` | Check the internet connection and run `docker compose restart ollama`. |
+| Replies take very long | Close other big programs, check Docker has 12 GB (step 2.5), or use Groq (step 4.4). |
 | Anything else | Run `docker compose logs --tail 100 opencall` and send the output in the project thread. |
 
 Notifications arrive while the app is open or recently used. Getting them while it's

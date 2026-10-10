@@ -424,9 +424,13 @@ class Conversation:
         allowed = self.allowed_numbers()
         stop = False
         acted = False  # put them on hold, ended the call or texted them
+        # The model can decide it's a delivery mid-reply. Its words then were written
+        # without the delivery details (small models make an address up), so the reply
+        # is started again with them in the prompt.
+        again = False
 
         def handle(actions: list[Action]):
-            nonlocal stop, acted
+            nonlocal stop, acted, again
             for a in actions:
                 if isinstance(a, Say):
                     res = scrub_outgoing(a.text, allowed)
@@ -448,9 +452,13 @@ class Conversation:
                     return
                 elif isinstance(a, Category):
                     if a.value == "delivery":
+                        again = not self._delivery and not self.outbound
                         self._enter_delivery_mode()
                     self.category = a.value if not self.outbound else self.category
                     yield a
+                    if again:
+                        stop = True
+                        return
                 else:
                     if isinstance(a, (Hold, EndCall)) and not spoken and not acted:
                         # Small models sometimes do this without a word; nobody is put on
@@ -482,7 +490,7 @@ class Conversation:
             if not stop:
                 for out in handle(parser.close()):
                     yield out
-                if not spoken and not acted:
+                if not again and not spoken and not acted:
                     # An empty reply (or one that was all tags) would leave the caller
                     # waiting in silence.
                     log.warning("The model's reply had nothing to say to the caller; asking them to repeat.")
@@ -491,6 +499,13 @@ class Conversation:
             # Keep what was actually said, even if the turn was cut short.
             if spoken:
                 self.history.append({"role": "assistant", "content": " ".join(spoken)})
+        if again:
+            if spoken:
+                # Said before the tag: the new reply goes on from it.
+                self.history.append({"role": "user", "content": prompts.delivery_known_note(self.profile.user_name)})
+            async with aclosing(self._generate()) as actions:
+                async for action in actions:
+                    yield action
 
     async def summarize(self, transcript: str) -> "CallSummary":
         msgs: list[Message] = [

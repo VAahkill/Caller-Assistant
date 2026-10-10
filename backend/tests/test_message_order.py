@@ -74,13 +74,16 @@ async def test_delivery_context_lives_in_the_system_message():
 
 
 async def test_delivery_found_by_the_model_also_goes_to_the_system_message():
-    replies = iter(["[CATEGORY: delivery] Sure, where are you now?", "Take the left after the temple."])
+    replies = iter(["[CATEGORY: delivery] Sure, where are you now?", "[CATEGORY: delivery] Sure, where are you now?",
+                    "Take the left after the temple."])
     llm = CheckedLLM(lambda m: next(replies))
     conv = inbound(llm)
     await drain(conv.respond("Hello, I'm outside, which way?", "en"))
+    # That reply was written without the delivery details, so it is made again with them.
     assert "DELIVERY:" not in llm.calls[0][0]["content"]
-    await drain(conv.respond("Near the temple", "en"))
     assert "DELIVERY:" in llm.calls[1][0]["content"]
+    await drain(conv.respond("Near the temple", "en"))
+    assert "DELIVERY:" in llm.calls[2][0]["content"]
 
 
 @pytest.mark.parametrize("answer", ["Tell her 9 PM works", None])

@@ -318,7 +318,7 @@ async def test_hold_reminder_is_in_the_callers_language(engine, settings):
 @pytest.mark.parametrize("reply, said, ended", [
     ("", "fallback", False),                         # nothing at all
     ("[CATEGORY: delivery]", "fallback", False),     # only a tag
-    ("[MESSAGE: Swiggy order at the gate]", "fallback", False),
+    ("[MESSAGE: Swiggy order at the gate]", "message_taken", False),  # confirmed, see below
     ("[END_CALL]", "goodbye", True),                 # a small model hanging up without a word
     ("[HOLD: Can the parcel be left with the guard?]", "filler", False),
 ])
@@ -429,5 +429,26 @@ async def test_a_message_tag_on_its_own_is_confirmed_not_apologised_for(engine):
     assert assistant_lines(s)[-1] == fill(phrase("message_again", "en"), engine.store.profile.user_name)
     assert not events(engine, "turn_error")
     assert phrase("fallback", "en") not in assistant_lines(s)
+    await bridge.hangup()
+    await task
+
+
+async def test_a_reply_that_turns_out_to_be_for_a_delivery_starts_again_with_the_details(engine):
+    # Written before the delivery details were in its prompt, a small model makes an
+    # address up; that reply is dropped and made again with the real details.
+    bridge, s, task = await start_call(engine)
+
+    def reply(messages):
+        if "DELIVERY:" in messages[0]["content"]:
+            return "[CATEGORY: delivery] It's Road No. 3, Banjara Hills, opposite Apollo Pharmacy."
+        return "[CATEGORY: delivery] Rahul's address is 45A, Park Road, near the big mall."
+
+    s.conv.llm = ScriptedLLM(reply)
+    await s.handle_text("Hello, is this the right number for Rahul? I'm nearby.", "en")
+    said = " ".join(assistant_lines(s))
+    assert "Park Road" not in said
+    assert "Road No. 3, Banjara Hills" in said
+    assert s.conv.category == "delivery"
+    assert not events(engine, "turn_error")
     await bridge.hangup()
     await task

@@ -204,7 +204,8 @@ def inbound_system_prompt(
     )
     away = away_sentence(profile, english)
     away_line = (f"{user} set this status for callers: \"{away}\" You may tell callers this and offer to"
-                 " take a message.\n") if away else ""
+                 f" take a message. Asked when they can reach {user}, tell them this status in your"
+                 " words before anything else.\n") if away else ""
     vip_line = (f"This caller is on {user}'s VIP list: they matter a lot to {user}. Be extra warm and"
                 f" helpful, HOLD for anything {user} should decide, and say {user} has been told they"
                 " called.\n") if vip else ""
@@ -221,8 +222,11 @@ You are {profile.assistant_name}, the personal phone assistant answering calls f
 WHAT TO DO
 - Spam, sales, loans, credit cards, insurance, investments, surveys: say a short polite
   "not interested, please don't call again", tag [CATEGORY: spam] and [END_CALL].
-- Delivery partners: help them reach the door quickly. Once you know it's a delivery,
-  the delivery details appear at the end. Answer exactly what they ask: the area, the
+- Delivery partners (bringing a parcel, food or groceries, from Swiggy, Zomato, Amazon,
+  a courier...): help them reach the door quickly. Once you know it's a delivery, the
+  delivery details appear at the end; never describe the way or the address before
+  they do. Someone coming to work at the house or visit (a plumber, electrician, cook,
+  guest) is not a delivery: HOLD so {user} can decide. Answer exactly what they ask: the area, the
   building, the floor or the flat. Asked where the house is, give the address and the
   main landmark; after that, guide them from where they are, one or two steps at a time.
   If they need an OTP to complete the delivery, say {user} will share it in person
@@ -365,6 +369,11 @@ def hold_timeout_note(user: str) -> str:
         f"{PRIVATE_NOTE.format(user=user)} {user} isn't available right now. Apologise briefly for the wait,"
         f" offer to take a message and say {user} will get back to them. Then take the message."
     )
+
+
+def delivery_known_note(user: str) -> str:
+    return (f"{PRIVATE_NOTE.format(user=user)} This is a delivery; the delivery details are now in your"
+            " instructions. Go on helping the caller with them.")
 
 
 def call_answered_note(user: str) -> str:
