@@ -1,0 +1,104 @@
+{
+  "expo": {
+    "name": "OpenCall",
+    "slug": "opencall",
+    "version": "2.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "org.opencall.receptionist",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Record your voice so the assistant can speak in it, and talk to the assistant.",
+        "NSContactsUsageDescription": "So the assistant knows which callers are your saved contacts.",
+        "NSLocationWhenInUseUsageDescription": "Pin your delivery location on the map."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#3F38C9",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "package": "org.opencall.receptionist",
+      "versionCode": 3,
+      "permissions": [
+        "RECORD_AUDIO",
+        "READ_CONTACTS",
+        "ACCESS_FINE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "VIBRATE"
+      ],
+      "blockedPermissions": [
+        "android.permission.WRITE_CONTACTS"
+      ]
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-audio",
+      "expo-secure-store",
+      [
+        "expo-notifications",
+        {
+          "color": "#4F46E5"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Pin your delivery location on the map."
+        }
+      ],
+      [
+        "expo-contacts",
+        {
+          "contactsPermission": "So the assistant knows which callers are your saved contacts."
+        }
+      ],
+      "@maplibre/maplibre-react-native",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
+        "expo-font",
+        {
+          "fonts": [
+            "node_modules/@expo-google-fonts/inter/400Regular/Inter_400Regular.ttf",
+            "node_modules/@expo-google-fonts/inter/500Medium/Inter_500Medium.ttf",
+            "node_modules/@expo-google-fonts/inter/600SemiBold/Inter_600SemiBold.ttf",
+            "node_modules/@expo-google-fonts/inter/700Bold/Inter_700Bold.ttf"
+          ]
+        }
+      ],
+      "expo-asset",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "imageWidth": 200,
+          "resizeMode": "contain",
+          "backgroundColor": "#F5F6FA",
+          "dark": {
+            "image": "./assets/splash-icon.png",
+            "backgroundColor": "#090B10"
+          }
+        }
+      ]
+    ],
+    "scheme": "opencall",
+    "experiments": {
+      "typedRoutes": false
+    }
+  }
+}

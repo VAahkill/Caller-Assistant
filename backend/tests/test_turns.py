@@ -1,0 +1,454 @@
+"""A call turn never ends in silence: failures are reported and apologised for, slow
+replies get a "one moment", turns run one at a time, hang-up stops everything, and
+the app is told what the assistant is doing."""
+
+import asyncio
+
+import pytest
+
+from opencall.phrases import fill, phrase
+from opencall.providers.llm import LLMError, LLMTimeout, ScriptedLLM
+from opencall.providers.stt import Transcription
+from opencall.telephony.queue_bridge import QueueBridge
+
+
+async def start_call(engine, call_id="t1", number="+919876543210"):
+    bridge = QueueBridge(call_id, number)
+    task = asyncio.create_task(engine.handle_call(bridge))
+    while call_id not in engine.sessions:
+        await asyncio.sleep(0.005)
+    return bridge, engine.sessions[call_id], task
+
+
+def events(engine, name, call_id="t1"):
+    return [e for e in engine.bus.history if e["event"] == name and e.get("call_id") == call_id]
+
+
+def assistant_lines(session):
+    return [l.text for l in session.record.transcript if l.speaker == "assistant"]
+
+
+class SlowLLM(ScriptedLLM):
+    """Waits before the first word; records whether the stream was closed."""
+
+    def __init__(self, delay, reply="Sure, come to the green gate."):
+        super().__init__(lambda m: reply)
+        self.delay = delay
+        self.closed = 0
+        self.started = asyncio.Event()
+
+    async def stream(self, messages):
+        self.calls.append(messages)
+        self.started.set()
+        try:
+            await asyncio.sleep(self.delay)
+            for word in self.responder(messages).split(" "):
+                yield word + " "
+        finally:
+            self.closed += 1
+
+
+class FailingLLM(ScriptedLLM):
+    def __init__(self, error):
+        super().__init__()
+        self.error = error
+
+    async def stream(self, messages):
+        self.calls.append(messages)
+        raise self.error
+        yield  # an async generator, like the real client
+
+
+@pytest.mark.parametrize("error", [LLMTimeout("The language model didn't start answering within 180 s."),
+                                   RuntimeError("boom")])
+async def test_a_failed_turn_is_reported_and_apologised_for(engine, error):
+    engine.llm = FailingLLM(error)
+    engine.ready["llm"] = True
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = engine.llm
+    await s.handle_text("Hi, is Rahul there?", "en")
+    err = events(engine, "turn_error")
+    assert len(err) == 1 and err[0]["detail"]
+    if isinstance(error, LLMError):
+        assert "180 s" in err[0]["detail"] and engine.ready["llm"] is False
+    else:
+        assert "RuntimeError" in err[0]["detail"]
+    assert assistant_lines(s)[-1] == phrase("fallback", "en")
+    await s.wait_playback()
+    await asyncio.sleep(0)
+    states = [e["state"] for e in events(engine, "assistant_status")]
+    assert states[-3:] == ["error", "speaking", "listening"]
+    # The call carries on: the next turn is answered normally.
+    s.conv.llm = ScriptedLLM(lambda m: "May I know who's calling?")
+    await s.handle_text("It's Priya.", "en")
+    assert assistant_lines(s)[-1] == "May I know who's calling?"
+    await bridge.hangup()
+    await task
+
+
+async def test_the_fallback_is_in_the_callers_language(engine):
+    engine.llm = FailingLLM(LLMError("down"))
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = engine.llm
+    await s.handle_text("రాహుల్ ఉన్నారా?")  # language from the script
+    assert s.record.language == "te"
+    assert assistant_lines(s)[-1] == phrase("fallback", "te")
+    await bridge.hangup()
+    await task
+
+
+async def test_slow_reply_gets_a_spoken_filler(engine, settings):
+    settings.filler_after_s = 0.05
+    settings.filler_again_s = 0.1
+    llm = SlowLLM(0.4)
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = llm
+    await s.handle_text("Swiggy order, where should I come?", "en")
+    said = assistant_lines(s)
+    assert said[1:] == [phrase("filler", "en"), phrase("filler_again", "en"), "Sure, come to the green gate."]
+    await bridge.hangup()
+    await task
+
+
+async def test_the_filler_is_timed_from_when_the_caller_stops(engine, settings):
+    """Slow speech recognition counts towards the wait: "one moment" comes while the
+    words are still being transcribed, in the caller's language, and only once."""
+    settings.filler_after_s = 0.05
+    settings.filler_again_s = 0
+
+    async def slow_transcribe(pcm, language_hint=None):
+        await asyncio.sleep(0.3)
+        return Transcription("నాకు స్విగ్గీ ఆర్డర్ ఉంది", language_hint or "en")
+
+    engine.stt.transcribe = slow_transcribe
+    llm = SlowLLM(0.3, "సరే, గేట్ దగ్గరకు రండి.")
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = llm
+    await s.submit_recording(b"\x01\x00" * 16000, "te")
+    said = assistant_lines(s)
+    assert said[1:] == [phrase("filler", "te"), "సరే, గేట్ దగ్గరకు రండి."]
+    caller = next(l for l in s.record.transcript if l.speaker == "caller")
+    filler = next(l for l in s.record.transcript if l.text == phrase("filler", "te"))
+    assert filler.at < caller.at  # said before the words were transcribed
+    await bridge.hangup()
+    await task
+
+
+async def test_no_filler_when_no_words_were_heard(engine, settings):
+    settings.filler_after_s = 0.05
+
+    async def slow_nothing(pcm, language_hint=None):
+        await asyncio.sleep(0.01)
+        return Transcription("", "en")
+
+    engine.stt.transcribe = slow_nothing
+    bridge, s, task = await start_call(engine)
+    await s.submit_recording(b"\x01\x00" * 16000, "en")
+    await asyncio.sleep(0.15)
+    assert phrase("filler", "en") not in assistant_lines(s)
+    await bridge.hangup()
+    await task
+
+
+async def test_quick_reply_gets_no_filler(engine, settings):
+    settings.filler_after_s = 0.3
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = SlowLLM(0.0)
+    await s.handle_text("Swiggy order, where should I come?", "en")
+    await asyncio.sleep(0.4)
+    assert phrase("filler", "en") not in assistant_lines(s)
+    await bridge.hangup()
+    await task
+
+
+async def test_typed_turns_are_answered_one_at_a_time(engine):
+    replies = iter(["First answer.", "Second answer."])
+    llm = SlowLLM(0.1)
+    llm.responder = lambda m: next(replies)
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = llm
+    a = s.submit_text("first", "en")
+    b = s.submit_text("second", "en")
+    await asyncio.gather(a, b)
+    order = [(l.speaker, l.text.strip()) for l in s.record.transcript][1:]
+    assert order == [("caller", "first"), ("assistant", "First answer."),
+                     ("caller", "second"), ("assistant", "Second answer.")]
+    await bridge.hangup()
+    await task
+
+
+async def test_a_line_typed_before_the_greeting_is_answered_after_it(engine):
+    greeting_done = asyncio.Event()
+    real = engine.tts.synthesize
+
+    async def slow_greeting(text, voice, lang="en"):
+        if text.startswith("Hi, this is"):
+            await asyncio.sleep(0.2)
+            greeting_done.set()
+        return await real(text, voice, lang)
+
+    engine.tts.synthesize = slow_greeting
+    engine.llm.responder = lambda m: "Okay."
+    bridge = QueueBridge("t1", "+919876543210")
+    session = engine.open_session(bridge)
+    turn = session.submit_text("Hello?", "en")  # before the call even started running
+    task = asyncio.create_task(engine.run_session(session))
+    await turn
+    assert [l.speaker for l in session.record.transcript] == ["assistant", "caller", "assistant"]
+    assert session.record.transcript[0].text.startswith("Hi, this is")
+    await bridge.hangup()
+    await task
+
+
+async def test_hang_up_cancels_the_turn_and_closes_the_llm_stream(engine):
+    llm = SlowLLM(30)
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = llm
+    s.submit_text("Where should I come?", "en")
+    await asyncio.wait_for(llm.started.wait(), 2)
+    await bridge.hangup()
+    await asyncio.wait_for(task, 2)  # doesn't wait 30 s for the model
+    assert llm.closed == 1
+    assert not any(t for t in s._tasks if not t.done())
+    assert assistant_lines(s) == [s.conv.opening_line()]
+
+
+async def test_status_events_follow_a_spoken_turn(engine):
+    engine.stt.next = [Transcription("Hi, is Rahul there?", "en")]
+    engine.llm.responder = lambda m: "May I know who's calling?"
+    bridge, s, task = await start_call(engine)
+    await s.wait_playback()  # the greeting
+    await asyncio.sleep(0)
+    await s.submit_recording(b"\x01\x00" * 16000, "en")
+    await s.wait_playback()
+    await asyncio.sleep(0)
+    states = [e["state"] for e in events(engine, "assistant_status")]
+    assert states == ["speaking", "listening", "transcribing", "thinking", "speaking", "listening"]
+    await bridge.hangup()
+    await task
+    assert events(engine, "assistant_status")[-1]["state"] == "idle"
+
+
+async def test_a_recording_is_one_utterance_in_the_chosen_language(engine):
+    heard = []
+
+    async def transcribe(pcm, language_hint=None):
+        heard.append((len(pcm), language_hint))
+        return Transcription("నాకు స్విగ్గీ ఆర్డర్ ఉంది, ఎక్కడికి రావాలి?", language_hint or "en")
+
+    engine.stt.transcribe = transcribe
+    engine.llm.responder = lambda m: "సరే, మీరు గేట్ దగ్గరకు రండి."
+    bridge, s, task = await start_call(engine)
+    recording = b"\x01\x00" * 16000 * 9  # 9 s with pauses would be cut up by the turn detector
+    await s.submit_recording(recording, "te")
+    assert heard == [(len(recording), "te")]
+    assert s.record.language == "te" and s.record.category == "delivery"
+    caller = [l for l in s.record.transcript if l.speaker == "caller"]
+    assert len(caller) == 1 and caller[0].lang == "te"
+    await bridge.hangup()
+    await task
+
+
+async def test_a_recording_with_no_words_is_reported(engine):
+    bridge, s, task = await start_call(engine)
+    await s.submit_recording(b"\x00\x00" * 16000)
+    assert "Couldn't make out any words" in events(engine, "turn_error")[0]["detail"]
+    await bridge.hangup()
+    await task
+
+
+async def test_the_practice_language_is_used_for_speech_and_english_letters(engine):
+    bridge, s, task = await start_call(engine)
+    s.language_hint = "te"
+    assert s._typed_language("nenu gate daggara unnanu") == "te"
+    assert s._typed_language("स्विगी से ऑर्डर है") == "hi"  # the script wins
+    s.language_hint = None
+    assert s._typed_language("Hello") == "en"
+    await bridge.hangup()
+    await task
+
+
+async def test_transcript_lines_have_ids_and_can_get_a_translation_later(engine):
+    bridge, s, task = await start_call(engine)
+    await s.handle_text("నమస్కారం", "te")
+    line = next(l for l in s.record.transcript if l.speaker == "caller")
+    assert line.id and line.lang == "te"
+    sent = events(engine, "transcript")
+    assert any(e["line"]["id"] == line.id and e["line"]["lang"] == "te" for e in sent)
+    await s.update_line(line, translation="Hello", translation_lang="en", english="Hello")
+    upd = events(engine, "transcript_update")[-1]
+    assert upd["line_id"] == line.id and upd["translation"] == "Hello" and upd["translation_lang"] == "en"
+    assert line.english == "Hello"
+    await bridge.hangup()
+    await task
+
+
+async def test_owner_words_are_said_once_and_codes_are_blocked(engine):
+    bridge, s, task = await start_call(engine)
+    assert await s.owner_say("I'll be down in two minutes", "en")
+    lines = [(l.speaker, l.text) for l in s.record.transcript]
+    assert lines[-1] == ("user", "I'll be down in two minutes")
+    assert not await s.owner_say("The OTP is 482913")
+    assert "482913" not in " ".join(l.text for l in s.record.transcript if l.speaker != "system")
+    assert events(engine, "sensitive_request")[-1]["kind"] == "blocked_output"
+    await bridge.hangup()
+    await task
+
+
+async def test_hold_reminder_is_in_the_callers_language(engine, settings):
+    settings.hold_timeout_s = 5
+    settings.hold_reminder_s = 0.1
+    replies = iter(["ఒక్క నిమిషం. [HOLD: Can the parcel be left with the guard?]", "సరే.", "Summary."])
+    engine.llm.responder = lambda m: next(replies)
+    bridge, s, task = await start_call(engine)
+    turn = s.submit_text("పార్సెల్ గార్డ్ దగ్గర ఇవ్వొచ్చా?", "te")
+    for _ in range(300):
+        if phrase("hold_reminder", "te") in assistant_lines(s):
+            break
+        await asyncio.sleep(0.01)
+    assert phrase("hold_reminder", "te") in assistant_lines(s)
+    assert await s.answer_hold(None, "Yes, leave it with the guard")
+    await turn
+    hold_states = [e for e in events(engine, "assistant_status") if e["state"] == "idle"]
+    assert hold_states and "waiting for Rahul" in hold_states[0]["detail"]
+    await bridge.hangup()
+    await task
+
+
+@pytest.mark.parametrize("reply, said, ended", [
+    ("", "fallback", False),                         # nothing at all
+    ("[CATEGORY: delivery]", "fallback", False),     # only a tag
+    ("[MESSAGE: Swiggy order at the gate]", "message_taken", False),  # confirmed, see below
+    ("[END_CALL]", "goodbye", True),                 # a small model hanging up without a word
+    ("[HOLD: Can the parcel be left with the guard?]", "filler", False),
+])
+async def test_a_reply_with_nothing_to_say_is_never_silence(engine, reply, said, ended):
+    replies = iter([reply])
+    engine.llm.responder = lambda m: next(replies, "Okay.")  # then the answer after a hold, the summary
+    bridge, s, task = await start_call(engine)
+    turn = s.submit_text("Swiggy order, where should I come?", "en")
+    for _ in range(200):
+        if len(assistant_lines(s)) > 1:
+            break
+        await asyncio.sleep(0.01)
+    assert assistant_lines(s)[1:] == [phrase(said, "en").replace("{user}", "Rahul")]
+    if said == "filler":
+        assert s.record.holds and await s.answer_hold(None, "Yes")
+    await turn
+    await s.wait_playback()
+    await asyncio.sleep(0.4)
+    assert task.done() == ended
+    await bridge.hangup()
+    await task
+
+
+async def test_a_reply_that_speaks_gets_no_extra_line(engine):
+    engine.llm.responder = lambda m: "Okay, bye! [END_CALL]"
+    bridge, s, task = await start_call(engine)
+    await s.handle_text("That's all, thanks.", "en")
+    assert assistant_lines(s)[1:] == ["Okay, bye!"]
+    await task
+
+
+class LoudVAD:
+    """Any frame that isn't silent is speech."""
+
+    def is_speech(self, frame: bytes) -> bool:
+        return any(frame)
+
+
+def speech(value: int, seconds: float) -> bytes:
+    return value.to_bytes(2, "little") * int(16000 * seconds)
+
+
+QUIET = b"\x00\x00" * int(16000 * 0.8)  # longer than the end-of-turn silence
+
+
+def words_in(pcm: bytes) -> str:
+    """What a fake speech model hears: fragments are told apart by their samples."""
+    found = [text for value, text in ((1000, "Hello, Amazon delivery."), (2000, "I'm at your gate."))
+             if value.to_bytes(2, "little") * 4 in pcm]
+    return " ".join(found)
+
+
+async def test_a_caller_who_pauses_mid_sentence_is_heard_whole(engine):
+    """The turn detector ends a turn at the caller's pause; when they go on before
+    the first part was understood, it is heard again with the rest, not dropped."""
+    heard = []
+
+    async def slow_transcribe(pcm, language_hint=None):
+        heard.append(words_in(pcm))
+        await asyncio.sleep(0.2)
+        return Transcription(words_in(pcm), "en")
+
+    engine.stt.transcribe = slow_transcribe
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = SlowLLM(0.0, "Please wait there, I'll tell Rahul.")
+    s.turns.vad = LoudVAD()
+    bridge.feed(speech(1000, 0.5) + QUIET + speech(2000, 0.5) + QUIET)
+    while not [l for l in s.record.transcript if l.speaker == "caller"] or s._turn_active:
+        await asyncio.sleep(0.01)
+    caller = [l.text for l in s.record.transcript if l.speaker == "caller"]
+    assert caller == ["Hello, Amazon delivery. I'm at your gate."]
+    assert s.conv.llm.calls[-1][-1]["content"] == "Hello, Amazon delivery. I'm at your gate."
+    await bridge.hangup()
+    await task
+
+
+async def test_words_the_model_already_has_are_not_heard_twice(engine):
+    heard = []
+
+    async def transcribe(pcm, language_hint=None):
+        heard.append(words_in(pcm))
+        return Transcription(words_in(pcm), "en")
+
+    engine.stt.transcribe = transcribe
+    bridge, s, task = await start_call(engine)
+    llm = s.conv.llm = SlowLLM(5.0, "Please wait there.")  # still thinking when the caller goes on
+    s.turns.vad = LoudVAD()
+    bridge.feed(speech(1000, 0.5) + QUIET)
+    await llm.started.wait()
+    llm.delay = 0.0
+    bridge.feed(speech(2000, 0.5) + QUIET)
+    while len(llm.calls) < 2 or s._turn_active:
+        await asyncio.sleep(0.01)
+    assert heard == ["Hello, Amazon delivery.", "I'm at your gate."]
+    # Both reach the model, once each (two caller turns in a row become one message).
+    assert llm.calls[-1][-1] == {"role": "user", "content": "Hello, Amazon delivery.\nI'm at your gate."}
+    await bridge.hangup()
+    await task
+
+
+async def test_a_message_tag_on_its_own_is_confirmed_not_apologised_for(engine):
+    # Small models often answer "please tell him to call me" with only the tag.
+    bridge, s, task = await start_call(engine)
+    s.conv.llm = ScriptedLLM(lambda m: "[MESSAGE: Suresh wants a call back about the report]")
+    await s.handle_text("This is Suresh. Ask Rahul to call me back about the report.", "en")
+    assert assistant_lines(s)[-1] == fill(phrase("message_taken", "en"), engine.store.profile.user_name)
+    await s.handle_text("That's all, thanks.", "en")
+    assert assistant_lines(s)[-1] == fill(phrase("message_again", "en"), engine.store.profile.user_name)
+    assert not events(engine, "turn_error")
+    assert phrase("fallback", "en") not in assistant_lines(s)
+    await bridge.hangup()
+    await task
+
+
+async def test_a_reply_that_turns_out_to_be_for_a_delivery_starts_again_with_the_details(engine):
+    # Written before the delivery details were in its prompt, a small model makes an
+    # address up; that reply is dropped and made again with the real details.
+    bridge, s, task = await start_call(engine)
+
+    def reply(messages):
+        if "DELIVERY:" in messages[0]["content"]:
+            return "[CATEGORY: delivery] It's Road No. 3, Banjara Hills, opposite Apollo Pharmacy."
+        return "[CATEGORY: delivery] Rahul's address is 45A, Park Road, near the big mall."
+
+    s.conv.llm = ScriptedLLM(reply)
+    await s.handle_text("Hello, is this the right number for Rahul? I'm nearby.", "en")
+    said = " ".join(assistant_lines(s))
+    assert "Park Road" not in said
+    assert "Road No. 3, Banjara Hills" in said
+    assert s.conv.category == "delivery"
+    assert not events(engine, "turn_error")
+    await bridge.hangup()
+    await task

@@ -1,0 +1,146 @@
+import { LinearGradient } from 'expo-linear-gradient';
+import { Pressable, StyleSheet, View } from 'react-native';
+
+import { Icon } from '../../lib/design';
+import { useTokens } from '../../lib/design/theme';
+import { availabilityText } from '../../lib/away';
+import { clockTime } from '../../lib/format';
+import { lineUnknown, noLineForCalls } from '../../lib/serverStatus';
+import type { Away, Health } from '../../lib/types';
+import { Switch } from '../ui/Switch';
+import { Text } from '../ui/Text';
+import { readinessText } from './ReadinessSheet';
+
+export interface StatusHeroProps {
+  assistantName: string;
+  enabled: boolean;
+  onToggle: (on: boolean) => void;
+  toggling?: boolean;
+  away: Away | null;
+  onAwayPress: () => void;
+  connected: boolean;
+  health: Health | null;
+  liveCalls: number;
+  /** Opens the details of what the server has ready. */
+  onReadinessPress?: () => void;
+  /** The owner can answer hold questions now (profile.available). */
+  available?: boolean;
+  onAvailableChange?: (on: boolean) => void;
+  availableBusy?: boolean;
+}
+
+/** Top of Today: is the assistant answering, is the owner away, is the server ready. */
+export function StatusHero({
+  assistantName,
+  enabled,
+  onToggle,
+  toggling,
+  away,
+  onAwayPress,
+  connected,
+  health,
+  liveCalls,
+  onReadinessPress,
+  available = false,
+  onAvailableChange,
+  availableBusy,
+}: StatusHeroProps) {
+  const t = useTokens();
+  const c = t.color;
+  const ready = readinessText(connected, health);
+  // On, but with no phone line for real calls (or a server too old to say) it
+  // must not say it is answering them.
+  const noLine = noLineForCalls(health);
+  const unknown = lineUnknown(health);
+  const title = !enabled
+    ? 'Assistant is off'
+    : liveCalls
+      ? `${assistantName} is on ${liveCalls === 1 ? 'a call' : `${liveCalls} calls`}`
+      : noLine
+        ? `${assistantName} is on · no phone line yet`
+        : unknown
+          ? `${assistantName} is on`
+          : `${assistantName} is answering`;
+  const subtitle = !enabled
+    ? 'Calls ring through as usual.'
+    : noLine
+      ? 'Real calls ring through as usual until your server has a phone line.'
+      : unknown
+        ? `Update your server to see whether real calls can reach ${assistantName}.`
+        : 'Calls are screened and answered for you.';
+  return (
+    <LinearGradient
+      colors={[c.heroFrom, c.heroTo]}
+      start={{ x: 0, y: 0 }}
+      end={{ x: 1, y: 1 }}
+      style={[styles.hero, { borderRadius: t.radius.xl }]}
+    >
+      <View style={styles.row}>
+        <View style={[styles.badge, { backgroundColor: c.onHeroOverlay }]}>
+          <Icon name={enabled ? 'headset' : 'moon-outline'} size={22} color={c.onHero} />
+        </View>
+        <View style={styles.flex}>
+          <Text variant="title2" color={c.onHero} numberOfLines={2}>
+            {title}
+          </Text>
+          <Text variant="subhead" color={c.onHero2}>
+            {subtitle}
+          </Text>
+        </View>
+        <Switch value={enabled} onValueChange={onToggle} busy={toggling} accessibilityLabel="Assistant answers calls" />
+      </View>
+      {enabled && onAvailableChange ? (
+        <View style={[styles.row, styles.available, { borderTopColor: c.onHeroOverlay }]} testID="availability">
+          <Icon name={available ? 'hand-left' : 'hand-left-outline'} size={20} color={c.onHero} />
+          <View style={styles.flex}>
+            <Text variant="callout" weight="semibold" color={c.onHero}>
+              I can answer questions now
+            </Text>
+            <Text variant="footnote" color={c.onHero2}>
+              {availabilityText(available, assistantName)}
+            </Text>
+          </View>
+          <Switch value={available} onValueChange={onAvailableChange} busy={availableBusy} accessibilityLabel="I can answer questions now" />
+        </View>
+      ) : null}
+      <View style={styles.chips}>
+        <Pressable
+          onPress={onAwayPress}
+          accessibilityRole="button"
+          accessibilityLabel={away ? `Away: ${away.message}. Change` : 'Set an away status'}
+          style={({ pressed }) => [styles.chip, { backgroundColor: c.onHeroOverlay, opacity: pressed ? 0.8 : 1 }]}
+        >
+          <Icon name={away ? 'moon' : 'moon-outline'} size={15} color={c.onHero} />
+          <Text variant="footnote" weight="medium" color={c.onHero} numberOfLines={1}>
+            {away ? `${away.message}${away.until && !/\buntil\b/i.test(away.message) ? ` · until ${clockTime(away.until)}` : ''}` : 'Set away'}
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={onReadinessPress}
+          disabled={!onReadinessPress}
+          accessibilityRole="button"
+          accessibilityLabel={`${ready.text}. Details`}
+          style={({ pressed }) => [styles.chip, { backgroundColor: c.onHeroOverlay, opacity: pressed ? 0.8 : 1 }]}
+        >
+          <View style={[styles.dot, { backgroundColor: ready.ok ? c.heroSuccess : c.heroWarning }]} />
+          <Text variant="footnote" weight="medium" color={c.onHero} numberOfLines={1} style={styles.shrink}>
+            {ready.text}
+          </Text>
+          {onReadinessPress ? <Icon name="chevron-forward" size={14} color={c.onHero2} /> : null}
+        </Pressable>
+      </View>
+    </LinearGradient>
+  );
+}
+
+const styles = StyleSheet.create({
+  hero: { padding: 20, gap: 16 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  available: { borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 14, alignItems: 'flex-start' },
+  badge: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
+  flex: { flex: 1, gap: 2 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, height: 32, paddingHorizontal: 12, borderRadius: 999, maxWidth: '100%' },
+  dot: { width: 8, height: 8, borderRadius: 4 },
+  shrink: { flexShrink: 1 },
+});
