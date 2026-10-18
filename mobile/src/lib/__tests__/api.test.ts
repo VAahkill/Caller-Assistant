@@ -177,9 +177,11 @@ describe('connect', () => {
     expect(currentConfig()?.url).toBe(TEST_URL);
     server.state.health.phone_line = { ...NO_LINE };
     expect((await connect(TEST_URL, MOCK_TOKEN)).message).toBe('Connected. Phone line: Not connected yet.');
-    // Servers that don't report a line: how they place calls.
+    // Servers that don't report a line (2.0) need updating for it.
     server.state.health = { ...server.state.health, phone_line: null, dialer: 'none' };
-    expect((await connect(TEST_URL, MOCK_TOKEN)).message).toBe('Connected. Outbound calling: not set up.');
+    expect((await connect(TEST_URL, MOCK_TOKEN)).message).toBe(
+      'Connected. Your server is an older version: update it to practise Call for me and see its phone line.',
+    );
     // The first version has no version in its health: it needs updating.
     server.state.health = { ...server.state.health, version: '' };
     expect((await connect(TEST_URL, MOCK_TOKEN)).message).toMatch(/^Connected\. Your server is still the first version/);

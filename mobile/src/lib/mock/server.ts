@@ -355,8 +355,10 @@ export class MockServer {
     const task: Task = { ...found, ...patch, status, updated_at: nowS() };
     this.state.tasks = this.state.tasks.map((t) => (t.id === id ? task : t));
     const who = task.target_name || task.number;
-    const title =
+    const said =
       status === 'dialing' ? `Calling ${who}...` : status === 'in_call' ? `Connected to ${who}` : `${who}: ${task.result || status}`;
+    // Like the server, so a practice task's notice is never taken for a real call.
+    const title = task.practice ? `Practice: ${said}` : said;
     this.liveSockets.forEach((sk) => sk.push({ event: 'task_update', task, task_id: id, title }, 0));
     return task;
   }
@@ -371,16 +373,18 @@ export class MockServer {
       number: input.number,
       goal: input.goal,
       target_name: input.target_name,
-      status: 'queued',
+      status: 'dialing',
       outcome: '',
       result: '',
-      call_id: null,
+      call_id: callId,
       created_at: at,
       updated_at: at,
       practice: true,
     };
+    // Like the server: made "dialing" with its call id, then connected as the call starts.
     this.state.tasks = [task, ...this.state.tasks];
-    return this.advanceTask(task.id, 'in_call', { call_id: callId }) ?? task;
+    this.advanceTask(task.id, 'dialing');
+    return this.advanceTask(task.id, 'in_call') ?? task;
   }
 
   /** Mock mode: a new task dials, talks and reports back over a few seconds. */

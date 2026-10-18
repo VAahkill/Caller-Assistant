@@ -5,10 +5,11 @@ import { Icon } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
 import {
   PHONE_LINE_GUIDE_URL,
-  SERVER_OUTDATED,
   SERVER_OUTDATED_TITLE,
   UPDATE_GUIDE_URL,
+  lineUnknown,
   phoneLineDetail,
+  serverOutdatedText,
   whyPhoneLine,
 } from '../../lib/serverStatus';
 import type { Health } from '../../lib/types';
@@ -22,22 +23,22 @@ export function openGuide(url: string): void {
   Linking.openURL(url).catch((e: unknown) => console.warn("Couldn't open the guide", url, e));
 }
 
-/** The server is the first version: what that breaks, and where the update steps are. */
-export function OutdatedServerBanner({ testID = 'server-outdated' }: { testID?: string }) {
+/** The server is older than 2.1: what that breaks, and where the update steps are. */
+export function OutdatedServerBanner({ health, testID = 'server-outdated' }: { health: Health | null | undefined; testID?: string }) {
   return (
     <Banner
       tone="warning"
       icon="cloud-download-outline"
       title={SERVER_OUTDATED_TITLE}
-      message={SERVER_OUTDATED}
+      message={serverOutdatedText(health)}
       action={{ label: 'Open the setup guide', onPress: () => openGuide(UPDATE_GUIDE_URL) }}
       testID={testID}
     />
   );
 }
 
-/** Today, when the server has no line for real calls: why the app can't answer
- *  them itself, what the server found, and the two ways forward. */
+/** Today, when the server has no line for real calls (or is too old to say): why
+ *  the app can't answer them itself, what the server found, and the two ways forward. */
 export function PhoneLineCard({ assistantName, health }: { assistantName: string; health: Health }) {
   const t = useTokens();
   const c = t.color;
@@ -48,7 +49,9 @@ export function PhoneLineCard({ assistantName, health }: { assistantName: string
           <Icon name="call-outline" size={20} color={c.onWarningContainer} />
         </View>
         <View style={styles.flex}>
-          <Text variant="headline">Real calls can't reach {assistantName} yet</Text>
+          <Text variant="headline">
+            {lineUnknown(health) ? `Real calls need a phone line` : `Real calls can't reach ${assistantName} yet`}
+          </Text>
           <Text variant="subhead" color="text2">
             {whyPhoneLine(assistantName)}
           </Text>

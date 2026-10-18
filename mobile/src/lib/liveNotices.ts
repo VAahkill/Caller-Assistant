@@ -3,6 +3,7 @@
 // wording and the channel of each one can be tested.
 
 import type { ServerEvent } from './events';
+import { taskUpdateText } from './tasks';
 
 /** normal: the "calls" channel. urgent: the "calls-urgent" channel (max
  *  priority, through Do Not Disturb). hold: urgent, plus the reply box. */
@@ -64,7 +65,7 @@ export function liveNotice(ev: ServerEvent): LiveNotice | null {
     case 'task_update':
       // A practice task is the owner's own test, played in the app: nothing to announce.
       return !ev.task.practice && (ev.task.status === 'done' || ev.task.status === 'failed')
-        ? { title: 'Call task finished', body: ev.title, data: { task_id: ev.task.id }, kind: 'normal' }
+        ? { title: 'Call task finished', body: taskUpdateText(ev.task, ev.title), data: { task_id: ev.task.id }, kind: 'normal' }
         : null;
     default:
       return null;

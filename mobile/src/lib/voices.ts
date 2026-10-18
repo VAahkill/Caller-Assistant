@@ -175,9 +175,11 @@ export function demoProblem(probe: MediaProbe, ctx: DemoCheckContext): { retry: 
   }
   if (status === 401 || status === 403) return fail("Your server didn't accept this phone's token. Pair the phone again in Settings.");
   if (status === 404) return fail(ctx.outdated ? DEMO_OUTDATED : "This voice isn't on your server any more. Pull down to refresh the list.");
-  if (status === 409 || status === 503) return fail(detail || "Your server can't make this demo right now. Try again in a minute.");
-  if (status >= 500) return fail(`Your server had a problem making this demo (error ${status}). Try again in a minute.`);
-  return fail(`Your server turned down this demo (error ${status}).${detail ? ` ${detail}` : ''}`);
+  // 409 says, in plain words, that a recorded voice is still being prepared.
+  if (status === 409) return fail(detail || "This voice isn't ready yet. Try again in a minute.");
+  // Other errors carry the server's own technical reason, which is for its log.
+  if (status >= 500) return fail("Your server couldn't make this demo. Its log says why; try again in a minute.");
+  return fail(`Your server turned down this demo (error ${status}).`);
 }
 
 // ------------------------------------------------------------ recording

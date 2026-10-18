@@ -33,14 +33,13 @@ export const LINE_READY: PhoneLine = {
   detail: 'A phone is connected by Bluetooth and ready for calls.',
 };
 
-/** What a server with no line says, e.g. in Docker Desktop on Windows. */
+/** What a server with no line says (its NO_LINE), e.g. in Docker Desktop on Windows. */
 export const NO_LINE: PhoneLine = {
   kind: 'none',
   ok: false,
   inbound: false,
   outbound: false,
-  detail:
-    'No phone line is connected. Calls need a phone paired by Bluetooth with a Linux computer, or a USB SIM modem with Asterisk; Docker Desktop on Windows can use neither.',
+  detail: "No phone line is set up on your server yet, so it can't answer your real calls or make calls for you. Practice calls in the app work without one.",
 };
 
 export const LIVE_CALL_ID = 'call-live-swiggy';

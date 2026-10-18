@@ -77,6 +77,12 @@ export function useDemoPlayer(onError?: (message: string) => void, options: Demo
       const found = demoProblem(probe, { server: currentConfig()?.url ?? 'its address', outdated: outdatedNow.current, retried });
       if (!found) return;
       if (found.retry) {
+        // The player may have started on its own meanwhile (it waited for the same
+        // demo); replacing it would restart the clip.
+        if (player.playing) {
+          dispatch({ type: 'checked', key, retry: true });
+          return;
+        }
         try {
           staleError.current = latestStatusError.current ?? null;
           player.replace(source);

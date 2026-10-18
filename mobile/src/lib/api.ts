@@ -8,8 +8,7 @@ import {
   normalizeTask,
   normalizeVoice,
 } from './normalize';
-import { dialerName } from './format';
-import { phoneLineText, serverOutdated } from './serverStatus';
+import { firstVersion, phoneLineText, serverOutdated } from './serverStatus';
 import { storage } from './storage';
 import { getTransport, MOCK_MODE, type ResponseLike } from './transport';
 import type {
@@ -441,12 +440,13 @@ export async function connect(typedUrl: string, token: string): Promise<ConnectR
   }
   try {
     const profile = await api.profile();
-    if (serverOutdated(health)) {
+    if (firstVersion(health)) {
       return { ok: true, url, health, profile, message: 'Connected. Your server is still the first version: update it so voice demos and Call for me work.' };
     }
-    if (health.phone_line) return { ok: true, url, health, profile, message: `Connected. Phone line: ${phoneLineText(health)}.` };
-    const dialer = health.dialer === 'none' ? 'not set up' : dialerName(health.dialer);
-    return { ok: true, url, health, profile, message: `Connected. Outbound calling: ${dialer}.` };
+    if (serverOutdated(health)) {
+      return { ok: true, url, health, profile, message: 'Connected. Your server is an older version: update it to practise Call for me and see its phone line.' };
+    }
+    return { ok: true, url, health, profile, message: `Connected. Phone line: ${phoneLineText(health)}.` };
   } catch (e) {
     return { ok: false, url, message: e instanceof Error ? e.message : String(e) };
   }

@@ -193,11 +193,16 @@ describe('without a phone line', () => {
   });
 });
 
-test('an older server that reports no line goes by how it places calls', async () => {
+test("an older server that reports no line goes by how it places calls, and doesn't offer practice it can't run", async () => {
   server.state.health = { ...server.state.health, phone_line: null, dialer: 'none' };
   await open();
+  expect(await screen.findByTestId('server-outdated')).toBeTruthy();
   const banner = within(await screen.findByTestId('no-line'));
-  expect(banner.getByText(/^Your server can't place calls yet\. You can still practise/)).toBeTruthy();
+  expect(banner.getByText('Your server is too old to say whether it has a phone line. Update it to find out.')).toBeTruthy();
+  expect(screen.queryByText(/You can still practise/)).toBeNull();
+  // Before 2.1 the server ignores a practice goal, so neither practice button is shown.
+  expect(screen.queryByTestId('practise-first')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Practise this call' })).toBeNull();
 });
 
 test('with a phone line, the call can still be practised first', async () => {

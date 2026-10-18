@@ -123,3 +123,8 @@ export function taskResultText(task: Pick<Task, 'status' | 'result'>): string {
   if (task.status === 'failed' && RAW_DIAL_ERRORS.some((re) => re.test(result))) return DIAL_FAILED;
   return result;
 }
+
+/** A task update's title for a notification, with the same plain words as the card. */
+export function taskUpdateText(task: Pick<Task, 'status'>, title: string): string {
+  return task.status === 'failed' && RAW_DIAL_ERRORS.some((re) => re.test(title)) ? DIAL_FAILED : title;
+}

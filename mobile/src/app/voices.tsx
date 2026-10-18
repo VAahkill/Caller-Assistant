@@ -26,7 +26,7 @@ import { useTokens } from '../lib/design/theme';
 import { duration, timeAgo } from '../lib/format';
 import { languageName } from '../lib/languages';
 import { useLive } from '../lib/live';
-import { serverOutdated } from '../lib/serverStatus';
+import { firstVersion, serverOutdated } from '../lib/serverStatus';
 import type { VoiceInfo, VoiceStatus } from '../lib/types';
 import { STATUS_LABEL, choosePatch, chosenVoiceId, samplePathFor, statusChanges, suggestName, voiceGroups } from '../lib/voices';
 
@@ -47,6 +47,8 @@ export default function Voices() {
   const voices = useResource(() => api.voices(), voicesKey);
   const health = useResource(() => api.health(), connected);
   const outdated = serverOutdated(health.data);
+  // Only the first version lacks the demos this app plays.
+  const demosOutdated = firstVersion(health.data);
   const profile = useProfile();
   const [recording, setRecording] = useState(false);
   const [recordSession, setRecordSession] = useState(0);
@@ -54,7 +56,7 @@ export default function Voices() {
   const [more, setMore] = useState(false);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const onDemoError = useCallback((message: string) => toast.error(message), [toast]);
-  const demo = useDemoPlayer(onDemoError, { outdated });
+  const demo = useDemoPlayer(onDemoError, { outdated: demosOutdated });
 
   const p = profile.data;
   const assistant = p?.assistant_name || 'your assistant';
@@ -160,7 +162,7 @@ export default function Voices() {
 
   return (
     <Screen bottomInset refreshing={voices.refreshing} onRefresh={() => void Promise.all([voices.refresh(), health.reload()])} testID="voices">
-      {outdated ? <OutdatedServerBanner /> : null}
+      {outdated ? <OutdatedServerBanner health={health.data} /> : null}
       <Text variant="subhead" color="text2">
         Pick how {assistant} sounds for each language your callers speak. Tap play to hear a voice; tap again to stop.
       </Text>

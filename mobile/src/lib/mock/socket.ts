@@ -418,7 +418,7 @@ export class MockSimulateSocket extends MockSocketBase {
       this.server.advanceTask(
         this.task.id,
         said ? 'done' : 'failed',
-        said ? { outcome: 'conveyed', result: `They said: "${said}"` } : { outcome: 'no_answer', result: 'Nobody answered the practice call.' },
+        said ? { outcome: 'conveyed', result: `They said: "${said}"` } : { outcome: 'failed', result: 'The call ended before a result.' },
       );
     }
   }

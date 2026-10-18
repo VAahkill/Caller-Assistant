@@ -14,7 +14,7 @@ import { api } from '../../lib/api';
 import { languageName } from '../../lib/languages';
 import { useLive } from '../../lib/live';
 import { stepHref } from '../../lib/onboarding';
-import { serverOutdated } from '../../lib/serverStatus';
+import { firstVersion } from '../../lib/serverStatus';
 import type { VoiceInfo } from '../../lib/types';
 import { choosePatch, chosenVoiceId, voiceGroups } from '../../lib/voices';
 
@@ -30,7 +30,7 @@ export default function VoiceStep() {
   const health = useResource(() => api.health());
   const profile = useProfile();
   const onDemoError = useCallback((message: string) => toast.error(message), [toast]);
-  const demo = useDemoPlayer(onDemoError, { outdated: serverOutdated(health.data) });
+  const demo = useDemoPlayer(onDemoError, { outdated: firstVersion(health.data) });
   const p = profile.data;
 
   const groups = useMemo(

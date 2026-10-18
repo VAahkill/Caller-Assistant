@@ -167,12 +167,13 @@ describe('why a demo did not play', () => {
     expect(message(demoProblem(answered(401), ctx))).toBe("Your server didn't accept this phone's token. Pair the phone again in Settings.");
     expect(message(demoProblem(answered(404, 'No such voice.'), ctx))).toBe("This voice isn't on your server any more. Pull down to refresh the list.");
     expect(message(demoProblem(answered(409, 'This voice is still being prepared.'), ctx))).toBe('This voice is still being prepared.');
-    expect(message(demoProblem(answered(503, "Couldn't make this voice's demo (RuntimeError: no audio)"), ctx))).toBe(
-      "Couldn't make this voice's demo (RuntimeError: no audio)",
-    );
-    expect(message(demoProblem(answered(503), ctx))).toBe("Your server can't make this demo right now. Try again in a minute.");
-    expect(message(demoProblem(answered(500), ctx))).toBe('Your server had a problem making this demo (error 500). Try again in a minute.');
-    expect(message(demoProblem(answered(422, 'Unknown language.'), ctx))).toBe('Your server turned down this demo (error 422). Unknown language.');
+    expect(message(demoProblem(answered(409), ctx))).toBe("This voice isn't ready yet. Try again in a minute.");
+    // The server's technical reason (an older server's 503 named the exception) stays out of the toast.
+    const broken = "Your server couldn't make this demo. Its log says why; try again in a minute.";
+    expect(message(demoProblem(answered(503, "Couldn't make this voice's demo (RuntimeError: no audio)"), ctx))).toBe(broken);
+    expect(message(demoProblem(answered(503), ctx))).toBe(broken);
+    expect(message(demoProblem(answered(500), ctx))).toBe(broken);
+    expect(message(demoProblem(answered(422, 'Unknown language.'), ctx))).toBe('Your server turned down this demo (error 422).');
   });
 
   test('the demo is ready now: play it again once, then say the phone could not', () => {

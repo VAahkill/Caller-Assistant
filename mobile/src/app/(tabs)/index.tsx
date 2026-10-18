@@ -18,7 +18,7 @@ import { useTokens } from '../../lib/design/theme';
 import { greeting, isToday, prettyNumber, timeAgo } from '../../lib/format';
 import { useLive, type SecurityAlert } from '../../lib/live';
 import { isPracticeCall, isPracticeNumber } from '../../lib/practiceCalls';
-import { noLineForCalls, serverOutdated } from '../../lib/serverStatus';
+import { assistantOnText, lineUnknown, noLineForCalls, serverOutdated } from '../../lib/serverStatus';
 import type { CallerMessage } from '../../lib/types';
 
 const QUICK_ACTIONS: { icon: IconName; label: string; href: Href }[] = [
@@ -101,7 +101,7 @@ export default function Today() {
 
   const toggle = async (enabled: boolean) => {
     setToggling(true);
-    await profile.patch({ enabled }, enabled ? `${assistant} is answering calls.` : 'Calls will ring through as usual.');
+    await profile.patch({ enabled }, enabled ? assistantOnText(assistant, health.data) : 'Calls will ring through as usual.');
     setToggling(false);
   };
 
@@ -161,8 +161,8 @@ export default function Today() {
         <Skeleton height={148} radius={t.radius.xl} />
       )}
 
-      {serverOutdated(h) ? <OutdatedServerBanner /> : null}
-      {h && noLineForCalls(h) ? <PhoneLineCard assistantName={p?.assistant_name || 'your assistant'} health={h} /> : null}
+      {serverOutdated(h) ? <OutdatedServerBanner health={h} /> : null}
+      {h && (noLineForCalls(h) || lineUnknown(h)) ? <PhoneLineCard assistantName={p?.assistant_name || 'your assistant'} health={h} /> : null}
 
       {needsYou ? (
         <Section title={`Needs you · ${needsYou}`} grouped={false} testID="needs-you">

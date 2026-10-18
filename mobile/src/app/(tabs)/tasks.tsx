@@ -32,7 +32,7 @@ import { TASK_STATUS } from '../../lib/labels';
 import { useLive } from '../../lib/live';
 import { normalizeNumber } from '../../lib/phone';
 import { PRACTICE_NUMBER, isPracticeNumber } from '../../lib/practiceCalls';
-import { PHONE_LINE_GUIDE_URL, canCallOut, phoneLineDetail, serverOutdated } from '../../lib/serverStatus';
+import { PHONE_LINE_GUIDE_URL, canCallOut, canPractiseCalls, phoneLineDetail, serverOutdated } from '../../lib/serverStatus';
 import { TASK_KINDS, TASK_TEMPLATES, isTaskActive, taskResultText, taskTimeline, type TaskTemplate } from '../../lib/tasks';
 import type { Task, TaskKind } from '../../lib/types';
 
@@ -140,6 +140,8 @@ export default function CallForMe() {
   const p = profile.data;
   const assistant = p?.assistant_name || 'Your assistant';
   const callable = canCallOut(health.data);
+  // Servers older than 2.1 would run a practice Call for me as an ordinary practice call.
+  const practisable = canPractiseCalls(health.data);
   const kindInfo = TASK_KINDS.find((k) => k.value === kind);
 
   const card = (task: Task) => {
@@ -184,13 +186,17 @@ export default function CallForMe() {
     <Screen topInset refreshing={tasks.refreshing} onRefresh={() => void Promise.all([tasks.refresh(), health.reload()])} testID="tasks">
       <LargeHeader title="Call for me" subtitle={`${assistant} calls a place for you, gets it done and tells you how it went.`} />
 
-      {serverOutdated(health.data) ? <OutdatedServerBanner /> : null}
+      {serverOutdated(health.data) ? <OutdatedServerBanner health={health.data} /> : null}
       {!callable ? (
         <Banner
           tone="warning"
           icon="call-outline"
           title="No phone line yet"
-          message={`${phoneLineDetail(health.data)} You can still practise: you play the place, and ${assistant} calls you here in the app.`}
+          message={
+            practisable
+              ? `${phoneLineDetail(health.data)} You can still practise: you play the place, and ${assistant} calls you here in the app.`
+              : phoneLineDetail(health.data)
+          }
           action={{ label: 'How to connect a phone line', onPress: () => openGuide(PHONE_LINE_GUIDE_URL) }}
           testID="no-line"
         />
@@ -276,7 +282,7 @@ export default function CallForMe() {
             </Text>
           </View>
         ) : null}
-        {callable ? (
+        {callable || !practisable ? (
           <>
             <Button
               title={name.trim() ? `Call ${name.trim()}` : 'Start the call'}
@@ -288,16 +294,18 @@ export default function CallForMe() {
               onPress={() => void submit()}
               testID="start-task"
             />
-            <Button
-              title="Practise first"
-              icon="headset-outline"
-              variant="ghost"
-              size="sm"
-              disabled={!goal.trim()}
-              onPress={practiseForm}
-              accessibilityHint={`You play the place and ${assistant} calls you in the app`}
-              testID="practise-first"
-            />
+            {practisable ? (
+              <Button
+                title="Practise first"
+                icon="headset-outline"
+                variant="ghost"
+                size="sm"
+                disabled={!goal.trim()}
+                onPress={practiseForm}
+                accessibilityHint={`You play the place and ${assistant} calls you in the app`}
+                testID="practise-first"
+              />
+            ) : null}
           </>
         ) : (
           <Button

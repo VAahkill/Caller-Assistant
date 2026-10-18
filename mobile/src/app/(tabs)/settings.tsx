@@ -26,7 +26,7 @@ import { useThemePreference, type ThemePreference } from '../../lib/design/theme
 import { checkHealth, diagnosticsText, LOGS_COMMAND, speedWord } from '../../lib/diagnostics';
 import { clockTime } from '../../lib/format';
 import { useLive } from '../../lib/live';
-import { phoneLineText, serverOutdated } from '../../lib/serverStatus';
+import { firstVersion, phoneLineText, serverOutdated } from '../../lib/serverStatus';
 import { allowNotifications, notificationAccess, sendTestNotification, type NotificationAccess } from '../../lib/notifications';
 
 const ACCESS_WORD: Record<NotificationAccess, string> = {
@@ -137,7 +137,7 @@ export default function Settings() {
             </View>
           ) : serverOutdated(h) ? (
             <View style={styles.pad}>
-              <OutdatedServerBanner />
+              <OutdatedServerBanner health={h} />
             </View>
           ) : null}
           <ListRow icon="pulse-outline" title="Live updates" value={live.connected ? 'On' : 'Reconnecting'} />
@@ -232,7 +232,7 @@ export default function Settings() {
 
       <Section title="About and diagnostics" testID="about">
         <ListRow icon="phone-portrait-outline" title="App version" value={appVersion || 'Unknown'} />
-        {h ? <ListRow icon="server-outline" title="Server version" value={h.version || (serverOutdated(h) ? 'First version' : 'Unknown')} /> : null}
+        {h ? <ListRow icon="server-outline" title="Server version" value={h.version || (firstVersion(h) ? 'First version' : 'Unknown')} /> : null}
         {h?.llm_model ? <ListRow icon="sparkles-outline" title="Language model" subtitle={h.llm_model} /> : null}
         <ListRow
           icon="document-text-outline"

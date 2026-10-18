@@ -5,7 +5,7 @@ import { Icon } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
 import { availabilityText } from '../../lib/away';
 import { clockTime } from '../../lib/format';
-import { noLineForCalls } from '../../lib/serverStatus';
+import { lineUnknown, noLineForCalls } from '../../lib/serverStatus';
 import type { Away, Health } from '../../lib/types';
 import { Switch } from '../ui/Switch';
 import { Text } from '../ui/Text';
@@ -48,20 +48,26 @@ export function StatusHero({
   const t = useTokens();
   const c = t.color;
   const ready = readinessText(connected, health);
-  // On, but with no phone line for real calls it must not say it is answering them.
+  // On, but with no phone line for real calls (or a server too old to say) it
+  // must not say it is answering them.
   const noLine = noLineForCalls(health);
+  const unknown = lineUnknown(health);
   const title = !enabled
     ? 'Assistant is off'
     : liveCalls
       ? `${assistantName} is on ${liveCalls === 1 ? 'a call' : `${liveCalls} calls`}`
       : noLine
         ? `${assistantName} is on · no phone line yet`
-        : `${assistantName} is answering`;
+        : unknown
+          ? `${assistantName} is on`
+          : `${assistantName} is answering`;
   const subtitle = !enabled
     ? 'Calls ring through as usual.'
     : noLine
       ? 'Real calls ring through as usual until your server has a phone line.'
-      : 'Calls are screened and answered for you.';
+      : unknown
+        ? `Update your server to see whether real calls can reach ${assistantName}.`
+        : 'Calls are screened and answered for you.';
   return (
     <LinearGradient
       colors={[c.heroFrom, c.heroTo]}

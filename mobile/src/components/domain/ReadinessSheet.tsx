@@ -2,7 +2,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { Icon, type IconName } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
-import { noLineForCalls, phoneLineText, serverOutdated, SERVER_OUTDATED, UPDATE_GUIDE_URL } from '../../lib/serverStatus';
+import { noLineForCalls, phoneLineText, serverOutdated, serverOutdatedText, UPDATE_GUIDE_URL } from '../../lib/serverStatus';
 import type { Health, ReadyFlags } from '../../lib/types';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
@@ -92,7 +92,7 @@ export function ReadinessSheet({ visible, onClose, connected, health, error, ref
       {serverOutdated(health) ? (
         <View style={[styles.note, { backgroundColor: c.warningContainer, borderRadius: t.radius.md }]} testID="ready-outdated">
           <Text variant="subhead" color={c.onWarningContainer}>
-            {SERVER_OUTDATED}
+            {serverOutdatedText(health)}
           </Text>
           <View style={styles.noteAction}>
             <Button title="Open the setup guide" size="sm" icon="open-outline" onPress={() => openGuide(UPDATE_GUIDE_URL)} />

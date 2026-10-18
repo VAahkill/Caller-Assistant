@@ -686,7 +686,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
             raise HTTPException(409, str(e)) from e
         except Exception as e:
             log.exception("Couldn't make the demo for %s", voice_id)
-            raise HTTPException(503, f"Couldn't make this voice's demo ({e.__class__.__name__}: {e})"[:300]) from e
+            raise HTTPException(503, "Your server couldn't make this voice's demo. Its log says why.") from e
         etag = f'"{key}"'
         cache = "public, max-age=31536000, immutable" if v == key else "no-cache"
         headers = {"ETag": etag, "Cache-Control": cache}

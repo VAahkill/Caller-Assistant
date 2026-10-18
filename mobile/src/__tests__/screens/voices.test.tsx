@@ -245,16 +245,28 @@ describe('demos', () => {
     expect(row.queryByText("Couldn't play. Tap to try again.")).toBeNull();
   });
 
-  test('a first-version server: a notice at the top, and a missing demo is explained as that', async () => {
+  test('a first-version server: a notice at the top, demos made on demand, and a failing one explained as that', async () => {
     const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    // As the first version sends them: no version or phone line in health, and voices
+    // without sample_url or status, so demos come from /assistant/speak.
     server.state.health = { ok: true, dialer: 'asterisk', active_calls: 0 } as unknown as typeof server.state.health;
-    server.audioReplies.set('kokoro:af_bella', { status: 404, body: { detail: 'Not Found' } });
+    server.state.voices = server.state.voices.map(({ sample_url: _u, status: _s, ...v }) => v) as unknown as typeof server.state.voices;
     await open();
     const banner = within(await screen.findByTestId('server-outdated'));
     expect(banner.getByText('Your server needs updating')).toBeTruthy();
+    expect(preload).not.toHaveBeenCalled(); // made on demand there: preloading them all swamped it
+    (player.replace as jest.Mock).mockClear();
     await fireEvent.press(screen.getByTestId('play-kokoro:af_bella-en'));
-    await act(async () => setPlayerStatus({ error: 'Response code: 404' }));
+    expect(player.replace).toHaveBeenCalledTimes(1);
+    expect((player.replace as jest.Mock).mock.calls[0][0].uri).toMatch(/\/assistant\/speak\?voice=kokoro%3Aaf_bella&lang=en&text=/);
+    // The player fails; the check finds the server answering, so it plays again once...
+    await act(async () => setPlayerStatus({ error: 'Source error' }));
+    await waitFor(() => expect(player.replace).toHaveBeenCalledTimes(2));
+    await act(async () => setPlayerStatus({ error: null }));
+    // ...and when that fails too, the old server is named as the reason.
+    await act(async () => setPlayerStatus({ error: 'Source error again' }));
     expect(await screen.findByText(/^Your server is still the first version, which can't play voice demos properly\./)).toBeTruthy();
+    expect(player.replace).toHaveBeenCalledTimes(2);
     await fireEvent.press(banner.getByRole('button', { name: 'Open the setup guide' }));
     expect(openURL).toHaveBeenCalledWith(expect.stringMatching(/TRY_IT\.md#updating-from-the-first-version$/));
     openURL.mockRestore();

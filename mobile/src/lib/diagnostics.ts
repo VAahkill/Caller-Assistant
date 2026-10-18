@@ -4,7 +4,7 @@
 
 import { api, type ServerConfig } from './api';
 import { dialerName } from './format';
-import { serverOutdated } from './serverStatus';
+import { firstVersion } from './serverStatus';
 import type { Health } from './types';
 
 export interface HealthCheck {
@@ -53,7 +53,7 @@ export function diagnosticsText({ appVersion, platform, config, connected, check
   ];
   if (h) {
     lines.push(
-      `Server version: ${h.version || (serverOutdated(h) ? 'the first version (needs updating)' : 'unknown')}`,
+      `Server version: ${h.version || (firstVersion(h) ? 'the first version (needs updating)' : 'unknown')}`,
       `Response time: ${check.ms} ms`,
       `Parts: ${ready}`,
       `Language model: ${h.llm_model || 'not reported'}`,

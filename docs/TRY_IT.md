@@ -483,9 +483,11 @@ voice demos. Update the server and the app with the steps in
 
 **Call for me says "No phone line" or "All connection attempts failed".** Your
 server has no phone line connected, so it can't place real calls. "All connection
-attempts failed" is how the first version said it: its settings pointed it at a GSM
-modem line (Asterisk) that isn't there. Put a `#` before the `OPENCALL_ASTERISK_`
-lines in `.env` (step 2 of the update) and run `docker compose up -d`. Then tap
+attempts failed" is how older versions said it: their settings pointed them at a GSM
+modem line (Asterisk) that isn't there. Do the whole
+[update](#updating-from-the-first-version), including step 2, which puts a `#` before
+the `OPENCALL_ASTERISK_` lines in `.env`, and finish with `docker compose up -d --build`.
+When <http://localhost:8000/health> shows `"version":"2.1.0"`, tap
 **Practise this call** on the **Call for me** tab: your assistant calls you in the app,
 you play the place, and you see the result as for a real call.
 

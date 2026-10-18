@@ -171,6 +171,7 @@ describe('the phone line', () => {
 
 test('a first-version server is pointed to the update steps', async () => {
   server.state.health = { ...server.state.health, version: '', phone_line: null, ready: null };
+  server.state.calls = server.state.calls.filter((x) => x.id !== LIVE_CALL_ID);
   await renderScreen(<Today />);
   const banner = within(await screen.findByTestId('server-outdated'));
   expect(banner.getByText('Your server needs updating')).toBeTruthy();
@@ -178,7 +179,12 @@ test('a first-version server is pointed to the update steps', async () => {
   await fireEvent.press(banner.getByRole('button', { name: 'Open the setup guide' }));
   expect(openURL).toHaveBeenCalledWith(UPDATE_GUIDE_URL);
   openURL.mockRestore();
-  // Servers this old don't report a line, so no card is guessed.
-  expect(screen.queryByTestId('phone-line')).toBeNull();
+  // Servers this old don't report a line: Today doesn't claim real calls are answered.
+  const card = within(screen.getByTestId('phone-line'));
+  expect(card.getByText('Real calls need a phone line')).toBeTruthy();
+  expect(card.getByText('Your server is too old to say whether it has a phone line. Update it to find out.')).toBeTruthy();
+  expect(screen.getByText('Ava is on')).toBeTruthy();
+  expect(screen.getByText('Update your server to see whether real calls can reach Ava.')).toBeTruthy();
+  expect(screen.queryByText(/is answering/)).toBeNull();
   expect(screen.getByRole('button', { name: 'Connected · server needs updating. Details' })).toBeTruthy();
 });

@@ -116,6 +116,9 @@ function taskFrom(params: PracticeParams): (PracticeTask & { number: string }) |
 
 type Phase = 'idle' | 'connecting' | 'live' | 'ending' | 'ended';
 
+const PRACTICE_TASK_OUTDATED =
+  'Your server needs updating to practise Call for me. Update it with the steps under "Updating from the first version" in the setup guide.';
+
 /** After a hang-up the server sends the summary and closes; past this, stop waiting. */
 const ENDING_TIMEOUT_MS = 30000;
 type Role = 'caller' | 'owner';
@@ -253,6 +256,13 @@ export default function Practice() {
       starting.current = null;
       if (attempt.signal.aborted) {
         c.hangup();
+        return;
+      }
+      if (task && !c.taskId) {
+        // A server older than 2.1 ignores the goal and runs an ordinary practice call.
+        c.hangup();
+        setPhase('idle');
+        setProblem(PRACTICE_TASK_OUTDATED);
         return;
       }
       call.current = c;
@@ -457,7 +467,7 @@ export default function Practice() {
           <HoldQuestionCard
             callId={view!.record.id}
             holdId={hold.id}
-            who={task ? `You (${place})` : 'You (caller)'}
+            who={task ? task.target_name || 'The place' : 'You (caller)'}
             question={hold.question}
             at={hold.asked_at}
             isTask={!!task}
