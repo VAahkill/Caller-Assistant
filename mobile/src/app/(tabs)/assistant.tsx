@@ -16,7 +16,7 @@ import { countryLabel } from '../../lib/countries';
 import { Icon } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
 import { setupChecklist, voiceSummary, type SetupItem } from '../../lib/hub';
-import { greetingLine } from '../../lib/labels';
+import { greetingLine, ownName } from '../../lib/labels';
 import { languageName } from '../../lib/languages';
 import { useLive } from '../../lib/live';
 import { isExpired } from '../../lib/rules';
@@ -57,7 +57,7 @@ export default function AssistantHub() {
               icon="person-circle-outline"
               iconTone="primary"
               title="Name and greeting"
-              subtitle={`${p.assistant_name} answers for ${p.user_name || 'you'}: "${greetingLine(p.user_name, p.assistant_name, awayActive(p.away) ? p.away : null)}"`}
+              subtitle={`${p.assistant_name} answers for ${ownName(p.user_name).trim() || 'you'}: "${greetingLine(p.user_name, p.assistant_name, awayActive(p.away) ? p.away : null)}"`}
               chevron
               onPress={go('/persona')}
             />

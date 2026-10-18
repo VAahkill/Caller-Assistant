@@ -145,7 +145,12 @@ describe('the phone line', () => {
     expect(screen.getByText('Real calls ring through as usual until your server has a phone line.')).toBeTruthy();
     const card = within(screen.getByTestId('phone-line'));
     expect(card.getByText("Real calls can't reach Ava yet")).toBeTruthy();
-    expect(card.getByText("Android doesn't let apps answer or speak on phone calls, so calls reach Ava through your server's phone line.")).toBeTruthy();
+    expect(
+      card.getByText(
+        "Android doesn't let apps answer or speak on phone calls, so calls reach Ava through your server's phone line. " +
+          "The free lines (Bluetooth to your phone, or a USB SIM modem) need the server on a Linux computer: Docker Desktop on Windows or a Mac can't reach them.",
+      ),
+    ).toBeTruthy();
     expect(card.getByText(NO_LINE.detail)).toBeTruthy();
     await fireEvent.press(card.getByRole('button', { name: 'Try a practice call' }));
     expect(push).toHaveBeenCalledWith('/practice');

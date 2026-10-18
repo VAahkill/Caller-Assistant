@@ -3,11 +3,13 @@
 A normal Android or iPhone app cannot hear or speak on cellular calls (see
 [RESEARCH.md](RESEARCH.md#telephony-reality-check-android)), so the assistant needs
 another way onto the line. OpenCall supports two routes that cost nothing to run.
-Neither needs a VoIP provider, a paid phone number or a subscription.
+Neither needs a VoIP provider, a paid phone number or a subscription. Both need the
+server on a Linux computer; on Windows, see
+[If your computer runs Windows](#if-your-computer-runs-windows).
 
 | | Bluetooth link | GSM modem |
 |---|---|---|
-| Extra hardware | None (any Bluetooth-capable PC, laptop or Raspberry Pi) | A voice-capable USB GSM/LTE modem, one-time purchase |
+| Extra hardware | None (any Bluetooth-capable PC, laptop or Raspberry Pi running Linux) | A voice-capable USB GSM/LTE modem, one-time purchase |
 | Extra SIM | No, uses your own number | Yes, any cheap prepaid SIM |
 | Recurring cost | Nothing | Only the SIM's validity recharge |
 | Works when you're away from home | No, the phone must be in Bluetooth range | Yes, via call forwarding |

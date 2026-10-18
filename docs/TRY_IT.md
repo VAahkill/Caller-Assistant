@@ -422,17 +422,21 @@ know**, **Who gets through** and **Away**.
 
 ## Updating from the first version
 
-If you already ran the first version, you keep your calls, contacts and settings.
+If you already ran the first version, you keep your calls, contacts and settings,
+unless Docker's storage was emptied or reset since then (for example with **Reset to
+factory defaults**). Then they're gone, and step 5 says what to set again.
 
 0. **Check the disk first.** The update needs about 15 GB free where Docker keeps its
-   data. In Docker Desktop click the gear, **Resources**, **Advanced**, and look at
-   **Disk image location**. Then see how much room each drive has:
+   data. If Docker's storage was emptied or reset, it's a full first install instead:
+   about 13 GB of downloads, with about 30 GB free. In Docker Desktop click the gear,
+   **Resources**, **Advanced**, and look at **Disk image location**. Then see how much
+   room each drive has:
 
    ```powershell
    Get-PSDrive C, D
    ```
 
-   If Docker's disk image is on C: and C: has less than 15 GB **Free**, move it to D:
+   If Docker's disk image is on C: and C: has less than that **Free**, move it to D:
    first (step 2.6), or C: fills up and Docker breaks, as it did the first time.
 1. Update the code and free the space the old AI brain used (about 5 GB):
 
@@ -450,8 +454,8 @@ If you already ran the first version, you keep your calls, contacts and settings
    step 4.4 instead.) Then put a `#` at the start of each line that begins with
    `OPENCALL_ASTERISK_`: those lines tell the server to use a GSM modem phone line,
    which you don't have yet. Save and close.
-3. Rebuild and start it. This downloads about 8 GB the first time (step 4.2 and 4.3
-   say what to watch for):
+3. Rebuild and start it. This downloads about 8 GB the first time, or about 13 GB if
+   Docker's storage was emptied (step 4.2 and 4.3 say what to watch for):
 
    ```powershell
    docker compose up -d --build
@@ -464,17 +468,33 @@ If you already ran the first version, you keep your calls, contacts and settings
    docker builder prune -f
    ```
 
-4. Install the new app over the old one from the `platform-tools` folder (USB
-   debugging on, as in step 6.1). Your server address and token stay:
+   Then open <http://localhost:8000/health> on the computer. It should show
+   `"version":"2.1.0"`. If it shows no version, the old server is still running: run
+   `docker compose up -d --build` again and watch for errors.
+
+4. Download the new **OpenCall.apk** from the project thread, then install it over the
+   old one from the `platform-tools` folder (USB debugging on, as in step 6.1). If you
+   downloaded the app before, your browser may have saved this one as
+   `OpenCall (1).apk`, so this copies the newest download. Your server address and
+   token stay:
 
    ```powershell
    cd $HOME\platform-tools
-   Copy-Item $HOME\Downloads\OpenCall.apk . -Force
+   Get-ChildItem $HOME\Downloads\OpenCall*.apk | Sort-Object LastWriteTime | Select-Object -Last 1 | Copy-Item -Destination .\OpenCall.apk -Force
    .\adb install -r OpenCall.apk
    ```
 
+   In the app, **Settings** should show **App version** 2.1.0 and **Server version**
+   2.1.0.
+
 5. In the app, open **Assistant**, **Languages**, and tap your callers' languages.
    The `OPENCALL_CALLER_LANGUAGES` line in `.env` isn't used any more.
+
+   If Docker's storage was emptied, your settings went with it, and Today greets you
+   without your name. Set them again: on the **Assistant** tab, open **Name and
+   greeting** and type your name and your assistant's, then pick **Voices**, pin your
+   **Delivery location**, add your **Instructions**, and in **Who gets through** tap
+   **Sync contacts**. The **Finish setting up** card on that tab lists what's left.
 
 ## If voice demos, Call for me or real calls don't work
 
@@ -514,7 +534,7 @@ Both phone lines are new and haven't been tried with a real phone or modem yet.
 | `error during connect` or `cannot find the file specified` mentioning `docker_engine` | Docker Desktop isn't running. Open it and wait for "Engine running". |
 | `docker compose up` stops with a download error | Run the same command again; it carries on where it stopped. |
 | `docker compose up` fails with `read-only file system` | Docker ran out of disk space. Free space on C: (Recycle Bin, Disk Cleanup) or move Docker's data to another drive (step 2.6), run `wsl --shutdown`, reopen Docker Desktop, run `docker builder prune -af`, then `docker compose up -d --build` again. |
-| Docker Desktop shows `dockerd configuration error` or `/usr/local/bin/dockerd: no such file or directory` | Docker's internal system is damaged, often after the disk filled up. Click **Reset dockerd configuration**; if that doesn't help, **Quit**, run `wsl --shutdown` and reopen it; if it still fails, use **Troubleshoot** (bug icon), **Reset to factory defaults**, then set the disk image location again (step 2.6) before rebuilding. |
+| Docker Desktop shows `dockerd configuration error` or `/usr/local/bin/dockerd: no such file or directory` | Docker's internal system is damaged, often after the disk filled up. Click **Reset dockerd configuration**; if that doesn't help, **Quit**, run `wsl --shutdown` and reopen it; if it still fails, use **Troubleshoot** (bug icon), **Reset to factory defaults**, then set the disk image location again (step 2.6) before rebuilding. A factory reset deletes everything Docker holds: your calls, contacts and settings, and all downloads (about 13 GB to fetch again, with about 30 GB free). Afterwards set the app up again as in step 5 of the update. |
 | The health page opens on the computer but not on the phone | Check the phone is on the same Wi-Fi (not mobile data or a guest network), you used your own address from `ipconfig` (not the example), `:8000` is there, and you ran step 5.2. In Windows Settings, Network & internet, Wi-Fi, set your network to **Private**. |
 | The app says `Server said: bad token` or `The server didn't accept the token` | The app reached the server but the token doesn't match. Paste it into the app again instead of typing it (step 7). To see the token the server is using, run `docker compose exec opencall printenv OPENCALL_API_TOKEN`. If that isn't the one in `.env` (for example it says `change-me`), save `.env` and run `docker compose up -d --force-recreate opencall`. |
 | The app says `Couldn't reach` | Check the address starts with `http://` (not `https://`), uses your own address from step 5.1 and ends in `:8000`, and that the health page from step 5.3 opens on the phone. |
@@ -522,7 +542,7 @@ Both phone lines are new and haven't been tried with a real phone or modem yet.
 | The app's pairing says the code didn't match or ran out | Tap **Ask for a new code** and run the `Select-String` command from step 7 again; use the last code it shows. |
 | The log says `Couldn't pull qwen3:4b-instruct` | Check the internet connection and run `docker compose restart ollama`. |
 | Replies take very long | Close other big programs, check Docker has 12 GB (step 2.5), or use Groq (step 4.4). |
-| Anything else | Run `docker compose logs --tail 100 opencall` and send the output in the project thread. |
+| Anything else | Run `docker compose logs --tail 100 opencall \| ForEach-Object { $_ -replace 'token=[^&" ]+','token=***' }` and send the output in the project thread. Older servers write the app's token in the log after `token=`; this command hides it. |
 
 Notifications arrive while the app is open or recently used. Getting them while it's
 fully closed needs free Expo and Firebase accounts and a rebuilt app.

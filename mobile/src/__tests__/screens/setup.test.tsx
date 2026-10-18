@@ -32,7 +32,7 @@ import Languages from '../../app/languages';
 import LocationScreen from '../../app/location';
 import Screening from '../../app/screening';
 import { BAD_ADDRESS, BAD_TOKEN, clearConfig } from '../../lib/api';
-import { prettyNumber } from '../../lib/format';
+import { greeting, prettyNumber } from '../../lib/format';
 import type { MockServer } from '../../lib/mock/server';
 import { resetApi, TEST_URL, useMockServer } from '../../test/mockApi';
 import { renderScreen } from '../../test/renderScreen';
@@ -110,7 +110,7 @@ describe('Today and the Assistant hub', () => {
   test('the hub lists what is left to set up, and hides it once done', async () => {
     await renderScreen(<AssistantHub />);
     const card = within(await screen.findByTestId('setup-checklist'));
-    expect(card.getByText('3 of 4 done')).toBeTruthy();
+    expect(card.getByText('4 of 5 done')).toBeTruthy();
     expect(card.queryByText('Sync your contacts')).toBeNull();
     await fireEvent.press(card.getByRole('button', { name: /^Pick a voice for each language\. Not picked yet: Tamil\./ }));
     expect(router.push).toHaveBeenCalledWith('/voices');
@@ -121,6 +121,22 @@ describe('Today and the Assistant hub', () => {
     await renderScreen(<AssistantHub />);
     await screen.findByText('4 rules in use');
     expect(screen.queryByTestId('setup-checklist')).toBeNull();
+  });
+
+  test('a server that lost its settings (a reset Docker) asks for the name again instead of saying "the user"', async () => {
+    server.state.profile = { ...server.state.profile, user_name: 'the user' };
+    await renderScreen(<AssistantHub />);
+    expect(await screen.findByText(/^Ava answers for you: "Hi, this is Ava, the user's assistant\./)).toBeTruthy();
+    const card = within(screen.getByTestId('setup-checklist'));
+    await fireEvent.press(card.getByRole('button', { name: /^Add your name\. Callers hear it in the greeting/ }));
+    expect(router.push).toHaveBeenCalledWith('/persona');
+  });
+
+  test('Today greets without the stand-in name', async () => {
+    server.state.profile = { ...server.state.profile, user_name: 'the user' };
+    await renderScreen(<Today />);
+    expect(await screen.findByRole('header', { name: greeting() })).toBeTruthy();
+    expect(screen.queryByText(/the user/)).toBeNull();
   });
 });
 

@@ -53,9 +53,10 @@ export function canCallOut(h: Health | null | undefined): boolean {
   return h.phone_line ? h.phone_line.outbound : h.dialer !== 'none';
 }
 
-/** Why the app can't answer calls itself, in one sentence. */
+/** Why the app can't answer calls itself, and where a free phone line can run. */
 export const whyPhoneLine = (assistant: string) =>
-  `Android doesn't let apps answer or speak on phone calls, so calls reach ${assistant} through your server's phone line.`;
+  `Android doesn't let apps answer or speak on phone calls, so calls reach ${assistant} through your server's phone line. ` +
+  'The free lines (Bluetooth to your phone, or a USB SIM modem) need the server on a Linux computer: Docker Desktop on Windows or a Mac can\'t reach them.';
 
 /** What the server said about its line, or a plain stand-in when it said nothing. */
 export function phoneLineDetail(h: Health | null | undefined): string {

@@ -17,6 +17,7 @@ import { Icon, type IconName } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
 import { greeting, isToday, prettyNumber, timeAgo } from '../../lib/format';
 import { useLive, type SecurityAlert } from '../../lib/live';
+import { ownName } from '../../lib/labels';
 import { isPracticeCall, isPracticeNumber } from '../../lib/practiceCalls';
 import { assistantOnText, lineUnknown, noLineForCalls, serverOutdated } from '../../lib/serverStatus';
 import type { CallerMessage } from '../../lib/types';
@@ -135,7 +136,7 @@ export default function Today() {
     <Screen topInset refreshing={profile.refreshing || calls.refreshing} onRefresh={() => void refresh()} testID="today">
       <LargeHeader
         eyebrow={new Date().toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}
-        title={p?.user_name ? `${greeting()}, ${p.user_name}` : greeting()}
+        title={p && ownName(p.user_name).trim() ? `${greeting()}, ${ownName(p.user_name).trim()}` : greeting()}
         actions={<IconButton icon="chatbubble-ellipses-outline" label="Ask your assistant" variant="tonal" onPress={() => router.push('/chat')} />}
       />
 

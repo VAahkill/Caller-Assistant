@@ -1,25 +1,33 @@
 // The Assistant hub's summaries: what each row says, and the short
 // "finish setting up" list of things that make the assistant useful.
 
+import { ownName } from './labels';
 import { languageName } from './languages';
 import { isExpired } from './rules';
 import type { Profile, VoiceInfo } from './types';
 import { chosenVoiceId } from './voices';
 
 export interface SetupItem {
-  id: 'contacts' | 'location' | 'instructions' | 'voices';
+  id: 'name' | 'contacts' | 'location' | 'instructions' | 'voices';
   title: string;
   detail: string;
   done: boolean;
   href: string;
 }
 
-/** Four things worth doing once: each says why, and is done or not. */
+/** Five things worth doing once: each says why, and is done or not. */
 export function setupChecklist(p: Profile): SetupItem[] {
   const pinned = p.location.lat != null && p.location.lng != null;
   const rules = p.instructions.some((i) => i.enabled && !isExpired(i.expires_at));
   const missing = p.caller_languages.filter((l) => !chosenVoiceId(p, l));
   return [
+    {
+      id: 'name',
+      title: 'Add your name',
+      detail: 'Callers hear it in the greeting, and Call for me books under it.',
+      done: !!ownName(p.user_name).trim(),
+      href: '/persona',
+    },
     {
       id: 'contacts',
       title: 'Sync your contacts',
