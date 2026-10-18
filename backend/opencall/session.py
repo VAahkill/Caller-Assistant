@@ -89,6 +89,8 @@ class CallSession:
         return self.record.contact_name or self.record.number or "Unknown caller"
 
     async def _publish(self, event: str, **data) -> None:
+        if self.record.practice:
+            data.setdefault("practice", True)  # no push notification for it
         await self.engine.bus.publish(event, call_id=self.record.id, who=self.who, **data)
 
     async def _line(self, speaker: str, text: str, kind: str = "speech", lang: str = "",

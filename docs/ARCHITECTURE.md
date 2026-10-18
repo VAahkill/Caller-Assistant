@@ -333,8 +333,8 @@ back-off until it works. It warms again after a failed turn and after each call
 summary. It also warms when the user changes something the prompt is made from
 (their name, instructions, notes...), and then the greeting is made again too. If a
 call is live, that waits until the call ends. Docker Compose sets `OLLAMA_KEEP_ALIVE=24h`, so Ollama doesn't unload the
-model between calls. `GET /health` shows `ready: {stt, tts, llm, mt, lid}` and
-`llm_model`.
+model between calls. `GET /health` shows `ready: {stt, tts, llm, mt, lid}`,
+`llm_model` and `phone_line` (below).
 
 ## Choosing the language model
 
@@ -395,6 +395,27 @@ work:
   language.
 - The socket forwards every event of its own call, so the practice screen doesn't
   need `/ws/events`.
+- With `goal` (and `kind`, `target_name`, `number`) it is a practice "Call for me".
+  `TaskManager.create(..., practice=True)` registers the call id the way a dial does,
+  and `Engine.open_session` picks the task up as an answered outbound call, so the
+  conversation, the 3 s wait before the assistant speaks first, the hold questions,
+  the outcome and `on_call_ended` are the real ones. The socket also forwards the
+  task's `task_update` events (titled "Practice: ..."), and a task whose socket
+  closes early still ends (`end_if_unfinished`).
+- Every call made here is saved with `CallRecord.practice`.
+
+## The phone line
+
+Each dialer reports its line through `status()` (`telephony/base.py`,
+`line_status`): `kind` (`bluetooth`, `gsm`, `twilio`, `none`), `ok`, `inbound`,
+`outbound` and a `detail` for the user. Asterisk is probed with
+`GET {ari}/asterisk/info` (2 s timeout, cached 15 s); Bluetooth asks oFono for a
+powered hands-free modem, and a `start()` that fails (no D-Bus or oFono, as in
+Docker Desktop) is logged and reported instead of stopping the server. `POST /tasks`
+checks the line afresh and answers 409 with the `detail` when it can't place calls.
+Dialers raise `PhoneLineError` with a plain sentence for known failures, which
+becomes the task's result; any other error is logged, and the task gets a short
+plain sentence instead of the exception's text.
 
 ## The user's own words in a call
 

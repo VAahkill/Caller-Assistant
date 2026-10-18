@@ -1,12 +1,21 @@
 import asyncio
 
+from fastapi.testclient import TestClient
+
+from opencall.api import create_app
 from opencall.maps import coords_from_text
-from opencall.telephony.bluetooth import BluetoothGateway
+from opencall.models import TaskKind, TaskStatus
+from opencall.telephony import bluetooth
+from opencall.telephony.bluetooth import NO_PHONE, BluetoothGateway, DBusOfono
 
 
 class FakeOfono:
     def __init__(self):
         self.answered, self.hung_up, self.dialled, self.texts = [], [], [], []
+        self.phone: str | None = "OnePlus 9"  # the connected phone's name
+
+    async def connected_phone(self):
+        return self.phone
 
     async def start(self, on_added, on_removed, on_state):
         self.on_added, self.on_removed, self.on_state = on_added, on_removed, on_state
@@ -89,9 +98,87 @@ async def test_outbound_call_starts_when_answered(engine):
     assert engine.sessions[task.call_id].conv.outbound
 
 
+async def test_the_line_is_up_while_a_phone_is_connected(engine):
+    gw, ofono = await make(engine)
+    status = await gw.status()
+    assert (status.kind, status.ok, status.inbound, status.outbound) == ("bluetooth", True, True, True)
+    assert status.detail == ("OnePlus 9 is connected over Bluetooth, so the assistant can answer its calls and "
+                             "make calls for you.")
+    ofono.phone = None  # the phone went out of range
+    status = await gw.status()
+    assert (status.ok, status.outbound, status.detail) == (False, False, NO_PHONE)
+
+
+class NoDBus(FakeOfono):
+    """What dbus-next does without a system D-Bus, as in Docker Desktop on Windows."""
+
+    async def start(self, on_added, on_removed, on_state):
+        raise FileNotFoundError(2, "No such file or directory")
+
+
+async def test_bluetooth_that_cannot_start_does_not_stop_the_server(engine, monkeypatch, caplog):
+    monkeypatch.setattr(bluetooth, "in_docker", lambda: True)
+    gw = BluetoothGateway(engine, NoDBus(), open_audio=False)
+    await gw.start()  # logged, not raised
+    assert "The Bluetooth phone link couldn't start (FileNotFoundError" in caplog.text
+    status = await gw.status()
+    assert (status.kind, status.ok, status.inbound, status.outbound) == ("bluetooth", False, False, False)
+    assert status.detail.startswith("Bluetooth calls are switched on, but the server runs in Docker")
+    engine.dialer = gw
+    task = await engine.tasks.create(TaskKind.enquire, "04023456789", "Ask if they are open on Sunday")
+    assert task.status == TaskStatus.failed and task.result == status.detail
+
+
+async def test_the_real_dbus_link_never_raises_at_start(engine):
+    gw = BluetoothGateway(engine, DBusOfono(), open_audio=False)
+    await gw.start()  # whatever this computer has (no D-Bus, no oFono, or both), the server starts
+    assert (await gw.status()).kind == "bluetooth"
+
+
+def test_health_shows_why_bluetooth_is_not_working(settings, engine, monkeypatch):
+    monkeypatch.setattr(bluetooth, "in_docker", lambda: False)
+    settings.bluetooth_enabled = True
+    app = create_app(settings, engine, start_gateways=False)
+    engine.dialer.ofono = NoDBus()
+    with TestClient(app) as c:
+        c.portal.call(engine.dialer.start)
+        status = c.get("/health").json()["phone_line"]
+    assert status["kind"] == "bluetooth" and not status["ok"]
+    assert "couldn't reach this computer's Bluetooth phone service" in status["detail"]
+
+
 def test_coords_from_google_maps_links():
     assert coords_from_text("https://www.google.com/maps/place/X/@17.41,78.43,17z/data=!3d17.4123!4d78.4356") == (17.4123, 78.4356)
     assert coords_from_text("https://www.google.com/maps/search/?api=1&query=17.4123,78.4356") == (17.4123, 78.4356)
     assert coords_from_text("https://maps.google.com/?q=17.4123%2C78.4356") == (17.4123, 78.4356)
     assert coords_from_text("geo:12.97,77.59") == (12.97, 77.59)
     assert coords_from_text("no coordinates") is None
+
+
+async def test_a_phone_that_fails_to_attach_is_tried_again_without_stopping_the_link():
+    from opencall.telephony.bluetooth import DBusOfono
+
+    ofono = DBusOfono()
+    ofono.attach_retry_s = 0
+    tries = []
+
+    async def attach(path, props, Variant):  # the phone's call service isn't up for the first two tries
+        tries.append(path)
+        if len(tries) < 3:
+            raise RuntimeError("org.ofono.VoiceCallManager not found")
+        ofono.modem_path = path
+
+    ofono._attach = attach
+    await ofono._attach_safely("/hfp/phone", {}, None)
+    assert tries == ["/hfp/phone"] * 3 and ofono.modem_path == "/hfp/phone"
+
+    tries.clear()
+    ofono.modem_path = None
+
+    async def never(path, props, Variant):
+        tries.append(path)
+        raise RuntimeError("gone")
+
+    ofono._attach = never
+    await ofono._attach_safely("/hfp/phone", {}, None)  # gives up quietly; the link keeps running
+    assert len(tries) == 3 and ofono.modem_path is None

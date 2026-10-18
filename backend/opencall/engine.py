@@ -474,7 +474,7 @@ class Engine:
                                 text=rec.message or rec.summary)
             self.store.messages.put(msg)
             await self.bus.publish("message_taken", message=msg.model_dump(mode="json"), call_id=rec.id,
-                                   who=rec.contact_name or rec.number)
+                                   who=rec.contact_name or rec.number, **({"practice": True} if rec.practice else {}))
         await self.bus.publish("call_ended", call=rec.model_dump(mode="json"), call_id=rec.id,
                                who=rec.contact_name or rec.number)
 

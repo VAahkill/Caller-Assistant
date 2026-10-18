@@ -6,7 +6,8 @@
 # follow it with: docker compose logs -f ollama
 # The Bluetooth phone link needs the host's Bluetooth stack, so for that route
 # run the server directly on the host instead (see docs/TELEPHONY.md).
-# GSM modem route: docker compose --profile asterisk up -d
+# GSM modem route: remove the # from the OPENCALL_ASTERISK_ lines in .env, then
+#   docker compose --profile asterisk up -d
 services:
   opencall:
     build:

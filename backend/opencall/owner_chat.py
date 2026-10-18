@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from .models import Instruction, KnowledgeNote, TaskKind
+from .telephony.base import line_status
 
 if TYPE_CHECKING:
     from .engine import Engine
@@ -52,6 +53,7 @@ async def handle_owner_message(engine: "Engine", text: str, shared: str = "", hi
     raw = "".join([c async for c in engine.llm.stream(messages)])
 
     actions: list[dict] = []
+    refused: list[str] = []  # calls asked for that the phone line can't make
     for m in _TAG.finditer(raw):
         kind, payload = m.group(1).upper(), m.group(2).strip()
         if kind == "CALL":
@@ -61,6 +63,11 @@ async def handle_owner_message(engine: "Engine", text: str, shared: str = "", hi
             mode, number, name, goal = parts[:4]
             number = extract_phone(number) or shared_number
             if not number:
+                continue
+            line = await line_status(engine.dialer, fresh=True)
+            if not line.outbound:
+                refused.append(f"I can't call {name or number} yet. {line.detail} You can practise the call on "
+                               "the Call for me tab.")
                 continue
             task_kind = TaskKind(mode) if mode in TaskKind._value2member_map_ else TaskKind.custom
             task = await engine.tasks.create(task_kind, number, goal or text, target_name=name)
@@ -79,5 +86,6 @@ async def handle_owner_message(engine: "Engine", text: str, shared: str = "", hi
             actions.append({"type": "enabled", "enabled": profile.enabled})
     if actions:
         engine.store.save_profile()
-    reply = _TAG.sub("", raw).strip() or "Done."
+    # The model's words would say it is calling, so a refused call replaces them.
+    reply = " ".join(refused) or _TAG.sub("", raw).strip() or "Done."
     return OwnerReply(text=reply, actions=actions)

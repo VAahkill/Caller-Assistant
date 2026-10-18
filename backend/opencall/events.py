@@ -27,6 +27,13 @@ PUSH_EVENTS = {
 }
 
 
+def _practice(payload: dict[str, Any]) -> bool:
+    """A practice call's events don't buzz the phone: the owner is watching it in the app."""
+    if payload.get("practice"):
+        return True
+    return any(isinstance(payload.get(k), dict) and payload[k].get("practice") for k in ("call", "task"))
+
+
 class EventBus:
     def __init__(self, push_url: str = "", push_tokens: callable = lambda: []):  # type: ignore[valid-type]
         self._subscribers: set[asyncio.Queue[dict[str, Any]]] = set()
@@ -56,7 +63,7 @@ class EventBus:
 
     async def _push(self, event: str, payload: dict[str, Any]) -> None:
         tokens = self._push_tokens()
-        if not tokens or not self._push_url:
+        if not tokens or not self._push_url or _practice(payload):
             return
         priority, template = PUSH_EVENTS[event]
         fields = {"who": payload.get("who", "Caller"), "question": "", "kind": "", "title": "", **payload}

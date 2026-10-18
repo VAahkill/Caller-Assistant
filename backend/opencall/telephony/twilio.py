@@ -21,6 +21,7 @@ from fastapi import WebSocket
 
 from ..models import new_id
 from ..audio import mulaw_decode, mulaw_encode, resample
+from .base import LineStatus, PhoneLineError
 from .queue_bridge import QueueBridge
 
 if TYPE_CHECKING:
@@ -100,12 +101,29 @@ class TwilioGateway:
             return reject_twiml()
         return stream_twiml(self.ws_url, {"number": number, "direction": "inbound"})
 
+    async def status(self, fresh: bool = False) -> LineStatus:
+        return LineStatus("twilio", ok=True, inbound=True, outbound=True, detail="Calls go through your Twilio account.")
+
     async def dial(self, number: str, call_id: str) -> None:
         twiml = stream_twiml(self.ws_url, {"number": number, "direction": "outbound", "call_id": call_id})
-        async with self._client() as c:
-            r = await c.post(f"{API}/Accounts/{self.sid}/Calls.json",
-                             data={"To": number, "From": self.from_number, "Twiml": twiml})
-            r.raise_for_status()
+        try:
+            async with self._client() as c:
+                r = await c.post(f"{API}/Accounts/{self.sid}/Calls.json",
+                                 data={"To": number, "From": self.from_number, "Twiml": twiml})
+        except httpx.HTTPError as e:
+            log.warning("Twilio doesn't answer (%s: %s)", e.__class__.__name__, e)
+            raise PhoneLineError("The server couldn't reach Twilio. Check the computer's internet connection.") from e
+        if r.is_success:
+            return
+        log.warning("Twilio refused the call to %s: %s %s", number, r.status_code, r.text[:300])
+        if r.status_code in (401, 403):
+            log.warning("Check OPENCALL_TWILIO_ACCOUNT_SID and OPENCALL_TWILIO_AUTH_TOKEN in .env")
+            raise PhoneLineError("Twilio didn't accept the server's login details.")
+        try:
+            why = str(r.json().get("message") or "")
+        except (ValueError, AttributeError):
+            why = ""
+        raise PhoneLineError(f"Twilio didn't place the call. {why}".strip())
 
     async def end_call(self, call_sid: str) -> None:
         if not call_sid:

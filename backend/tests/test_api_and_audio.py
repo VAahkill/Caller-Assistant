@@ -50,15 +50,21 @@ def test_profile_and_instructions(settings, engine):
 
 
 def test_owner_chat_creates_a_call_task(settings, engine, llm):
+    class Line:  # a phone line that can call out (without a line, see test_phone_line.py)
+        name = "fake"
+        dialled: list[str] = []
+
+        async def dial(self, number, call_id):
+            self.dialled.append(number)
+
+    engine.dialer = Line()
     llm.responder = lambda m: "[CALL: enquire | +91 40 2345 6789 | Paradise | Check if a table for 3 is free at 8 PM]\nOn it!"
     c = client(settings, engine)
     r = c.post("/assistant/chat", headers=H, json={"text": "check if a 3 seater is free at 8 tonight"}).json()
     assert r["reply"] == "On it!"
     task = r["actions"][0]["task"]
     assert task["number"] == "+914023456789"
-    # No telephony configured in tests, so the task fails with a clear reason.
-    stored = engine.store.tasks.get(task["id"])
-    assert stored.status == "failed" and "No outbound telephony" in stored.result
+    assert engine.store.tasks.get(task["id"]).status == "dialing" and engine.dialer.dialled == ["+914023456789"]
 
 
 def test_voice_clone_upload(settings, engine):

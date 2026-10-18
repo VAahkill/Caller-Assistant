@@ -279,6 +279,7 @@ class CallRecord(BaseModel):
     reject_reason: str = ""
     urgent: bool = False  # a VIP called, or the call needs the user soon
     action_items: list[str] = Field(default_factory=list)  # from the end-of-call summary
+    practice: bool = False  # made from the app's practice screen (/ws/simulate), not a phone line
 
 
 class MessageStatus(str, Enum):
@@ -325,5 +326,6 @@ class Task(BaseModel):
     outcome: str = ""  # booked | available | unavailable | conveyed | failed | ...
     result: str = ""
     call_id: str | None = None
+    practice: bool = False  # a practice "Call for me": the user played the place called, in the app
     created_at: float = Field(default_factory=now)
     updated_at: float = Field(default_factory=now)

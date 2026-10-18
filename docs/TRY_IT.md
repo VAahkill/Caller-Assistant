@@ -405,6 +405,10 @@ know**, **Who gets through** and **Away**.
      translated and spoken to the caller;
    - leaving a message, then opening the **Inbox** tab.
 5. Tap **Hang up** when you're done.
+6. To try **Call for me** without a phone line, open the **Call for me** tab, say
+   what you need, and tap **Practise this call** (**Practise first** once your server
+   has a phone line). Your assistant calls you in the app and
+   you play the restaurant or shop; the result is saved like a real one.
 
 ---
 
@@ -439,8 +443,10 @@ If you already ran the first version, you keep your calls, contacts and settings
    ```
 
 2. Open `.env` with `notepad .env` and change `OPENCALL_LLM_MODEL=llama3.1:8b` to
-   `OPENCALL_LLM_MODEL=qwen3:4b-instruct`. Save and close. (If you use Groq, change
-   its lines as in step 4.4 instead.)
+   `OPENCALL_LLM_MODEL=qwen3:4b-instruct`. (If you use Groq, change its lines as in
+   step 4.4 instead.) Then put a `#` at the start of each line that begins with
+   `OPENCALL_ASTERISK_`: those lines tell the server to use a GSM modem phone line,
+   which you don't have yet. Save and close.
 3. Rebuild and start it. This downloads about 8 GB the first time (step 4.2 and 4.3
    say what to watch for):
 
@@ -467,12 +473,33 @@ If you already ran the first version, you keep your calls, contacts and settings
 5. In the app, open **Assistant**, **Languages**, and tap your callers' languages.
    The `OPENCALL_CALLER_LANGUAGES` line in `.env` isn't used any more.
 
-## Real phone calls
+## If voice demos, Call for me or real calls don't work
 
-Practice calls work on Windows. Answering your real calls needs the Bluetooth link
-or the GSM modem described in [TELEPHONY.md](TELEPHONY.md), and both currently need
-a Linux computer, such as an old laptop or a Raspberry Pi, because Windows doesn't
-let Docker use the computer's Bluetooth or USB modem.
+**A voice demo says "The demo didn't start. Check that your server is reachable."**
+Your server is most likely still the first version, which can't give the new app its
+voice demos. Update the server and the app with the steps in
+[Updating from the first version](#updating-from-the-first-version). Afterwards,
+<http://localhost:8000/health> shows `"version":"2.1.0"`.
+
+**Call for me says "No phone line" or "All connection attempts failed".** Your
+server has no phone line connected, so it can't place real calls. "All connection
+attempts failed" is how the first version said it: its settings pointed it at a GSM
+modem line (Asterisk) that isn't there. Put a `#` before the `OPENCALL_ASTERISK_`
+lines in `.env` (step 2 of the update) and run `docker compose up -d`. Then tap
+**Practise this call** on the **Call for me** tab: your assistant calls you in the app,
+you play the place, and you see the result as for a real call.
+
+**Real calls to your phone aren't answered, even with the assistant switched on.**
+Android doesn't let any app answer a phone call or speak on it, so the OpenCall app
+can't do that by itself. Real calls have to reach the server through a phone line:
+a Bluetooth link between a computer and your phone, or a USB GSM modem with a spare
+SIM ([TELEPHONY.md](TELEPHONY.md)). Docker Desktop on Windows can't use the
+computer's Bluetooth or USB modems, so neither works on Windows.
+
+What works on Windows today: practice calls (you play a caller) and practice Call for
+me (you play the place called). Real calls need the server on Linux, for example on
+a spare laptop; see [If your computer runs Windows](TELEPHONY.md#if-your-computer-runs-windows).
+Both phone lines are new and haven't been tried with a real phone or modem yet.
 
 ## Something's not working
 

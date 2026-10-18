@@ -46,6 +46,7 @@ from .screening import normalize_number
 from .templates import TEMPLATES
 from .providers.tts import VoiceInfo
 from .telephony.asterisk import AsteriskGateway
+from .telephony.base import line_status
 from .telephony.bluetooth import BluetoothGateway
 from .telephony.queue_bridge import QueueBridge
 from .telephony.twilio import TwilioGateway, valid_signature
@@ -321,7 +322,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     # ------------------------------------------------------------ health
     @app.get("/health")
     async def health():
-        return {"ok": True, "version": __version__, "dialer": engine.dialer.name,
+        line = await line_status(engine.dialer)
+        return {"ok": True, "version": __version__, "dialer": engine.dialer.name, "phone_line": line.to_json(),
                 "active_calls": len(engine.sessions), "ready": dict(engine.ready), "llm_model": settings.llm_model}
 
     # ------------------------------------------------------------ profile & settings
@@ -593,9 +595,20 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
     @app.post("/messages/{msg_id}/reply", dependencies=A)
     async def reply_message(msg_id: str, body: ReplyIn):
+        """Saves the owner's reply; with ``call_back``, the assistant calls the caller to
+        pass it on. 409 (nothing saved) when that call can't be made."""
         msg = store.messages.get(msg_id)
         if not msg:
             raise HTTPException(404)
+        if body.call_back:
+            call = store.calls.get(msg.call_id) if msg.call_id else None
+            if call is not None and call.practice:
+                raise HTTPException(409, "This message came from a practice call, so there's no one to call back. "
+                                         'Turn off "Call them back" to save your reply.')
+            line = await line_status(engine.dialer, fresh=True)
+            if not line.outbound:
+                raise HTTPException(409, f'{line.detail} Turn off "Call them back" to save your reply '
+                                         "without a call.".strip())
         return await engine.tasks.reply_to_message(msg, body.text, body.call_back)
 
     @app.post("/messages/{msg_id}/read", dependencies=A)
@@ -616,6 +629,11 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
 
     @app.post("/tasks", dependencies=A)
     async def create_task(body: TaskIn):
+        """A "Call for me" task, called right away. 409 (and no task) when the phone
+        line can't place calls, with the reason in plain words."""
+        line = await line_status(engine.dialer, fresh=True)
+        if not line.outbound:
+            raise HTTPException(409, line.detail or "The phone line can't place calls right now.")
         return await engine.tasks.create(body.kind, body.number, body.goal, body.target_name)
 
     # ------------------------------------------------------------ talk to the assistant
@@ -783,8 +801,15 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
     # ------------------------------------------------------------ simulator (no phone needed)
     @app.websocket("/ws/simulate")
     async def simulate(ws: WebSocket, token: str = Query(""), number: str = Query("+919800000000"),
-                       wav: bool = Query(False), lang: str = Query("")):
-        """Pretend to be a caller (the app's practice call).
+                       wav: bool = Query(False), lang: str = Query(""), goal: str = Query(""),
+                       kind: str = Query("enquire"), target_name: str = Query("")):
+        """Pretend to be a caller (the app's practice call), or, with a ``goal``, the
+        place the assistant calls for the user (a practice "Call for me": ``kind`` is
+        enquire, book, callback or custom; ``target_name`` and ``number`` are the
+        place). That call is made as a practice task and runs exactly like a real
+        outbound one: the other side may speak first (the assistant starts after 3 s
+        of silence), questions for the user arrive as ``task_needs_decision``, and
+        the task's ``task_update`` events and result are recorded.
 
         Send binary 16 kHz PCM16 frames (a live stream), ``{"text": ..., "lang"?}``,
         ``{"audio_b64": <a finished recording in any format ffmpeg reads>, "lang"?}``
@@ -792,22 +817,30 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
         "answer", ...}``, or ``{"hangup": true}``. ``lang`` (here or per message) is
         the caller's language, if known.
 
-        Receive ``started`` or ``rejected``; ``ack`` for every accepted message and
-        ``error`` (never silence) for anything that can't be used; every event of
-        this call (transcript, assistant_status, call_category, hold_question,
-        turn_error, call_ended...); and the assistant's speech as binary audio. With
-        ``wav=1`` each sentence arrives at once as a WAV file instead of as
+        Receive ``started`` (``call_id``, and ``task_id`` for a practice Call for me)
+        or ``rejected``; ``ack`` for every accepted message and ``error`` (never
+        silence) for anything that can't be used; every event of this call
+        (transcript, assistant_status, call_category, hold_question, turn_error,
+        call_ended...) and of its task; and the assistant's speech as binary audio.
+        With ``wav=1`` each sentence arrives at once as a WAV file instead of as
         real-time frames.
         """
         if not ws_ok(token):
             await ws.close(code=4401)
             return
         await ws.accept()
-        decision = engine.screen(number)
-        if not decision.answer:
-            await ws.send_json({"event": "rejected", "reason": decision.reason})
+        goal = goal.strip()
+        if goal and kind not in TaskKind._value2member_map_:
+            await ws.send_json({"event": "error",
+                                "detail": f"Unknown kind {kind!r}. Use enquire, book, callback or custom."})
             await ws.close()
             return
+        if not goal:  # the assistant calling out isn't screened, as in a real Call for me
+            decision = engine.screen(number)
+            if not decision.answer:
+                await ws.send_json({"event": "rejected", "reason": decision.reason})
+                await ws.close()
+                return
 
         send_lock = asyncio.Lock()
         gone = asyncio.Event()
@@ -825,8 +858,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
                 gone.set()  # the app closed the socket; the call is hung up below
 
         class SimBridge(QueueBridge):
-            def __init__(self, call_id: str, number: str):
-                super().__init__(call_id, number)
+            def __init__(self, call_id: str, number: str, direction: str = "inbound"):
+                super().__init__(call_id, number, direction)
                 self.paced = not wav  # the app plays whole sentences, so don't pace them out
                 self._pending = bytearray()
                 self._timer: asyncio.TimerHandle | None = None
@@ -851,12 +884,20 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
                 if pcm:
                     await send(to_wav(pcm))
 
-        bridge = SimBridge(new_id(), number)
         events = engine.bus.subscribe()  # before the call starts, so no event is missed
+        task = None
+        if goal:
+            # The session finds the task by the call's id, as when a real callee answers.
+            task = await engine.tasks.create(TaskKind(kind), number, goal, " ".join(target_name.split()),
+                                             practice=True)
+            bridge = SimBridge(task.call_id, task.number, "outbound")
+        else:
+            bridge = SimBridge(new_id(), number)
         session = engine.open_session(bridge)
+        session.record.practice = True
         session.language_hint = lang_code(lang)
         call = asyncio.create_task(engine.run_session(session))
-        await send({"event": "started", "call_id": bridge.call_id})
+        await send({"event": "started", "call_id": bridge.call_id, "task_id": task.id if task else None})
         done = {"event": "_simulate_done"}
 
         async def forward():
@@ -864,7 +905,7 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
                 ev = await events.get()
                 if ev is done:
                     return
-                if ev.get("call_id") == bridge.call_id:
+                if ev.get("call_id") == bridge.call_id or (task and ev.get("task_id") == task.id):
                     await send(ev)
 
         async def read_client():
@@ -931,6 +972,8 @@ def create_app(settings: Settings | None = None, engine: Engine | None = None, s
                 await call
             except Exception:
                 log.exception("Practice call %s ended with an error", bridge.call_id)
+            if task:
+                await engine.tasks.end_if_unfinished(task.id)
             if wav:
                 await bridge.flush()
             events.put_nowait(done)  # everything published before this still goes out

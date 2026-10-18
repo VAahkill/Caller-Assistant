@@ -18,6 +18,22 @@ Neither needs a VoIP provider, a paid phone number or a subscription.
 The phone layer is swappable. The engine only sees a `CallBridge`
 (`backend/opencall/telephony/base.py`), so another route means one small class.
 
+## If your computer runs Windows
+
+Docker Desktop runs the server inside a small Linux system that can't reach the
+computer's Bluetooth or USB modems, so neither route below works with it. On Windows
+you can still use the app's practice calls (you play a caller) and practice "Call for
+me" (you play the place the assistant calls).
+
+For real calls, the free option is to run the server on Linux: on the same laptop
+(for example Ubuntu installed on a USB stick or on a second partition, picked when
+the laptop starts), or on any spare computer that runs Linux, such as an old laptop
+or a Raspberry Pi. Then follow Option 1 or Option 2 there.
+
+To be honest about where this stands: both routes are written for the standard
+Linux phone software (oFono for Bluetooth, chan_quectel for the modem), but neither
+has been tried with a real phone or modem yet, so expect some troubleshooting.
+
 ## Option 1: Bluetooth link to your own phone (free, no extra hardware)
 
 The server pairs with your phone as a Bluetooth hands-free device, exactly like a
@@ -90,8 +106,11 @@ Caller ─▶ your mobile ──(carrier forwards if unanswered)──▶ spare 
    sticks such as the E173 work with chan_dongle. Insert any prepaid SIM.
 2. Install Asterisk 20+ with chan_quectel, `res_audiosocket`, `app_audiosocket`,
    `res_ari` and `func_curl`, and copy the files from `deploy/asterisk/`.
-3. Set the same token in `deploy/asterisk/extensions.conf` (`OPENCALL_TOKEN`) and
-   `.env` (`OPENCALL_API_TOKEN`), and the ARI password in `ari.conf` and `.env`.
+3. In `.env`, remove the `#` from the `OPENCALL_ASTERISK_` lines (they stay
+   commented out until you have a modem, so the server doesn't look for an Asterisk
+   that isn't there). Set the same token in `deploy/asterisk/extensions.conf`
+   (`OPENCALL_TOKEN`) and `.env` (`OPENCALL_API_TOKEN`), and the ARI password in
+   `ari.conf` and `.env`.
 4. Forward your main mobile to the modem SIM's number with the standard GSM codes:
    - `**61*<number>#` forward when unanswered
    - `**67*<number>#` forward when busy
@@ -116,6 +135,22 @@ trunk's context at `opencall-inbound`.
 The code still includes a Twilio bridge (`backend/opencall/telephony/twilio.py`) for
 people who already have a Twilio account. It is never required and is off unless
 `OPENCALL_TWILIO_ACCOUNT_SID` is set.
+
+## Is the line working?
+
+`GET /health` (no token needed) reports the line as `phone_line`, and the app shows
+it on its status screen:
+
+```json
+"phone_line": {"kind": "gsm", "ok": false, "inbound": false, "outbound": false,
+               "detail": "No phone line is connected. Your server is set to use Asterisk at host.docker.internal:8088, but nothing answers there."}
+```
+
+`kind` is `bluetooth`, `gsm` (Asterisk), `twilio` or `none`. `ok` means a line is
+connected now, `inbound` that real calls can reach the assistant, `outbound` that
+"Call for me" can place calls, and `detail` says what the server found. Asterisk is
+asked (`GET /ari/asterisk/info`) at most every 15 seconds. When the line can't place
+calls, `POST /tasks` answers 409 with that reason and creates no task.
 
 ## Try it without any phone line
 
@@ -153,6 +188,16 @@ Press Ctrl+C to hang up. What you can send:
 | `{"action": "say_audio", "audio_b64": "...", "lang": "te"}` | The same, recorded: transcribed in your language (`lang`, else `owner_language`), then translated and said |
 | `{"action": "answer", "hold_id": "...", "text": "..."}` | Your answer to a hold question, in your language |
 | `{"hangup": true}` | Ends the call |
+
+To practise "Call for me", add `goal=` (what the assistant should get done) to the
+URL, and optionally `kind=` (`enquire`, the default, `book`, `callback` or `custom`),
+`target_name=` and `number=` for the place. You then play the place being called,
+and it runs exactly like a real call for you: it isn't screened, you may speak first
+("Hello, Paradise restaurant") or the assistant starts after 3 seconds of silence,
+and questions for you arrive as `task_needs_decision` (answer with `{"action":
+"answer", ...}`). `started` carries the new task's `task_id`, its `task_update`
+events come on the same socket, and the task is saved with `practice: true`. Every
+call made through this socket is saved with `practice: true` too.
 
 Every message gets an `ack` or an `error` back, never silence. You also receive
 every event of the call: `transcript`, `transcript_update`, `assistant_status`

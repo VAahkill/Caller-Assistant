@@ -1,4 +1,4 @@
-from .base import CallBridge, Dialer, NoDialer
+from .base import CallBridge, Dialer, LineStatus, NoDialer, PhoneLineError, line_status
 from .queue_bridge import QueueBridge
 
-__all__ = ["CallBridge", "Dialer", "NoDialer", "QueueBridge"]
+__all__ = ["CallBridge", "Dialer", "LineStatus", "NoDialer", "PhoneLineError", "QueueBridge", "line_status"]

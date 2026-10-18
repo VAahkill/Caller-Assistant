@@ -11,6 +11,10 @@ written with pw-record / pw-play). See docs/TELEPHONY.md.
 
 Limits: the phone has to stay within Bluetooth range of the server (home), and
 call audio is narrowband (8 kHz CVSD or 16 kHz mSBC).
+
+Where there is no oFono to talk to (no system D-Bus, as in Docker Desktop on
+Windows), the server still starts: the gateway logs why and reports it as the
+line's status.
 """
 
 from __future__ import annotations
@@ -19,10 +23,12 @@ import asyncio
 import contextlib
 import logging
 import re
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from ..audio import FRAME_BYTES
 from ..models import new_id
+from .base import LineStatus, PhoneLineError
 from .queue_bridge import QueueBridge
 
 if TYPE_CHECKING:
@@ -45,6 +51,10 @@ class Ofono(Protocol):
 
     async def send_sms(self, number: str, text: str) -> bool: ...
 
+    async def connected_phone(self) -> str | None:
+        """The name of the phone connected as a hands-free device ("" if it has
+        none), or None when no phone is connected."""
+
 
 def build_bmessage(number: str, text: str) -> str:
     """An SMS in the Bluetooth MAP bMessage format."""
@@ -62,6 +72,8 @@ def build_bmessage(number: str, text: str) -> str:
 class DBusOfono:
     """oFono over the system D-Bus, using dbus-next (pure Python)."""
 
+    attach_retry_s = 2.0
+
     def __init__(self) -> None:
         self.bus = None
         self.modem_path: str | None = None
@@ -78,11 +90,24 @@ class DBusOfono:
         self._cb = (on_call_added, on_call_removed, on_call_state)
         self.bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
         manager = await self._iface("/", "org.ofono.Manager")
-        manager.on_modem_added(lambda path, props: asyncio.ensure_future(self._attach(path, props, Variant)))
+        manager.on_modem_added(lambda path, props: asyncio.ensure_future(self._attach_safely(path, props, Variant)))
+        manager.on_modem_removed(self._detach)
         for path, props in await manager.call_get_modems():
-            await self._attach(path, props, Variant)
+            await self._attach_safely(path, props, Variant)
         if not self.modem_path:
             log.warning("No Bluetooth phone found yet. Pair and connect your phone; it will be picked up automatically.")
+
+    async def _attach_safely(self, path: str, props: dict[str, Any], Variant) -> None:
+        """A phone that fails to attach is logged and tried again, without stopping the link:
+        its call service can show up a few seconds after the modem powers on."""
+        for attempt in range(1, 4):
+            try:
+                await self._attach(path, props, Variant)
+                return
+            except Exception as e:
+                log.warning("Couldn't attach the Bluetooth phone %s (try %d of 3): %s: %s",
+                            path, attempt, e.__class__.__name__, e)
+                await asyncio.sleep(self.attach_retry_s)
 
     async def _attach(self, path: str, props: dict[str, Any], Variant) -> None:
         if _val(props.get("Type")) != "hfp":
@@ -97,6 +122,21 @@ class DBusOfono:
         vcm.on_call_removed(lambda call_path: asyncio.ensure_future(on_removed(call_path)))
         self.modem_path = path
         log.info("Using phone %s (%s)", _val(props.get("Name")) or path, path)
+
+    def _detach(self, path: str) -> None:
+        if path == self.modem_path:
+            self.modem_path = None
+            log.info("The Bluetooth phone disconnected (%s)", path)
+
+    async def connected_phone(self) -> str | None:
+        """The name of the phone whose calls the link handles ("" if it has none), or None."""
+        if self.bus is None or self.modem_path is None:
+            return None
+        manager = await self._iface("/", "org.ofono.Manager")
+        for path, props in await manager.call_get_modems():
+            if path == self.modem_path and _val(props.get("Powered")):
+                return _val(props.get("Name")) or ""
+        return None
 
     async def _call_added(self, call_path: str, props: dict[str, Any]) -> None:
         on_added, _, on_state = self._cb
@@ -115,9 +155,14 @@ class DBusOfono:
 
     async def dial(self, number: str) -> str:
         if not self.modem_path:
-            raise RuntimeError("No phone is connected over Bluetooth.")
-        vcm = await self._iface(self.modem_path, "org.ofono.VoiceCallManager")
-        return await vcm.call_dial(number, "default")
+            raise PhoneLineError(NO_PHONE)
+        try:
+            vcm = await self._iface(self.modem_path, "org.ofono.VoiceCallManager")
+            return await vcm.call_dial(number, "default")
+        except Exception as e:
+            log.warning("The phone didn't dial %s: %s: %s", number, e.__class__.__name__, e)
+            raise PhoneLineError("Your phone didn't start the call. Check that it has signal and is still connected "
+                                 "to this computer over Bluetooth.") from e
 
     async def send_sms(self, number: str, text: str) -> bool:
         """Sends an SMS through the phone with the Bluetooth Message Access
@@ -161,6 +206,25 @@ class DBusOfono:
 
 def _val(v: Any) -> Any:
     return getattr(v, "value", v)
+
+
+NO_PHONE = ("Bluetooth calls are switched on, but no phone is connected yet. Pair your phone with this computer "
+            "and connect it in the phone's Bluetooth settings.")
+
+
+def in_docker() -> bool:
+    return Path("/.dockerenv").exists()
+
+
+def start_problem(error: Exception) -> str:
+    """Why the Bluetooth link couldn't start, for the user."""
+    if in_docker():
+        return ("Bluetooth calls are switched on, but the server runs in Docker, which can't use this computer's "
+                "Bluetooth. The Bluetooth link needs the server running directly on a Linux computer.")
+    if isinstance(error, ImportError):
+        return "Bluetooth calls are switched on, but this server was installed without its Bluetooth support."
+    return ("Bluetooth calls are switched on, but the server couldn't reach this computer's Bluetooth phone "
+            "service. Check that Bluetooth and the hands-free service are running, then restart the server.")
 
 
 # ----------------------------------------------------------------- call audio
@@ -244,9 +308,31 @@ class BluetoothGateway:
         self.numbers: dict[str, str] = {}
         self.outbound: dict[str, str] = {}  # call path -> call_id we dialled
         self._tasks: set[asyncio.Task] = set()
+        self.problem = ""  # why the link couldn't start, for the user
 
     async def start(self) -> None:
-        await self.ofono.start(self._on_added, self._on_removed, self._on_state)
+        try:
+            await self.ofono.start(self._on_added, self._on_removed, self._on_state)
+        except Exception as e:
+            self.problem = start_problem(e)
+            log.error("The Bluetooth phone link couldn't start (%s: %s). Calls won't reach the assistant over "
+                      "Bluetooth until BlueZ and oFono run on this computer and the server is restarted; see "
+                      "docs/TELEPHONY.md.", e.__class__.__name__, e)
+
+    async def status(self, fresh: bool = False) -> LineStatus:
+        if self.problem:
+            return LineStatus("bluetooth", ok=False, inbound=False, outbound=False, detail=self.problem)
+        try:
+            phone = await asyncio.wait_for(self.ofono.connected_phone(), 2)
+        except Exception as e:
+            log.warning("Couldn't ask oFono which phone is connected: %s: %s", e.__class__.__name__, e)
+            return LineStatus("bluetooth", ok=False, inbound=False, outbound=False,
+                              detail="The server couldn't ask this computer's Bluetooth which phone is connected.")
+        if phone is None:
+            return LineStatus("bluetooth", ok=False, inbound=False, outbound=False, detail=NO_PHONE)
+        return LineStatus("bluetooth", ok=True, inbound=True, outbound=True,
+                          detail=f"{phone or 'Your phone'} is connected over Bluetooth, so the assistant can answer "
+                                 "its calls and make calls for you.")
 
     def _spawn(self, coro) -> None:
         t = asyncio.create_task(coro)
@@ -304,6 +390,8 @@ class BluetoothGateway:
             self.calls.pop(path, None)
 
     async def dial(self, number: str, call_id: str) -> None:
+        if self.problem:
+            raise PhoneLineError(self.problem)
         path = await self.ofono.dial(number)
         self.numbers[path] = number
         self.outbound[path] = call_id
