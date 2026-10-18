@@ -4,6 +4,7 @@
 
 import { api, type ServerConfig } from './api';
 import { dialerName } from './format';
+import { serverOutdated } from './serverStatus';
 import type { Health } from './types';
 
 export interface HealthCheck {
@@ -52,13 +53,19 @@ export function diagnosticsText({ appVersion, platform, config, connected, check
   ];
   if (h) {
     lines.push(
-      `Server version: ${h.version || 'unknown'}`,
+      `Server version: ${h.version || (serverOutdated(h) ? 'the first version (needs updating)' : 'unknown')}`,
       `Response time: ${check.ms} ms`,
       `Parts: ${ready}`,
       `Language model: ${h.llm_model || 'not reported'}`,
       `Outbound calling: ${dialerName(h.dialer)}`,
       `Calls right now: ${h.active_calls}`,
     );
+    const line = h.phone_line;
+    if (line) {
+      const yes = (v: boolean) => (v ? 'yes' : 'no');
+      lines.push(`Phone line: ${line.kind}, ${line.ok ? 'connected' : 'not connected'}, calls in ${yes(line.inbound)}, calls out ${yes(line.outbound)}`);
+      if (line.detail) lines.push(`Phone line says: ${line.detail}`);
+    } else lines.push('Phone line: not reported');
   }
   if (error) lines.push(`Last error: ${error}`);
   return lines.join('\n');

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { OutdatedServerBanner } from '../components/domain/ServerNotices';
 import { ProgressLine, VoiceLanguageGroup, demoSources, sampleKey } from '../components/domain/VoicePicker';
 import { VoiceRecorderSheet } from '../components/domain/VoiceRecorderSheet';
 import { AsyncContent } from '../components/ui/AsyncContent';
@@ -25,6 +26,7 @@ import { useTokens } from '../lib/design/theme';
 import { duration, timeAgo } from '../lib/format';
 import { languageName } from '../lib/languages';
 import { useLive } from '../lib/live';
+import { serverOutdated } from '../lib/serverStatus';
 import type { VoiceInfo, VoiceStatus } from '../lib/types';
 import { STATUS_LABEL, choosePatch, chosenVoiceId, samplePathFor, statusChanges, suggestName, voiceGroups } from '../lib/voices';
 
@@ -37,12 +39,14 @@ const POLL_FOR_MS = 3 * 60_000;
 const originalKey = (id: string) => `${id}#original`;
 
 /** Voices: your recorded voices first, then the voice for each language your
- *  callers speak, with demos that play at once (preloaded when the screen opens). */
+ *  callers speak, with demos that play at once (preloaded one by one when the screen opens). */
 export default function Voices() {
   const t = useTokens();
   const toast = useToast();
-  const { voicesKey } = useLive();
+  const { voicesKey, connected } = useLive();
   const voices = useResource(() => api.voices(), voicesKey);
+  const health = useResource(() => api.health(), connected);
+  const outdated = serverOutdated(health.data);
   const profile = useProfile();
   const [recording, setRecording] = useState(false);
   const [recordSession, setRecordSession] = useState(0);
@@ -50,7 +54,7 @@ export default function Voices() {
   const [more, setMore] = useState(false);
   const [hidden, setHidden] = useState<ReadonlySet<string>>(new Set());
   const onDemoError = useCallback((message: string) => toast.error(message), [toast]);
-  const demo = useDemoPlayer(onDemoError);
+  const demo = useDemoPlayer(onDemoError, { outdated });
 
   const p = profile.data;
   const assistant = p?.assistant_name || 'your assistant';
@@ -58,14 +62,18 @@ export default function Voices() {
   const all = useMemo(() => (voices.data ?? []).filter((v) => !hidden.has(v.id)), [voices.data, hidden]);
   const mine = useMemo(() => all.filter((v) => v.kind === 'clone'), [all]);
   const groups = useMemo(() => voiceGroups(all, callerLanguages), [all, callerLanguages]);
-  const primary = groups.filter((g) => g.primary);
-  const others = groups.filter((g) => !g.primary);
+  const primary = useMemo(() => groups.filter((g) => g.primary), [groups]);
+  const others = useMemo(() => groups.filter((g) => !g.primary), [groups]);
   // A recorded voice's demo plays in the first caller language it speaks.
   const demoLang = useCallback((v: VoiceInfo) => callerLanguages.find((l) => v.languages.includes(l)) ?? v.languages[0] ?? 'en', [callerLanguages]);
 
-  // Every demo on the screen, fetched with the server token as soon as the list is known.
-  const sources = useMemo(() => demoSources([...groups, ...mine.map((v) => ({ lang: demoLang(v), voices: [v] }))]), [groups, mine, demoLang]);
-  usePreloadedSources(sources);
+  // The demos on the screen, top to bottom, fetched one by one with the server
+  // token once the list is known. Hidden languages wait until they are shown.
+  const sources = useMemo(
+    () => demoSources([...mine.map((v) => ({ lang: demoLang(v), voices: [v] })), ...primary, ...(more ? others : [])]),
+    [mine, demoLang, primary, others, more],
+  );
+  usePreloadedSources(sources, demo.loading);
 
   // Getting ready: check again every few seconds (and whenever voice_status arrives).
   const preparing = mine.some((v) => v.status === 'preparing');
@@ -151,7 +159,8 @@ export default function Voices() {
   };
 
   return (
-    <Screen bottomInset refreshing={voices.refreshing} onRefresh={() => void voices.refresh()} testID="voices">
+    <Screen bottomInset refreshing={voices.refreshing} onRefresh={() => void Promise.all([voices.refresh(), health.reload()])} testID="voices">
+      {outdated ? <OutdatedServerBanner /> : null}
       <Text variant="subhead" color="text2">
         Pick how {assistant} sounds for each language your callers speak. Tap play to hear a voice; tap again to stop.
       </Text>

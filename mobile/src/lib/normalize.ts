@@ -8,6 +8,7 @@ import type {
   CallSummary,
   Health,
   HoldQuestion,
+  PhoneLine,
   Profile,
   ReadyFlags,
   Task,
@@ -203,11 +204,24 @@ export function normalizeVoice(raw: unknown): VoiceInfo {
   };
 }
 
+const LINE_KINDS: PhoneLine['kind'][] = ['bluetooth', 'gsm', 'twilio', 'none'];
+
 export function normalizeHealth(raw: unknown): Health {
   const h = (isObj(raw) ? raw : {}) as Loose<Health>;
   const r = isObj(h.ready) ? h.ready : null;
   const ready: ReadyFlags | null = r
     ? { stt: !!r.stt, tts: !!r.tts, llm: !!r.llm, mt: !!r.mt, lid: !!r.lid }
+    : null;
+  const l = isObj(h.phone_line) ? h.phone_line : null;
+  // A line the server can't name is treated as no line; unknown flags as off.
+  const phoneLine: PhoneLine | null = l
+    ? {
+        kind: LINE_KINDS.includes(l.kind as PhoneLine['kind']) ? (l.kind as PhoneLine['kind']) : 'none',
+        ok: l.ok === true,
+        inbound: l.inbound === true,
+        outbound: l.outbound === true,
+        detail: str(l.detail).trim(),
+      }
     : null;
   return {
     ok: bool(h.ok, false),
@@ -216,6 +230,7 @@ export function normalizeHealth(raw: unknown): Health {
     active_calls: num(h.active_calls, 0),
     ready,
     llm_model: str(h.llm_model),
+    phone_line: phoneLine,
   };
 }
 
@@ -238,5 +253,6 @@ export function normalizeTask(raw: unknown): Task {
     call_id: str(t.call_id) || null,
     created_at: created,
     updated_at: num(t.updated_at, created),
+    practice: t.practice === true,
   };
 }

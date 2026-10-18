@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { AppState, Linking, Platform, StyleSheet, View } from 'react-native';
 
 import { READY_PARTS, ReadinessSheet } from '../../components/domain/ReadinessSheet';
+import { OutdatedServerBanner } from '../../components/domain/ServerNotices';
 import { ServerConnect } from '../../components/domain/ServerConnect';
 import { Banner } from '../../components/ui/Banner';
 import { Button } from '../../components/ui/Button';
@@ -23,8 +24,9 @@ import { useServerConfig } from '../../hooks/useServerConfig';
 import { clearConfig } from '../../lib/api';
 import { useThemePreference, type ThemePreference } from '../../lib/design/theme';
 import { checkHealth, diagnosticsText, LOGS_COMMAND, speedWord } from '../../lib/diagnostics';
-import { clockTime, dialerName } from '../../lib/format';
+import { clockTime } from '../../lib/format';
 import { useLive } from '../../lib/live';
+import { phoneLineText, serverOutdated } from '../../lib/serverStatus';
 import { allowNotifications, notificationAccess, sendTestNotification, type NotificationAccess } from '../../lib/notifications';
 
 const ACCESS_WORD: Record<NotificationAccess, string> = {
@@ -133,10 +135,14 @@ export default function Settings() {
             <View style={styles.pad}>
               <Banner tone="danger" title="Your server didn't answer" message={health.error} testID="health-error" />
             </View>
+          ) : serverOutdated(h) ? (
+            <View style={styles.pad}>
+              <OutdatedServerBanner />
+            </View>
           ) : null}
           <ListRow icon="pulse-outline" title="Live updates" value={live.connected ? 'On' : 'Reconnecting'} />
           <ListRow icon="speedometer-outline" title="Response time" value={check ? `${check.ms} ms · ${speedWord(check.ms)}` : waiting} />
-          <ListRow icon="call-outline" title="Outbound calling" value={h ? dialerName(h.dialer) : waiting} />
+          <ListRow icon="call-outline" title="Phone line" value={h ? phoneLineText(h) : waiting} />
           <ListRow icon="people-outline" title="Calls right now" value={h ? String(h.active_calls) : waiting} />
           <ListRow
             icon="hardware-chip-outline"
@@ -226,7 +232,7 @@ export default function Settings() {
 
       <Section title="About and diagnostics" testID="about">
         <ListRow icon="phone-portrait-outline" title="App version" value={appVersion || 'Unknown'} />
-        {h ? <ListRow icon="server-outline" title="Server version" value={h.version || 'Unknown'} /> : null}
+        {h ? <ListRow icon="server-outline" title="Server version" value={h.version || (serverOutdated(h) ? 'First version' : 'Unknown')} /> : null}
         {h?.llm_model ? <ListRow icon="sparkles-outline" title="Language model" subtitle={h.llm_model} /> : null}
         <ListRow
           icon="document-text-outline"

@@ -18,6 +18,7 @@ export interface RequestInitLike {
   method?: string;
   headers?: Record<string, string>;
   body?: string | FormData;
+  signal?: AbortSignal;
 }
 
 export type FetchLike = (url: string, init?: RequestInitLike) => Promise<ResponseLike>;

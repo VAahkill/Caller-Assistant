@@ -13,6 +13,7 @@ const check: HealthCheck = {
     active_calls: 1,
     ready: { stt: true, lid: true, mt: true, llm: true, tts: false },
     llm_model: 'qwen2.5-3b-instruct-q4_k_m',
+    phone_line: { kind: 'twilio', ok: true, inbound: false, outbound: true, detail: 'Twilio places your calls. Calls to your phone ring as usual.' },
   },
 };
 
@@ -38,6 +39,8 @@ describe('diagnostics', () => {
       'Language model: qwen2.5-3b-instruct-q4_k_m',
       'Outbound calling: Twilio',
       'Calls right now: 1',
+      'Phone line: twilio, connected, calls in no, calls out yes',
+      'Phone line says: Twilio places your calls. Calls to your phone ring as usual.',
     ]);
     expect(text).not.toContain('secret-token-123');
   });
@@ -66,12 +69,13 @@ describe('diagnostics', () => {
       platform: 'web',
       config: { url: TEST_URL, token: 't' },
       connected: true,
-      check: { ...check, health: { ...check.health, ready: null, llm_model: '', version: '' } },
+      check: { ...check, health: { ...check.health, ready: null, llm_model: '', version: '', phone_line: null } },
       error: null,
     });
     expect(text).toContain('Parts: not reported');
     expect(text).toContain('Language model: not reported');
-    expect(text).toContain('Server version: unknown');
+    expect(text).toContain('Server version: the first version (needs updating)');
+    expect(text).toContain('Phone line: not reported');
   });
 
   test('response time words', () => {

@@ -1,5 +1,5 @@
 import { liveReducer, initialLive, parseEvent, type ServerEvent } from '../events';
-import { addTaskStep, isTaskActive, taskTimeline, TASK_KINDS, TASK_TEMPLATES } from '../tasks';
+import { addTaskStep, DIAL_FAILED, isTaskActive, taskResultText, taskTimeline, TASK_KINDS, TASK_TEMPLATES } from '../tasks';
 import type { Task } from '../types';
 
 const T0 = 1_760_000_000;
@@ -16,6 +16,7 @@ const task = (patch: Partial<Task> = {}): Task => ({
   call_id: null,
   created_at: T0,
   updated_at: T0,
+  practice: false,
   ...patch,
 });
 
@@ -110,8 +111,38 @@ describe('task_update events', () => {
     ]);
   });
 
+  test('say whether the task was only practised', () => {
+    const practised = parseEvent({ event: 'task_update', task: { id: 'p', status: 'in_call', practice: true } });
+    expect(practised.ok && (practised.event as Extract<ServerEvent, { event: 'task_update' }>).task.practice).toBe(true);
+    // Older servers don't say: a real call.
+    const real = parseEvent({ event: 'task_update', task: { id: 'r', status: 'in_call', practice: 'yes' } });
+    expect(real.ok && (real.event as Extract<ServerEvent, { event: 'task_update' }>).task.practice).toBe(false);
+  });
+
   test('an unknown status reads as queued rather than breaking the screen', () => {
     const parsed = parseEvent({ event: 'task_update', task: { id: 'x', status: 'teleporting' } });
     expect(parsed.ok && (parsed.event as Extract<ServerEvent, { event: 'task_update' }>).task.status).toBe('queued');
+  });
+});
+
+describe('what a task found out', () => {
+  test.each([
+    'All connection attempts failed',
+    'httpx.ConnectError: [Errno 111] Connection refused',
+    'ConnectTimeout',
+    'Timed out',
+    '[Errno -2] Name or service not known',
+    'Network is unreachable',
+  ])('a raw network error from the server reads as a sentence: %s', (result) => {
+    expect(taskResultText(task({ status: 'failed', result }))).toBe(DIAL_FAILED);
+  });
+
+  test("the server's own sentences, and finished tasks, are kept as they are", () => {
+    expect(taskResultText(task({ status: 'failed', result: "No one answered after 3 tries. I'll stop here." }))).toBe("No one answered after 3 tries. I'll stop here.");
+    expect(taskResultText(task({ status: 'failed', result: 'They said the line timed out on their side, try later.' }))).toBe(
+      'They said the line timed out on their side, try later.',
+    );
+    expect(taskResultText(task({ status: 'done', result: ' Booked for 4 at 8 PM. ' }))).toBe('Booked for 4 at 8 PM.');
+    expect(taskResultText(task({ status: 'failed', result: '' }))).toBe('');
   });
 });

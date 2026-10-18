@@ -8,7 +8,7 @@ import { duration } from '../../lib/format';
 import { engineName } from '../../lib/labels';
 import { languageName } from '../../lib/languages';
 import type { VoiceInfo } from '../../lib/types';
-import { samplePathFor, type VoiceGroup } from '../../lib/voices';
+import { preloadable, samplePathFor, type VoiceGroup } from '../../lib/voices';
 import { IconButton } from '../ui/IconButton';
 import { Section } from '../ui/Section';
 import { Text } from '../ui/Text';
@@ -116,12 +116,14 @@ export function visibleVoices(group: VoiceGroup, chosen?: string, limit?: number
   return limit ? group.voices.filter((v, i) => i < limit || v.id === chosen) : group.voices;
 }
 
-/** The demo of each voice shown, as sources to preload so a tap plays at once. */
+/** The demo of each voice shown, in list order, as sources to preload so a
+ *  tap plays at once. Demos the server makes on demand are left out. */
 export function demoSources(shown: { lang: string; voices: VoiceInfo[] }[]): MediaSource[] {
   const out = new Map<string, MediaSource>();
   for (const g of shown) {
     for (const v of g.voices) {
-      const s = api.voiceSample({ sample_url: samplePathFor(v, g.lang) });
+      const path = samplePathFor(v, g.lang);
+      const s = preloadable(path) ? api.voiceSample({ sample_url: path }) : null;
       if (s && v.status === 'ready') out.set(s.uri, s);
     }
   }

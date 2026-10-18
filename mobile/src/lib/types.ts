@@ -83,6 +83,8 @@ export interface Task {
   call_id: string | null;
   created_at: number;
   updated_at: number;
+  /** Tried out in the app (/ws/simulate, the owner playing the place), not a real call. */
+  practice: boolean;
 }
 
 export interface Location {
@@ -207,14 +209,33 @@ export interface ReadyFlags {
   lid: boolean;
 }
 
+export type PhoneLineKind = 'bluetooth' | 'gsm' | 'twilio' | 'none';
+
+/** How real calls reach the server (/health "phone_line"). Android doesn't let
+ *  apps answer or speak on cellular calls, so the server's line is the only way. */
+export interface PhoneLine {
+  kind: PhoneLineKind;
+  /** A line is connected and can carry calls now. */
+  ok: boolean;
+  /** Real calls can reach the assistant. */
+  inbound: boolean;
+  /** Call for me can place real calls. */
+  outbound: boolean;
+  /** What the server found, in a sentence or two for the owner. */
+  detail: string;
+}
+
 export interface Health {
   ok: boolean;
+  /** Empty from the first version of the server, which didn't send one. */
   version: string;
   dialer: string;
   active_calls: number;
   /** null from servers older than v2, which don't report readiness. */
   ready: ReadyFlags | null;
   llm_model: string;
+  /** null from servers older than 2.1, which don't report their phone line. */
+  phone_line: PhoneLine | null;
 }
 
 export type AssistantState = 'listening' | 'transcribing' | 'translating' | 'thinking' | 'speaking' | 'idle' | 'error';

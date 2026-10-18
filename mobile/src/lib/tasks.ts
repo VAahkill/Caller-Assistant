@@ -100,3 +100,26 @@ export function addTaskStep(steps: TaskStep[] | undefined, task: Task, now: numb
   if (list[list.length - 1]?.status === task.status) return list;
   return [...list, { status: task.status, at: task.updated_at || now }];
 }
+
+// What older servers stored as a failed task's result when dialling failed:
+// the network library's own words, not a sentence for the owner.
+const RAW_DIAL_ERRORS = [
+  /all connection attempts failed/i,
+  /connection (refused|reset|aborted)/i,
+  /name or service not known|nodename nor servname|temporary failure in name resolution|getaddrinfo/i,
+  /network is unreachable|no route to host/i,
+  /\[errno -?\d+\]/i,
+  /^\s*(httpx|httpcore|aiohttp)\b/i,
+  /^\s*(connect|read|write|pool)?\s*(timed out|timeout)(error)?\.?\s*$/i,
+  /^\s*(ConnectError|ConnectTimeout|ReadTimeout|OSError|ConnectionError|TimeoutError)\b/,
+];
+
+export const DIAL_FAILED = "Your server couldn't reach its phone line, so the call wasn't placed.";
+
+/** A task's result as the owner should read it: a raw network error from an
+ *  older server becomes a plain sentence; anything else is kept as it is. */
+export function taskResultText(task: Pick<Task, 'status' | 'result'>): string {
+  const result = task.result.trim();
+  if (task.status === 'failed' && RAW_DIAL_ERRORS.some((re) => re.test(result))) return DIAL_FAILED;
+  return result;
+}

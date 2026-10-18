@@ -5,7 +5,7 @@
 import { PRACTICE_NUMBER } from '../practiceCalls';
 import { scriptLanguage } from '../script';
 import type { SocketLike } from '../transport';
-import type { CallRecord, TranscriptLine } from '../types';
+import type { CallRecord, Task, TranscriptLine } from '../types';
 import type { MockServer } from './server';
 
 type Json = Record<string, unknown>;
@@ -211,6 +211,12 @@ export class MockSimulateSocket extends MockSocketBase {
   private ended = false;
   private record: CallRecord | null = null;
   private readonly number: string;
+  /** Practising Call for me (?goal=): the assistant calls, the app plays the place. */
+  private readonly goal: { goal: string; kind: string; target_name: string } | null;
+  private task: Task | null = null;
+  private opening = false;
+  /** What the place said last, for the task's result. */
+  private lastFromPlace = '';
 
   constructor(
     private readonly server: MockServer,
@@ -219,11 +225,13 @@ export class MockSimulateSocket extends MockSocketBase {
     super(server.latencyMs ? 500 : 0);
     this.lang = query.get('lang') ?? '';
     this.number = query.get('number') || PRACTICE_NUMBER;
+    const goal = (query.get('goal') ?? '').trim();
+    this.goal = goal ? { goal, kind: query.get('kind') || 'enquire', target_name: query.get('target_name') ?? '' } : null;
   }
 
   private base() {
     // Like the server: a caller without a contact is named by their number.
-    return { call_id: this.callId, who: this.number };
+    return { call_id: this.callId, who: this.goal?.target_name || this.number };
   }
 
   /** Like the server, a practice call is an ordinary call: stored, and its
@@ -238,12 +246,14 @@ export class MockSimulateSocket extends MockSocketBase {
   }
 
   protected opened() {
-    this.emit({ event: 'started', call_id: this.callId });
+    // Like the server: a practice task skips screening and is recorded like a real one.
+    if (this.goal) this.task = this.server.startPracticeTask({ number: this.number, ...this.goal }, this.callId);
+    this.emit({ event: 'started', call_id: this.callId, ...(this.task ? { task_id: this.task.id } : {}) });
     const record: CallRecord = {
       id: this.callId,
-      direction: 'inbound',
+      direction: this.task ? 'outbound' : 'inbound',
       number: this.number,
-      contact_name: '',
+      contact_name: this.goal?.target_name ?? '',
       category: 'unknown',
       status: 'active',
       language: this.lang || 'en',
@@ -258,12 +268,39 @@ export class MockSimulateSocket extends MockSocketBase {
       reject_reason: '',
       urgent: false,
       action_items: [],
+      practice: true,
     };
+    if (this.task) record.task_id = this.task.id;
     this.record = record;
     this.server.state.calls = [record, ...this.server.state.calls];
     this.publish({ event: 'call_started', ...this.base(), call: record });
+    if (this.task) {
+      // Like the server, the assistant lets the place say hello first, then starts.
+      this.later(this.server.latencyMs ? 3000 : this.stepMs, () => this.openTask(0));
+      return;
+    }
     const g = phrase(this.lang || 'en', 'greeting');
     this.assistantSays(g, 0);
+  }
+
+  /** The assistant says who it calls for and why, once. */
+  private openTask(after: number) {
+    if (!this.goal || this.opening || this.ended) return;
+    this.opening = true;
+    const owner = this.server.state.profile.user_name || 'my owner';
+    const assistant = this.server.state.profile.assistant_name || 'the assistant';
+    this.assistantSays({ text: `Hello, this is ${assistant}, calling for ${owner}. ${this.goal.goal}`, lang: 'en', translation: '' }, after);
+  }
+
+  /** The assistant's reply to the place (English only: the mock has no translator). */
+  private taskReply(text: string): { text: string; lang: string; translation: string } {
+    const owner = this.server.state.profile.user_name || 'my owner';
+    if (/\bname\b|पेर|नाम|పేరు|பெயர/i.test(text)) return { text: `It's under ${owner}, please.`, lang: 'en', translation: '' };
+    if (/full|not available|no table|instead|another|ఖాళీ లేదు|जगह नहीं|ஃபுல்/i.test(text)) {
+      return { text: `Thank you. Let me check that with ${owner} and confirm.`, lang: 'en', translation: '' };
+    }
+    if (/\b(done|booked|confirmed|okay|ok|sure|yes)\b/i.test(text)) return { text: 'Thank you, that is all. Goodbye!', lang: 'en', translation: '' };
+    return { text: 'Thank you. Could you confirm that for me, please?', lang: 'en', translation: '' };
   }
 
   private assistantSays(p: { text: string; lang: string; translation: string }, after: number) {
@@ -346,8 +383,16 @@ export class MockSimulateSocket extends MockSocketBase {
       );
     }
     this.publish({ event: 'assistant_status', ...b, state: 'thinking' }, step * 2);
+    if (this.goal) {
+      this.lastFromPlace = heard.text;
+      // The place said hello first: the assistant answers with why it calls.
+      if (!this.opening) this.openTask(step * 3);
+      else this.assistantSays(this.taskReply(heard.text), step * 3);
+      return;
+    }
     this.assistantSays(phrase(this.lang, topicOf(heard.text + ('audio_b64' in msg ? ' order' : ''))), step * 3);
   }
+
 
   private hangup() {
     if (this.ended) return;
@@ -367,6 +412,15 @@ export class MockSimulateSocket extends MockSocketBase {
     this.record.status = 'ended';
     this.record.ended_at = nowS();
     this.record.summary = this.record.transcript.some((l) => l.speaker === 'caller') ? 'A practice call.' : '';
+    // Like a real task, the result comes from how the call went.
+    if (this.task) {
+      const said = this.lastFromPlace;
+      this.server.advanceTask(
+        this.task.id,
+        said ? 'done' : 'failed',
+        said ? { outcome: 'conveyed', result: `They said: "${said}"` } : { outcome: 'no_answer', result: 'Nobody answered the practice call.' },
+      );
+    }
   }
 
   close(code = 1000, reason = '') {

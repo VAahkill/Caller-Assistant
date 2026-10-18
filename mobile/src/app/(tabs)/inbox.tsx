@@ -28,6 +28,7 @@ import {
   type InboxFilter,
 } from '../../lib/inbox';
 import { useLive } from '../../lib/live';
+import { canCallOut } from '../../lib/serverStatus';
 import type { CallSummary, CallerMessage } from '../../lib/types';
 
 type Tab = 'messages' | 'calls';
@@ -35,7 +36,7 @@ type Tab = 'messages' | 'calls';
 /** Inbox: messages callers left, and every call with its summary. Search and
  *  the filter chips work on both; each message is filtered by its call. */
 export default function Inbox() {
-  const { refreshKey, calls: liveCalls } = useLive();
+  const { refreshKey, calls: liveCalls, connected } = useLive();
   const toast = useToast();
   const params = useLocalSearchParams<{ tab?: string; filter?: string }>();
   const [tab, setTab] = useState<Tab>(params.tab === 'calls' ? 'calls' : 'messages');
@@ -52,6 +53,7 @@ export default function Inbox() {
 
   const messages = useResource(() => api.messages(), refreshKey);
   const calls = useResource(() => api.calls(), refreshKey);
+  const health = useResource(() => api.health(), connected);
   const callById = useMemo(() => new Map((calls.data ?? []).map((c) => [c.id, c])), [calls.data]);
 
   const shownMessages = useMemo(
@@ -184,6 +186,7 @@ export default function Inbox() {
                       key={m.id}
                       message={m}
                       call={callById.get(m.call_id)}
+                      canCallBack={canCallOut(health.data)}
                       testID={`message-${m.id}`}
                       onOpen={() => openMessage(m)}
                       onChanged={(u) => messages.mutate((list) => list?.map((x) => (x.id === u.id ? u : x)))}

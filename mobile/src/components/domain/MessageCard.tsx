@@ -22,19 +22,24 @@ export interface MessageCardProps {
   call?: CallSummary;
   onOpen?: () => void;
   onChanged?: (m: CallerMessage) => void;
+  /** The server can place a call to pass a reply on (false: no phone line). */
+  canCallBack?: boolean;
   testID?: string;
 }
 
 const digits = (n: string) => n.replace(/[^\d]/g, '');
 
 /** A message a caller left: read it, reply through the assistant, call or WhatsApp back. */
-export function MessageCard({ message: m, call, onOpen, onChanged, testID }: MessageCardProps) {
+export function MessageCard({ message: m, call, onOpen, onChanged, canCallBack = true, testID }: MessageCardProps) {
   const toast = useToast();
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState('');
-  const [callBack, setCallBack] = useState(true);
+  const [wantCallBack, setCallBack] = useState(true);
   const practice = isPracticeMessage(m, call);
   const name = m.caller_name || (practice ? 'Practice call' : prettyNumber(m.number));
+  // No one to call after a practice call, and no way to call without a phone line.
+  const offerCallBack = canCallBack && !practice;
+  const callBack = offerCallBack && wantCallBack;
 
   const reply = useAsyncAction(() => api.replyMessage(m.id, text.trim(), callBack), {
     success: callBack ? `Your assistant will call ${name} back with your reply.` : 'Reply saved.',
@@ -96,12 +101,14 @@ export function MessageCard({ message: m, call, onOpen, onChanged, testID }: Mes
             autoFocus
             error={reply.error}
           />
-          <View style={styles.switchRow}>
-            <Text variant="callout" style={styles.flex}>
-              Call them back and tell them
-            </Text>
-            <Switch value={callBack} onValueChange={setCallBack} accessibilityLabel="Call them back and tell them" />
-          </View>
+          {offerCallBack ? (
+            <View style={styles.switchRow}>
+              <Text variant="callout" style={styles.flex}>
+                Call them back and tell them
+              </Text>
+              <Switch value={callBack} onValueChange={setCallBack} accessibilityLabel="Call them back and tell them" />
+            </View>
+          ) : null}
           <View style={styles.actions}>
             <Button title="Cancel" variant="ghost" size="sm" onPress={() => setReplying(false)} />
             <Button title="Send reply" size="sm" icon="send" loading={reply.busy} disabled={!text.trim()} onPress={() => void send()} />

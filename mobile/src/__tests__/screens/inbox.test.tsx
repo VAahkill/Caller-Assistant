@@ -14,6 +14,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import Inbox from '../../app/(tabs)/inbox';
 import { OFFLINE } from '../../lib/api';
 import { dayTitle } from '../../lib/inbox';
+import { NO_LINE } from '../../lib/mock/fixtures';
 import type { MockServer } from '../../lib/mock/server';
 import { getTransport, setTransport } from '../../lib/transport';
 import { resetApi, useMockServer } from '../../test/mockApi';
@@ -36,6 +37,33 @@ beforeEach(async () => {
 afterEach(resetApi);
 
 describe('Messages', () => {
+  const replyTo = async (text: string) => {
+    const card = within(await screen.findByTestId('message-msg-rajesh'));
+    await fireEvent.press(card.getByRole('button', { name: 'Reply' }));
+    await fireEvent.changeText(screen.getByLabelText('Reply for your assistant to pass on'), text);
+    return card;
+  };
+  const replies = () => requests('POST', '/messages/msg-rajesh/reply').map((r) => r.body);
+
+  test('a reply can ask the assistant to call them back when the server has a line', async () => {
+    await renderScreen(<Inbox />);
+    await replyTo('Come at 6');
+    expect(screen.getByLabelText('Call them back and tell them')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Send reply' }));
+    await waitFor(() => expect(replies()).toEqual([{ text: 'Come at 6', call_back: true }]));
+  });
+
+  test('without a phone line the reply is only saved, with no call back offered', async () => {
+    server.state.health = { ...server.state.health, phone_line: { ...NO_LINE } };
+    await renderScreen(<Inbox />);
+    await waitFor(() => expect(requests('GET', '/health').length).toBeGreaterThan(0));
+    await replyTo('Come at 6');
+    await waitFor(() => expect(screen.queryByLabelText('Call them back and tell them')).toBeNull());
+    await fireEvent.press(screen.getByRole('button', { name: 'Send reply' }));
+    await waitFor(() => expect(replies()).toEqual([{ text: 'Come at 6', call_back: false }]));
+    expect(await screen.findByText('Reply saved.')).toBeTruthy();
+  });
+
   test('lists messages under day headings, new ones marked', async () => {
     await renderScreen(<Inbox />);
     await screen.findByTestId('message-msg-amma');

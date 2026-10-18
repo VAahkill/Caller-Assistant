@@ -2,11 +2,12 @@ import { StyleSheet, View } from 'react-native';
 
 import { Icon, type IconName } from '../../lib/design';
 import { useTokens } from '../../lib/design/theme';
-import { dialerName } from '../../lib/format';
+import { noLineForCalls, phoneLineText, serverOutdated, SERVER_OUTDATED, UPDATE_GUIDE_URL } from '../../lib/serverStatus';
 import type { Health, ReadyFlags } from '../../lib/types';
 import { BottomSheet } from '../ui/BottomSheet';
 import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
+import { openGuide } from './ServerNotices';
 
 /** The parts of the server a call needs, in the order a call uses them. */
 export const READY_PARTS: { key: keyof ReadyFlags; title: string; detail: string; icon: IconName }[] = [
@@ -21,9 +22,11 @@ export const READY_PARTS: { key: keyof ReadyFlags; title: string; detail: string
 export function readinessText(connected: boolean, health: Health | null): { ok: boolean; text: string } {
   if (!connected) return { ok: false, text: 'Reconnecting to your server' };
   if (!health) return { ok: true, text: 'Connected to your server' };
+  if (serverOutdated(health)) return { ok: false, text: 'Connected · server needs updating' };
   if (!health.ready) return { ok: true, text: 'Connected' };
   const missing = READY_PARTS.filter((p) => !health.ready?.[p.key]).map((p) => p.title.toLowerCase());
-  return missing.length ? { ok: false, text: `Getting ready: ${missing.join(', ')}` } : { ok: true, text: 'Connected · everything ready' };
+  if (missing.length) return { ok: false, text: `Getting ready: ${missing.join(', ')}` };
+  return noLineForCalls(health) ? { ok: false, text: 'Ready · no phone line yet' } : { ok: true, text: 'Connected · everything ready' };
 }
 
 export interface ReadinessSheetProps {
@@ -37,7 +40,7 @@ export interface ReadinessSheetProps {
   onRefresh: () => void;
 }
 
-/** What the server reports about itself: each part a call needs, the model and the dialler. */
+/** What the server reports about itself: each part a call needs, the model and the phone line. */
 export function ReadinessSheet({ visible, onClose, connected, health, error, refreshing, onRefresh }: ReadinessSheetProps) {
   const t = useTokens();
   const c = t.color;
@@ -81,14 +84,34 @@ export function ReadinessSheet({ visible, onClose, connected, health, error, ref
             </View>
           );
         })
-      ) : health ? (
+      ) : health && !serverOutdated(health) ? (
         <Text variant="subhead" color="text2">
           This server doesn't report which parts are ready. Update it to see each one here.
         </Text>
       ) : null}
+      {serverOutdated(health) ? (
+        <View style={[styles.note, { backgroundColor: c.warningContainer, borderRadius: t.radius.md }]} testID="ready-outdated">
+          <Text variant="subhead" color={c.onWarningContainer}>
+            {SERVER_OUTDATED}
+          </Text>
+          <View style={styles.noteAction}>
+            <Button title="Open the setup guide" size="sm" icon="open-outline" onPress={() => openGuide(UPDATE_GUIDE_URL)} />
+          </View>
+        </View>
+      ) : null}
+      {health?.phone_line?.detail ? (
+        <View style={styles.row} testID="ready-phone-line">
+          <View style={[styles.icon, { backgroundColor: health.phone_line.ok ? c.successContainer : c.warningContainer }]}>
+            <Icon name="call-outline" size={18} color={health.phone_line.ok ? c.onSuccessContainer : c.onWarningContainer} />
+          </View>
+          <Text variant="footnote" color="text2" style={styles.flex}>
+            {health.phone_line.detail}
+          </Text>
+        </View>
+      ) : null}
       {health ? (
         <View style={[styles.facts, { borderTopColor: c.border }]}>
-          <Fact label="Outbound calling" value={health.dialer === 'none' ? 'Not set up' : dialerName(health.dialer)} />
+          <Fact label="Phone line" value={phoneLineText(health)} />
           <Fact label="Calls right now" value={String(health.active_calls)} />
           {health.version ? <Fact label="Server version" value={health.version} /> : null}
         </View>
@@ -116,4 +139,6 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   facts: { borderTopWidth: StyleSheet.hairlineWidth, marginTop: 8, paddingTop: 12, gap: 8 },
   fact: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  note: { padding: 12, gap: 8 },
+  noteAction: { flexDirection: 'row' },
 });

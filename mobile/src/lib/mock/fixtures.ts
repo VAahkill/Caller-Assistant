@@ -7,6 +7,7 @@ import type {
   CallerMessage,
   Health,
   InstructionTemplate,
+  PhoneLine,
   Profile,
   Task,
   TranscriptLine,
@@ -22,6 +23,25 @@ export interface MockState {
   voices: VoiceInfo[];
   templates: InstructionTemplate[];
 }
+
+/** The demo's phone line: a phone paired by Bluetooth, carrying calls both ways. */
+export const LINE_READY: PhoneLine = {
+  kind: 'bluetooth',
+  ok: true,
+  inbound: true,
+  outbound: true,
+  detail: 'A phone is connected by Bluetooth and ready for calls.',
+};
+
+/** What a server with no line says, e.g. in Docker Desktop on Windows. */
+export const NO_LINE: PhoneLine = {
+  kind: 'none',
+  ok: false,
+  inbound: false,
+  outbound: false,
+  detail:
+    'No phone line is connected. Calls need a phone paired by Bluetooth with a Linux computer, or a USB SIM modem with Asterisk; Docker Desktop on Windows can use neither.',
+};
 
 export const LIVE_CALL_ID = 'call-live-swiggy';
 export const LIVE_HOLD_ID = 'hold-gate';
@@ -265,6 +285,7 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
       call_id: null,
       created_at: now - 3 * min,
       updated_at: now - 1 * min,
+      practice: false,
     },
     {
       id: 'task-paradise',
@@ -278,6 +299,7 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
       call_id: paradise.id,
       created_at: now - 5 * hour - 2 * min,
       updated_at: now - 5 * hour + 60,
+      practice: false,
     },
     {
       id: 'task-dentist',
@@ -291,6 +313,7 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
       call_id: null,
       created_at: now - 28 * hour,
       updated_at: now - 27 * hour,
+      practice: false,
     },
   ];
 
@@ -488,11 +511,12 @@ export function createFixtures(now: number = Date.now() / 1000): MockState {
   return {
     health: {
       ok: true,
-      version: '2.0.0',
+      version: '2.1.0',
       dialer: 'bluetooth',
       active_calls: 1,
       ready: { stt: true, tts: true, llm: true, mt: true, lid: true },
       llm_model: 'qwen2.5-3b-instruct-q4_k_m',
+      phone_line: { ...LINE_READY },
     },
     profile,
     calls: [liveCall, amma, rajesh, scam, loan, paradise, bluedart, priya],

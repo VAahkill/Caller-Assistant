@@ -5,11 +5,13 @@ jest.mock('expo-router', () => ({ ...jest.requireActual('expo-router'), router: 
 
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react-native';
 import { router } from 'expo-router';
+import { Linking } from 'react-native';
 
 import Today from '../../app/(tabs)/index';
 import { isToday } from '../../lib/format';
-import { LIVE_CALL_ID } from '../../lib/mock/fixtures';
+import { LIVE_CALL_ID, NO_LINE } from '../../lib/mock/fixtures';
 import type { MockServer } from '../../lib/mock/server';
+import { PHONE_LINE_GUIDE_URL, UPDATE_GUIDE_URL } from '../../lib/serverStatus';
 import { resetApi, useMockServer } from '../../test/mockApi';
 import { renderScreen } from '../../test/renderScreen';
 
@@ -132,4 +134,51 @@ test('turning the assistant off saves and says what happens to calls', async () 
   expect(await screen.findByText('Calls will ring through as usual.')).toBeTruthy();
   expect(server.state.profile.enabled).toBe(false);
   expect(screen.getByText('Assistant is off')).toBeTruthy();
+});
+
+describe('the phone line', () => {
+  test("with no line, Today doesn't say real calls are answered, says why, and offers practice", async () => {
+    server.state.health = { ...server.state.health, phone_line: { ...NO_LINE } };
+    server.state.calls = server.state.calls.filter((x) => x.id !== LIVE_CALL_ID);
+    await renderScreen(<Today />);
+    expect(await screen.findByText('Ava is on · no phone line yet')).toBeTruthy();
+    expect(screen.getByText('Real calls ring through as usual until your server has a phone line.')).toBeTruthy();
+    const card = within(screen.getByTestId('phone-line'));
+    expect(card.getByText("Real calls can't reach Ava yet")).toBeTruthy();
+    expect(card.getByText("Android doesn't let apps answer or speak on phone calls, so calls reach Ava through your server's phone line.")).toBeTruthy();
+    expect(card.getByText(NO_LINE.detail)).toBeTruthy();
+    await fireEvent.press(card.getByRole('button', { name: 'Try a practice call' }));
+    expect(push).toHaveBeenCalledWith('/practice');
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    await fireEvent.press(card.getByRole('button', { name: 'How to connect a phone line' }));
+    expect(openURL).toHaveBeenCalledWith(PHONE_LINE_GUIDE_URL);
+    openURL.mockRestore();
+    // The chip and its sheet say the same.
+    await fireEvent.press(screen.getByRole('button', { name: 'Ready · no phone line yet. Details' }));
+    const sheet = within(await screen.findByTestId('readiness-sheet'));
+    expect(sheet.getByText('Not connected yet')).toBeTruthy();
+    expect(within(sheet.getByTestId('ready-phone-line')).getByText(NO_LINE.detail)).toBeTruthy();
+  });
+
+  test('with a working line there is no card, and the sheet names the line', async () => {
+    await renderScreen(<Today />);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Connected · everything ready. Details' }));
+    const sheet = within(await screen.findByTestId('readiness-sheet'));
+    expect(sheet.getByText('Bluetooth phone · connected')).toBeTruthy();
+    expect(screen.queryByTestId('phone-line')).toBeNull();
+  });
+});
+
+test('a first-version server is pointed to the update steps', async () => {
+  server.state.health = { ...server.state.health, version: '', phone_line: null, ready: null };
+  await renderScreen(<Today />);
+  const banner = within(await screen.findByTestId('server-outdated'));
+  expect(banner.getByText('Your server needs updating')).toBeTruthy();
+  const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+  await fireEvent.press(banner.getByRole('button', { name: 'Open the setup guide' }));
+  expect(openURL).toHaveBeenCalledWith(UPDATE_GUIDE_URL);
+  openURL.mockRestore();
+  // Servers this old don't report a line, so no card is guessed.
+  expect(screen.queryByTestId('phone-line')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Connected · server needs updating. Details' })).toBeTruthy();
 });

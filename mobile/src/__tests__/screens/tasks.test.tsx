@@ -12,9 +12,12 @@ jest.mock('expo-router', () => ({
 import { fireEvent, screen, waitFor, within } from '@testing-library/react-native';
 import * as Clipboard from 'expo-clipboard';
 import { router } from 'expo-router';
+import { Linking } from 'react-native';
 
 import CallForMe from '../../app/(tabs)/tasks';
+import { NO_LINE } from '../../lib/mock/fixtures';
 import type { MockServer } from '../../lib/mock/server';
+import { PHONE_LINE_GUIDE_URL } from '../../lib/serverStatus';
 import { resetApi, useMockServer } from '../../test/mockApi';
 import { renderScreen } from '../../test/renderScreen';
 
@@ -156,8 +159,97 @@ test('a finished call opens its transcript', async () => {
   expect(router.push).toHaveBeenCalledWith('/call/call-paradise');
 });
 
-test('says so when the server has no way to place calls', async () => {
-  server.state.health = { ...server.state.health, dialer: 'none' };
+describe('without a phone line', () => {
+  beforeEach(() => {
+    server.state.health = { ...server.state.health, phone_line: { ...NO_LINE } };
+  });
+
+  test("says so with the server's reason, and offers to practise the call instead", async () => {
+    await open();
+    const banner = within(await screen.findByTestId('no-line'));
+    expect(banner.getByText('No phone line yet')).toBeTruthy();
+    expect(banner.getByText(`${NO_LINE.detail} You can still practise: you play the place, and Ava calls you here in the app.`)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Start the call' })).toBeNull();
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    await fireEvent.press(banner.getByRole('button', { name: 'How to connect a phone line' }));
+    expect(openURL).toHaveBeenCalledWith(PHONE_LINE_GUIDE_URL);
+    openURL.mockRestore();
+  });
+
+  test('Practise this call opens practice with the call filled in; the practice number stands in for a missing one', async () => {
+    await open();
+    expect(screen.getByRole('button', { name: 'Practise this call' })).toBeDisabled();
+    await fireEvent.press(screen.getByTestId('template-table'));
+    await fireEvent.changeText(screen.getByLabelText('Place or person (optional)'), 'Paradise Biryani');
+    await fireEvent.press(screen.getByRole('button', { name: 'Practise this call' }));
+    expect(router.push).toHaveBeenCalledWith({
+      pathname: '/practice',
+      params: { goal: 'Book a table for 2 tonight at 8 PM under my name.', kind: 'book', target: 'Paradise Biryani', number: '+919800000000' },
+    });
+    expect(requests('POST', '/tasks')).toHaveLength(0);
+    await fireEvent.changeText(screen.getByLabelText('Phone number'), '040 2345 6789');
+    await fireEvent.press(screen.getByRole('button', { name: 'Practise this call' }));
+    expect(router.push).toHaveBeenLastCalledWith(expect.objectContaining({ params: expect.objectContaining({ number: '040 2345 6789' }) }));
+  });
+});
+
+test('an older server that reports no line goes by how it places calls', async () => {
+  server.state.health = { ...server.state.health, phone_line: null, dialer: 'none' };
   await open();
-  expect(await screen.findByText("Outbound calling isn't set up")).toBeTruthy();
+  const banner = within(await screen.findByTestId('no-line'));
+  expect(banner.getByText(/^Your server can't place calls yet\. You can still practise/)).toBeTruthy();
+});
+
+test('with a phone line, the call can still be practised first', async () => {
+  await open();
+  expect(screen.queryByTestId('no-line')).toBeNull();
+  expect(screen.getByTestId('practise-first')).toBeDisabled();
+  await fireEvent.press(screen.getByTestId('template-order'));
+  await fireEvent.press(screen.getByTestId('practise-first'));
+  expect(router.push).toHaveBeenCalledWith({
+    pathname: '/practice',
+    params: { goal: 'Ask when my order will be delivered. Order number:', kind: 'enquire', target: '', number: '+919800000000' },
+  });
+});
+
+test("a call the server turns down says the server's reason, and the screen then offers practice", async () => {
+  await open();
+  server.state.health = { ...server.state.health, phone_line: { ...NO_LINE } };
+  await fireEvent.press(screen.getByTestId('template-table'));
+  await fireEvent.changeText(screen.getByLabelText('Phone number'), '040 2345 6789');
+  await fireEvent.press(screen.getByRole('button', { name: 'Start the call' }));
+  expect(await screen.findByText(NO_LINE.detail)).toBeTruthy();
+  expect(await screen.findByTestId('no-line')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Practise this call' })).toBeTruthy();
+});
+
+test("a call that failed on the server's side is explained in a sentence, not the raw error", async () => {
+  const dentist = server.state.tasks.find((x) => x.id === 'task-dentist')!;
+  dentist.outcome = 'failed';
+  dentist.result = 'All connection attempts failed';
+  await open();
+  const card = within(screen.getByTestId('task-task-dentist'));
+  expect(card.getByText("Your server couldn't reach its phone line, so the call wasn't placed.")).toBeTruthy();
+  expect(card.queryByText('All connection attempts failed')).toBeNull();
+});
+
+test('a practice call is marked Practice and can be practised again', async () => {
+  server.state.tasks.unshift({
+    ...server.state.tasks.find((x) => x.id === 'task-paradise')!,
+    id: 'task-practice',
+    number: '+919800000000',
+    target_name: '',
+    call_id: null,
+    result: 'They said: "Yes, 8 PM is fine."',
+    practice: true,
+  });
+  await open();
+  const card = within(screen.getByTestId('task-task-practice'));
+  expect(card.getByTestId('practice-task-practice')).toBeTruthy();
+  expect(card.getByText('In the app only: nothing is really booked or arranged.')).toBeTruthy();
+  expect(card.getByText('The place')).toBeTruthy();
+  expect(within(screen.getByTestId('task-task-paradise')).queryByText('Practice')).toBeNull();
+  await fireEvent.press(card.getByRole('button', { name: 'Practise again' }));
+  expect(router.push).toHaveBeenCalledWith({ pathname: '/practice', params: expect.objectContaining({ number: '+919800000000', target: '' }) });
+  expect(requests('POST', '/tasks')).toHaveLength(0);
 });

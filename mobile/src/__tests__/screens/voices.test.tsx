@@ -10,6 +10,7 @@ import { Linking } from 'react-native';
 
 import Voices, { DELETE_AFTER_MS, POLL_MS } from '../../app/voices';
 import { getTransport, setTransport } from '../../lib/transport';
+import { DEMO_TIMEOUT_MS } from '../../lib/voices';
 import { MOCK_TOKEN, type MockServer } from '../../lib/mock/server';
 import { player, recorder, resetAudioMock, setPlayerStatus, setRecorderState } from '../../test/expoAudioMock';
 import { TEST_URL, resetApi, useMockServer } from '../../test/mockApi';
@@ -81,6 +82,8 @@ describe('the list', () => {
 describe('demos', () => {
   test('every demo is fetched once, with the token, when the screen opens, and released on leaving', async () => {
     const view = await open();
+    // One at a time, down to the last (Tamil).
+    await waitFor(() => expect((preload as jest.Mock).mock.calls.map(([s]) => s.uri)).toContain(sampleUri('mms:ta', 'ta')));
     const uris = (preload as jest.Mock).mock.calls.map(([s]) => s.uri as string);
     expect(new Set(uris).size).toBe(uris.length);
     expect((preload as jest.Mock).mock.calls).toContainEqual([{ uri: sampleUri('kokoro:af_heart', 'en'), headers: auth }]);
@@ -127,12 +130,134 @@ describe('demos', () => {
     expect(row.getByRole('button', { name: 'Play Venkatesh' })).toBeTruthy();
   });
 
-  test('a demo that fails says so on the row and in a message', async () => {
+  test('demos are fetched one at a time, top to bottom, and wait while a tapped one loads', async () => {
+    const heart = server.state.voices.find((v) => v.id === 'kokoro:af_heart')!;
+    server.state.voices.push({ ...heart, id: 'kokoro:ef_dora', name: 'Dora', languages: ['es'], sample_url: '/voices/kokoro%3Aef_dora/sample.wav?lang=es&v=3f2a1c' });
+    const pending: (() => void)[] = [];
+    (preload as jest.Mock).mockImplementation(() => new Promise<void>((resolve) => pending.push(resolve)));
+    await open();
+    const fetched = () => (preload as jest.Mock).mock.calls.map(([s]) => s.uri as string);
+    await waitFor(() => expect(fetched()).toHaveLength(1));
+    // My voices are at the top of the screen, so their demo comes first.
+    expect(fetched()[0]).toBe(sampleUri(MY, 'en'));
+    await act(async () => pending.shift()?.());
+    await waitFor(() => expect(fetched()).toHaveLength(2));
+    // A tap: nothing new starts until it plays.
+    await fireEvent.press(screen.getByTestId('play-kokoro:af_bella-en'));
+    await act(async () => pending.shift()?.());
+    expect(fetched()).toHaveLength(2);
+    await act(async () => setPlayerStatus({ playing: true }));
+    await waitFor(() => expect(fetched()).toHaveLength(3));
+    for (let i = 0; i < 40 && pending.length; i++) await act(async () => pending.shift()?.());
+    expect(fetched()).toContain(sampleUri('mms:ta', 'ta'));
+    // Languages under "More languages" wait until they are shown.
+    expect(fetched().some((u) => u.includes('ef_dora'))).toBe(false);
+    await fireEvent.press(screen.getByRole('button', { name: 'More languages (1)' }));
+    await waitFor(() => expect(fetched()).toContain(sampleUri('kokoro:ef_dora', 'es')));
+  });
+
+  test("a demo the player can't play is asked for again, and the server's reason is said", async () => {
+    server.audioReplies.set('kokoro:af_bella', { status: 409, body: { detail: 'This voice is still being prepared.' } });
     await open();
     await fireEvent.press(screen.getByTestId('play-kokoro:af_bella-en'));
     await act(async () => setPlayerStatus({ error: 'Response code: 409' }));
+    expect(await screen.findByText('This voice is still being prepared.')).toBeTruthy();
     expect(within(screen.getByTestId('voice-kokoro:af_bella-en')).getByText("Couldn't play. Tap to try again.")).toBeTruthy();
-    expect(await screen.findByText('Response code: 409')).toBeTruthy();
+    // The same address, with the same token.
+    const asked = requests('GET', '/voices/kokoro%3Aaf_bella/sample.wav');
+    expect(asked).toHaveLength(1);
+    expect(asked[0].query.get('lang')).toBe('en');
+  });
+
+  test("a demo that doesn't start in time is checked; ready on the server, it plays again by itself", async () => {
+    jest.useFakeTimers();
+    await open();
+    await fireEvent.press(screen.getByTestId('play-kokoro:af_bella-en'));
+    const row = within(screen.getByTestId('voice-kokoro:af_bella-en'));
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(DEMO_TIMEOUT_MS);
+    });
+    // Still loading while it checks, then the same demo is played once more.
+    expect(row.getByText('Loading…')).toBeTruthy();
+    await waitFor(() => expect(player.replace).toHaveBeenCalledTimes(2));
+    expect(player.replace).toHaveBeenLastCalledWith({ uri: sampleUri('kokoro:af_bella', 'en'), headers: auth });
+    await act(async () => setPlayerStatus({ playing: true }));
+    expect(within(screen.getByTestId('voice-kokoro:af_bella-en')).getByText('Playing…')).toBeTruthy();
+  });
+
+  test('ready on the server but still not playing: the phone could not play it', async () => {
+    jest.useFakeTimers();
+    await open();
+    await fireEvent.press(screen.getByTestId('play-kokoro:af_bella-en'));
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(DEMO_TIMEOUT_MS);
+    });
+    await waitFor(() => expect(player.replace).toHaveBeenCalledTimes(2));
+    await act(async () => {
+      await jest.advanceTimersByTimeAsync(DEMO_TIMEOUT_MS);
+    });
+    expect(await screen.findByText("Your server sent the demo, but this phone couldn't play it. Try again in a moment.")).toBeTruthy();
+    expect(player.replace).toHaveBeenCalledTimes(2);
+  });
+
+  test("a server that can't be reached is named, with the Wi-Fi to check", async () => {
+    await open();
+    const transport = getTransport();
+    setTransport({ ...transport, fetch: async () => Promise.reject(new TypeError('Network request failed')) });
+    await fireEvent.press(screen.getByTestId('play-kokoro:af_bella-en'));
+    await act(async () => setPlayerStatus({ error: 'Failed to connect' }));
+    expect(
+      await screen.findByText(`Couldn't reach your server at ${TEST_URL}. Check that the phone and the computer are on the same Wi-Fi and that the server is running.`),
+    ).toBeTruthy();
+  });
+
+  test('moving on to another demo while one is checked cancels the check; nothing is said about it', async () => {
+    const transport = getTransport();
+    let asked = 0;
+    let cancelled = 0;
+    setTransport({
+      ...transport,
+      fetch: (url, init) =>
+        url.includes('/sample.wav')
+          ? new Promise((_resolve, reject) => {
+              asked += 1;
+              init?.signal?.addEventListener('abort', () => {
+                cancelled += 1;
+                reject(new Error('Aborted'));
+              });
+            })
+          : transport.fetch(url, init),
+    });
+    await open();
+    await fireEvent.press(screen.getByTestId('play-kokoro:af_bella-en'));
+    await act(async () => setPlayerStatus({ error: 'Response code: 503' }));
+    await waitFor(() => expect(asked).toBe(1));
+    const row = within(screen.getByTestId('voice-kokoro:af_bella-en'));
+    expect(row.getByText('Loading…')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('play-kokoro:af_heart-en'));
+    expect(cancelled).toBe(1);
+    expect(row.getByRole('button', { name: 'Play Bella' })).toBeTruthy();
+    expect(player.replace).toHaveBeenLastCalledWith({ uri: sampleUri('kokoro:af_heart', 'en'), headers: auth });
+    await act(async () => {
+      await new Promise((r) => setTimeout(r, 20));
+    });
+    expect(screen.queryByText(/^Couldn't reach your server/)).toBeNull();
+    expect(row.queryByText("Couldn't play. Tap to try again.")).toBeNull();
+  });
+
+  test('a first-version server: a notice at the top, and a missing demo is explained as that', async () => {
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    server.state.health = { ok: true, dialer: 'asterisk', active_calls: 0 } as unknown as typeof server.state.health;
+    server.audioReplies.set('kokoro:af_bella', { status: 404, body: { detail: 'Not Found' } });
+    await open();
+    const banner = within(await screen.findByTestId('server-outdated'));
+    expect(banner.getByText('Your server needs updating')).toBeTruthy();
+    await fireEvent.press(screen.getByTestId('play-kokoro:af_bella-en'));
+    await act(async () => setPlayerStatus({ error: 'Response code: 404' }));
+    expect(await screen.findByText(/^Your server is still the first version, which can't play voice demos properly\./)).toBeTruthy();
+    await fireEvent.press(banner.getByRole('button', { name: 'Open the setup guide' }));
+    expect(openURL).toHaveBeenCalledWith(expect.stringMatching(/TRY_IT\.md#updating-from-the-first-version$/));
+    openURL.mockRestore();
   });
 
   test('Play original plays the recording; the assistant-voice demo uses a caller language it speaks', async () => {

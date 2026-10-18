@@ -1,6 +1,6 @@
 import { LinearGradient } from 'expo-linear-gradient';
-import { router, Stack, useNavigation } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { router, Stack, useLocalSearchParams, useNavigation } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 
@@ -32,8 +32,9 @@ import { duration } from '../lib/format';
 import { languageName } from '../lib/languages';
 import { liveQuickReplies } from '../lib/quickReplies';
 import { ownerTextLanguage, scriptLanguage } from '../lib/script';
-import { PRACTICE_NUMBER, PracticeCall, recordingBase64 } from '../lib/simulate';
-import type { TranscriptLine } from '../lib/types';
+import { PRACTICE_NUMBER, PracticeCall, recordingBase64, type PracticeTask } from '../lib/simulate';
+import { TASK_KINDS } from '../lib/tasks';
+import type { TaskKind, TranscriptLine } from '../lib/types';
 
 const PRACTICE_LANGUAGES = [
   { value: '', label: 'Auto' },
@@ -63,6 +64,56 @@ const IDEAS: { icon: IconName; title: string; detail: string }[] = [
   { icon: 'language-outline', title: 'Speak Telugu, Hindi or Tamil', detail: 'Read every line in your language as it goes.' },
 ];
 
+// Practising Call for me: the owner answers as the place the assistant calls.
+// The first starter answers the phone with the place's name, as a shop would.
+function placeStarters(lang: string, place: string): string[] {
+  switch (lang) {
+    case 'hi':
+      return [
+        place ? `नमस्ते, ${place}। बताइए, क्या मदद करूँ?` : 'नमस्ते, बताइए, क्या मदद करूँ?',
+        'माफ़ कीजिए, उस समय जगह नहीं है। रात 9 बजे चलेगा?',
+        'ठीक है। किस नाम से बुक करूँ?',
+      ];
+    case 'te':
+      return [
+        place ? `నమస్కారం, ${place}. చెప్పండి, ఏం కావాలి?` : 'నమస్కారం, చెప్పండి, ఏం కావాలి?',
+        'క్షమించండి, ఆ టైమ్ ఖాళీ లేదు. రాత్రి 9 గంటలకు సరిపోతుందా?',
+        'సరే. ఏ పేరు మీద బుక్ చేయమంటారు?',
+      ];
+    case 'ta':
+      return [
+        place ? `வணக்கம், ${place}. சொல்லுங்க, என்ன வேணும்?` : 'வணக்கம், சொல்லுங்க, என்ன வேணும்?',
+        'மன்னிக்கவும், அந்த நேரம் ஃபுல் ஆகிவிட்டது. இரவு 9 மணிக்கு சரியா?',
+        'சரி. எந்தப் பெயரில் புக் பண்ணணும்?',
+      ];
+    default:
+      return [
+        place ? `Hello, ${place}. How can I help you?` : 'Hello, how can I help you?',
+        "Sorry, that time is full. We have 9 PM, would that work?",
+        'Sure. What name should I put it under?',
+      ];
+  }
+}
+
+const TASK_IDEAS: { icon: IconName; title: string; detail: string }[] = [
+  { icon: 'call-outline', title: "Answer with the place's name", detail: 'Say hello as the place would. It tells you why it is calling.' },
+  { icon: 'time-outline', title: 'Say that time is full', detail: 'Offer another one. Anything different, it asks you first, right here.' },
+  { icon: 'person-outline', title: 'Ask for a name or number', detail: 'It gives your name, and never shares an OTP or bank details.' },
+  { icon: 'checkmark-done-outline', title: 'Confirm, then hang up', detail: 'The result appears in Call for me, marked Practice.' },
+];
+
+/** Route params from Call for me ("Practise this call"); with a goal the
+ *  assistant calls the owner, who plays the place. */
+type PracticeParams = { goal?: string; kind?: string; target?: string; number?: string };
+const KINDS: TaskKind[] = ['enquire', 'book', 'callback', 'custom'];
+
+function taskFrom(params: PracticeParams): (PracticeTask & { number: string }) | null {
+  const goal = (params.goal ?? '').trim();
+  if (!goal) return null;
+  const kind = KINDS.includes(params.kind as TaskKind) ? (params.kind as TaskKind) : 'enquire';
+  return { goal, kind, target_name: (params.target ?? '').trim(), number: (params.number ?? '').trim() || PRACTICE_NUMBER };
+}
+
 type Phase = 'idle' | 'connecting' | 'live' | 'ending' | 'ended';
 
 /** After a hang-up the server sends the summary and closes; past this, stop waiting. */
@@ -71,12 +122,13 @@ type Role = 'caller' | 'owner';
 
 const NO_LINES: TranscriptLine[] = [];
 
-function practiceRecord(callId: string, lang: string) {
+function practiceRecord(callId: string, lang: string, task: { number: string; target_name?: string; id: string | null } | null) {
   return {
     id: callId,
-    direction: 'inbound' as const,
-    number: PRACTICE_NUMBER,
-    contact_name: 'You, as the caller',
+    // Practising Call for me, the assistant is the one calling.
+    direction: task ? ('outbound' as const) : ('inbound' as const),
+    number: task ? task.number : PRACTICE_NUMBER,
+    contact_name: task ? task.target_name || 'The place' : 'You, as the caller',
     category: 'unknown',
     status: 'active' as const,
     language: lang,
@@ -87,19 +139,25 @@ function practiceRecord(callId: string, lang: string) {
     summary: '',
     message: '',
     recording: '',
-    task_id: null,
+    task_id: task?.id ?? null,
     reject_reason: '',
     urgent: false,
     action_items: [],
   };
 }
 
-/** You play a caller; your assistant answers exactly as on a real call. It uses
- *  /ws/simulate on its own (no phone line, no events socket), and every message
- *  waits for the server's ack or error, so nothing is dropped silently. */
+/** You play a caller; your assistant answers exactly as on a real call. Opened
+ *  from Call for me with a goal, it is the other way round: your assistant calls
+ *  you, and you play the place. It uses /ws/simulate on its own (no phone line,
+ *  no events socket), and every message waits for the server's ack or error, so
+ *  nothing is dropped silently. */
 export default function Practice() {
   const t = useTokens();
   const profile = useProfile();
+  const params = useLocalSearchParams<PracticeParams>();
+  const { goal, kind, target, number } = params;
+  const task = useMemo(() => taskFrom({ goal, kind, target, number }), [goal, kind, target, number]);
+  const place = task?.target_name || 'the place';
   const [lang, setLang] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
   const [role, setRole] = useState<Role>('caller');
@@ -178,7 +236,7 @@ export default function Practice() {
     try {
       await audio.prepare().catch((e: unknown) => console.warn('Audio mode not set', e));
       const c = await PracticeCall.start(
-        { lang },
+        task ? { lang, number: task.number, task } : { lang },
         {
           onEvent,
           onAudio: audio.push,
@@ -199,7 +257,7 @@ export default function Practice() {
       }
       call.current = c;
       startedAt.current = Date.now();
-      setView(callView(practiceRecord(c.callId, lang)));
+      setView(callView(practiceRecord(c.callId, lang, task ? { ...task, id: c.taskId } : null)));
       setPhase('live');
     } catch (e) {
       starting.current = null;
@@ -263,10 +321,30 @@ export default function Practice() {
         testID="practice-intro"
         footer={<Button title="Start practice call" icon="call" size="lg" fullWidth onPress={() => void start()} />}
       >
-        <Stack.Screen options={{ headerRight: undefined }} />
-        <PracticeHero assistantName={assistant} />
+        <Stack.Screen options={{ headerRight: undefined, ...(task ? { title: 'Practise Call for me' } : {}) }} />
+        {task ? (
+          <PracticeHero
+            title={`You play ${place}`}
+            text={`${assistant} calls you, exactly as it would call ${place} for real. Answer as ${place} would, by typing or holding the mic and speaking.`}
+          />
+        ) : (
+          <PracticeHero
+            title={`Try ${assistant}, no phone line needed`}
+            text={`You play someone calling you. ${assistant} answers in its own voice, exactly as on a real call. Type, or hold the mic and speak.`}
+          />
+        )}
         {problem ? <Banner tone="danger" title="Couldn't start the practice call" message={problem} onDismiss={() => setProblem(null)} /> : null}
-        <Section title="The caller speaks" footer={lang ? `${assistant} expects ${languageName(lang)} and answers in it.` : `${assistant} works out the language from what you say.`}>
+        {task ? (
+          <Section title={`${assistant} is calling to`} footer={TASK_KINDS.find((k) => k.value === task.kind)?.explain} testID="practice-goal">
+            <View style={{ padding: t.space.lg }}>
+              <Text variant="body">{task.goal}</Text>
+            </View>
+          </Section>
+        ) : null}
+        <Section
+          title={task ? 'The place speaks' : 'The caller speaks'}
+          footer={lang ? `${assistant} expects ${languageName(lang)} and answers in it.` : `${assistant} works out the language from what you say.`}
+        >
           <View style={[styles.chips, { padding: t.space.lg }]}>
             {PRACTICE_LANGUAGES.map((l) => (
               <Chip key={l.value || 'auto'} label={l.label} kind="filter" selected={lang === l.value} onPress={() => setLang(l.value)} />
@@ -274,7 +352,7 @@ export default function Practice() {
           </View>
         </Section>
         <Section title="Things to try">
-          {IDEAS.map((i) => (
+          {(task ? TASK_IDEAS : IDEAS).map((i) => (
             <ListRow key={i.title} icon={i.icon} iconTone="primary" title={i.title} subtitle={i.detail} />
           ))}
         </Section>
@@ -291,6 +369,7 @@ export default function Practice() {
     <KeyboardAvoidingView behavior="padding" style={[styles.flex, { backgroundColor: t.color.bg }]}>
       <Stack.Screen
         options={{
+          ...(task ? { title: 'Practise Call for me' } : {}),
           headerRight: () => (
             <HeaderRight>
               {phase === 'ended' ? (
@@ -329,7 +408,7 @@ export default function Practice() {
       {phase === 'connecting' || phase === 'live' ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.langBar, { borderBottomColor: t.color.border }]} contentContainerStyle={styles.langRow}>
           <Text variant="caption" weight="semibold" color="text2">
-            Caller speaks
+            {task ? 'Place speaks' : 'Caller speaks'}
           </Text>
           {PRACTICE_LANGUAGES.map((l) => (
             <Chip key={l.value || 'auto'} label={l.label} kind="filter" selected={lang === l.value} onPress={() => setLang(l.value)} />
@@ -353,7 +432,7 @@ export default function Practice() {
         ) : null}
         <Transcript
           lines={lines}
-          callerLabel="You (caller)"
+          callerLabel={task ? `You (${place})` : 'You (caller)'}
           assistantLabel={assistant}
           showTranslation={showTranslation}
           ownerLanguage={owner}
@@ -364,15 +443,24 @@ export default function Practice() {
           onRetry={(id) => void outbox.retry(id)}
           onRemove={outbox.remove}
           state={view?.status}
-          emptyText={phase === 'connecting' ? 'Calling your assistant…' : `${assistant} is picking up…`}
+          emptyText={
+            task
+              ? phase === 'connecting'
+                ? `${assistant} is calling you…`
+                : `Answer as ${place}: say hello, or wait for ${assistant} to speak.`
+              : phase === 'connecting'
+                ? 'Calling your assistant…'
+                : `${assistant} is picking up…`
+          }
         />
         {hold && phase === 'live' ? (
           <HoldQuestionCard
             callId={view!.record.id}
             holdId={hold.id}
-            who="You (caller)"
+            who={task ? `You (${place})` : 'You (caller)'}
             question={hold.question}
             at={hold.asked_at}
+            isTask={!!task}
             callerLanguage={callerLang}
             ownerLanguage={owner}
             assistantName={assistant}
@@ -393,6 +481,11 @@ export default function Practice() {
                 </Text>
               </View>
             </View>
+            {task ? (
+              <Text variant="footnote" color="text2">
+                What {assistant} found out is in Call for me, marked Practice.
+              </Text>
+            ) : null}
             <View style={styles.endActions}>
               <Button title="Done" variant="ghost" size="sm" onPress={() => router.back()} />
               <Button title="Call again" icon="refresh" size="sm" onPress={() => void start()} />
@@ -411,22 +504,31 @@ export default function Practice() {
               value={role}
               onChange={setRole}
               segments={[
-                { value: 'caller', label: 'As the caller' },
+                { value: 'caller', label: task ? 'As the place' : 'As the caller' },
                 { value: 'owner', label: 'As you, the owner' },
               ]}
             />
           }
-          placeholder={role === 'caller' ? 'Say something as the caller' : `Reply in ${languageName(owner)}`}
+          placeholder={role === 'caller' ? (task ? `Answer as ${place}` : 'Say something as the caller') : `Reply in ${languageName(owner)}`}
           hint={
             role === 'owner'
               ? other
                 ? `Reply in ${languageName(owner)}, I'll say it in ${other}.`
-                : `Cut in as yourself; ${assistant} says it to the caller.`
+                : `Cut in as yourself; ${assistant} says it to ${task ? place : 'the caller'}.`
               : lang
                 ? `Type or hold the mic and speak ${languageName(lang)}.`
                 : 'Type, or hold the mic and speak any language.'
           }
-          suggestions={role === 'caller' ? (callerSpoke ? undefined : STARTERS[lang] ?? STARTERS['']) : liveQuickReplies('delivery')}
+          suggestions={
+            role === 'caller'
+              ? task
+                ? // Answering the phone is for the start; the rest fit any time.
+                  placeStarters(lang, task.target_name ?? '').slice(callerSpoke ? 1 : 0)
+                : callerSpoke
+                  ? undefined
+                  : STARTERS[lang] ?? STARTERS['']
+              : liveQuickReplies(task ? 'business' : 'delivery')
+          }
           busy={outbox.busy}
           onSend={(text) => sendText(text)}
           onSuggestion={(text) => sendText(text, role === 'owner' ? 'en' : undefined)}
@@ -437,7 +539,7 @@ export default function Practice() {
   );
 }
 
-function PracticeHero({ assistantName }: { assistantName: string }) {
+function PracticeHero({ title, text }: { title: string; text: string }) {
   const t = useTokens();
   const c = t.color;
   return (
@@ -446,10 +548,10 @@ function PracticeHero({ assistantName }: { assistantName: string }) {
         <Icon name="headset" size={26} color={c.onHero} />
       </View>
       <Text variant="title1" color={c.onHero}>
-        Try {assistantName}, no phone line needed
+        {title}
       </Text>
       <Text variant="subhead" color={c.onHero2}>
-        You play someone calling you. {assistantName} answers in its own voice, exactly as on a real call. Type, or hold the mic and speak.
+        {text}
       </Text>
     </LinearGradient>
   );

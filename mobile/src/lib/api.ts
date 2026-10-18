@@ -9,6 +9,7 @@ import {
   normalizeVoice,
 } from './normalize';
 import { dialerName } from './format';
+import { phoneLineText, serverOutdated } from './serverStatus';
 import { storage } from './storage';
 import { getTransport, MOCK_MODE, type ResponseLike } from './transport';
 import type {
@@ -119,9 +120,12 @@ export async function clearConfig(): Promise<void> {
 // An error from a server that answered, as opposed to one that couldn't be reached.
 export interface HttpError extends Error {
   status: number;
+  /** The server's own reason (FastAPI's `detail`), when it gave one. */
+  detail?: string;
 }
 
-const httpError = (status: number, message: string): HttpError => Object.assign(new Error(message), { status });
+const httpError = (status: number, message: string, detail?: string): HttpError =>
+  Object.assign(new Error(message), { status }, detail ? { detail } : {});
 
 export const isHttpError = (e: unknown): e is HttpError => e instanceof Error && typeof (e as HttpError).status === 'number';
 
@@ -175,7 +179,10 @@ async function readBody(res: ResponseLike): Promise<unknown> {
 export async function readResponse<T>(res: ResponseLike): Promise<T> {
   if (res.status === 401) throw httpError(401, BAD_TOKEN);
   const body = await readBody(res);
-  if (!res.ok) throw httpError(res.status, `Server said: ${detailOf(body) ?? res.status}`);
+  if (!res.ok) {
+    const detail = detailOf(body);
+    throw httpError(res.status, `Server said: ${detail ?? res.status}`, detail ?? undefined);
+  }
   if (body === undefined) {
     throw httpError(res.status, "The server's reply wasn't readable. Check the address is your OpenCall server.");
   }
@@ -250,6 +257,48 @@ function media(path: string): MediaSource | null {
   return { uri: `${config.url}${path}`, headers: { Authorization: `Bearer ${config.token}` } };
 }
 
+/** What asking for a piece of audio directly found; the audio player only says it failed. */
+export type MediaProbe =
+  | { kind: 'answered'; status: number; detail: string }
+  | { kind: 'unreachable' }
+  /** No answer in the time allowed. */
+  | { kind: 'slow' }
+  | { kind: 'cancelled' };
+
+/** Making a demo on a slow computer can take a while; past this, stop waiting. */
+export const PROBE_TIMEOUT_MS = 45_000;
+
+/** Asks for the same audio the player failed on, with the same token, to learn
+ *  why. Only the status and the server's reason are read, not the audio. */
+export async function probeMedia(source: MediaSource, signal?: AbortSignal, timeoutMs = PROBE_TIMEOUT_MS): Promise<MediaProbe> {
+  const controller = new AbortController();
+  let slow = false;
+  const timer = setTimeout(() => {
+    slow = true;
+    controller.abort();
+  }, timeoutMs);
+  const cancel = () => controller.abort();
+  signal?.addEventListener('abort', cancel);
+  try {
+    if (signal?.aborted) return { kind: 'cancelled' };
+    const res = await getTransport().fetch(source.uri, { method: 'GET', headers: source.headers, signal: controller.signal });
+    if (res.ok) return { kind: 'answered', status: res.status, detail: '' };
+    let detail = '';
+    try {
+      detail = detailOf(await readBody(res)) ?? '';
+    } catch (e) {
+      console.warn("Couldn't read why the server turned down the audio", e);
+    }
+    return { kind: 'answered', status: res.status, detail };
+  } catch {
+    if (slow) return { kind: 'slow' };
+    return signal?.aborted ? { kind: 'cancelled' } : { kind: 'unreachable' };
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener('abort', cancel);
+  }
+}
+
 export const api = {
   health: async (): Promise<Health> => normalizeHealth(await request<unknown>('GET', '/health')),
 
@@ -295,13 +344,27 @@ export const api = {
   recordingSource: (callId: string) => media(`/calls/${enc(callId)}/recording`),
 
   messages: () => request<CallerMessage[]>('GET', '/messages'),
-  replyMessage: (id: string, text: string, call_back: boolean) =>
-    request<CallerMessage>('POST', `/messages/${enc(id)}/reply`, { text, call_back }),
+  /** 409: the call back can't be made (no phone line, or a practice call); its reason is said as it is. */
+  replyMessage: async (id: string, text: string, call_back: boolean): Promise<CallerMessage> => {
+    try {
+      return await request<CallerMessage>('POST', `/messages/${enc(id)}/reply`, { text, call_back });
+    } catch (e) {
+      if (isHttpError(e) && e.status === 409 && e.detail) throw httpError(409, e.detail, e.detail);
+      throw e;
+    }
+  },
   markRead: (id: string) => request<CallerMessage>('POST', `/messages/${enc(id)}/read`),
 
   tasks: async (): Promise<Task[]> => (await request<unknown[]>('GET', '/tasks')).map(normalizeTask),
-  createTask: async (number: string, goal: string, kind: TaskKind, target_name = ''): Promise<Task> =>
-    normalizeTask(await request<unknown>('POST', '/tasks', { number, goal, kind, target_name })),
+  /** 409: the server's phone line can't place calls; its reason is said as it is. */
+  createTask: async (number: string, goal: string, kind: TaskKind, target_name = ''): Promise<Task> => {
+    try {
+      return normalizeTask(await request<unknown>('POST', '/tasks', { number, goal, kind, target_name }));
+    } catch (e) {
+      if (isHttpError(e) && e.status === 409 && e.detail) throw httpError(409, e.detail, e.detail);
+      throw e;
+    }
+  },
 
   chat: (text: string, shared = '', history: ChatTurn[] = []) =>
     request<ChatReply>('POST', '/assistant/chat', { text, shared, history }),
@@ -378,6 +441,10 @@ export async function connect(typedUrl: string, token: string): Promise<ConnectR
   }
   try {
     const profile = await api.profile();
+    if (serverOutdated(health)) {
+      return { ok: true, url, health, profile, message: 'Connected. Your server is still the first version: update it so voice demos and Call for me work.' };
+    }
+    if (health.phone_line) return { ok: true, url, health, profile, message: `Connected. Phone line: ${phoneLineText(health)}.` };
     const dialer = health.dialer === 'none' ? 'not set up' : dialerName(health.dialer);
     return { ok: true, url, health, profile, message: `Connected. Outbound calling: ${dialer}.` };
   } catch (e) {

@@ -1,7 +1,8 @@
-// The practice call: the app plays the caller over /ws/simulate. Every message
-// the app sends is answered by the server with `ack` (accepted) or `error`
-// (why not), in order, so each send here returns a promise for that answer and
-// nothing the owner types or says is dropped silently.
+// The practice call: the app plays the caller over /ws/simulate, or, to
+// practise Call for me, the place the assistant calls. Every message the app
+// sends is answered by the server with `ack` (accepted) or `error` (why not),
+// in order, so each send here returns a promise for that answer and nothing
+// the owner types or says is dropped silently.
 
 import { File } from 'expo-file-system';
 
@@ -9,12 +10,24 @@ import { BAD_TOKEN, loadConfig, NOT_SET_UP, wsUrl } from './api';
 import { parseEvent, type ServerEvent, type SimulateEvent } from './events';
 import { PRACTICE_NUMBER } from './practiceCalls';
 import { getTransport, refusedToken, SOCKET_OPEN, type SocketLike } from './transport';
+import type { TaskKind } from './types';
+
+/** Call for me, practised: the assistant calls the owner, who plays the place. */
+export interface PracticeTask {
+  /** What the assistant should get done, as typed in Call for me. */
+  goal: string;
+  kind?: TaskKind;
+  /** The place being called, e.g. "Paradise Biryani". */
+  target_name?: string;
+}
 
 export interface PracticeOptions {
-  /** The pretend caller's number (screening applies to it). */
+  /** The pretend caller's number (screening applies to it), or with `task`, the place's. */
   number?: string;
   /** The caller's language if known; empty lets the server detect it. */
   lang?: string;
+  /** With a goal, the call is a practice Call for me task instead (no screening). */
+  task?: PracticeTask;
 }
 
 export interface PracticeHandlers {
@@ -29,9 +42,15 @@ export interface PracticeHandlers {
 const START_TIMEOUT_MS = 15000;
 const ACK_TIMEOUT_MS = 20000;
 
-export function practiceUrl({ number = PRACTICE_NUMBER, lang = '' }: PracticeOptions = {}): string | null {
-  const q = `number=${encodeURIComponent(number)}&wav=1${lang ? `&lang=${encodeURIComponent(lang)}` : ''}`;
-  return wsUrl(`/ws/simulate?${q}`);
+export function practiceUrl({ number = PRACTICE_NUMBER, lang = '', task }: PracticeOptions = {}): string | null {
+  const q = [['number', number || PRACTICE_NUMBER], ['wav', '1']];
+  if (lang) q.push(['lang', lang]);
+  const goal = task?.goal.trim();
+  if (goal) {
+    q.push(['goal', goal], ['kind', task?.kind ?? 'enquire']);
+    if (task?.target_name?.trim()) q.push(['target_name', task.target_name.trim()]);
+  }
+  return wsUrl(`/ws/simulate?${q.map(([k, v]) => `${k}=${encodeURIComponent(v)}`).join('&')}`);
 }
 
 /** The server accepted a message; for a recording, how long it was. */
@@ -72,15 +91,18 @@ export { PRACTICE_NUMBER };
 
 export class PracticeCall {
   readonly callId: string;
+  /** The practice task this call carries out (practice Call for me), else null. */
+  readonly taskId: string | null;
   private socket: SocketLike;
   private handlers: PracticeHandlers;
   private pending: Pending[] = [];
   private closed = false;
   private hungUp = false;
 
-  private constructor(socket: SocketLike, callId: string, handlers: PracticeHandlers) {
+  private constructor(socket: SocketLike, callId: string, taskId: string | null, handlers: PracticeHandlers) {
     this.socket = socket;
     this.callId = callId;
+    this.taskId = taskId;
     this.handlers = handlers;
     socket.onmessage = (m) => this.receive(m.data);
     socket.onclose = (e) => this.finish(e.code, e.reason);
@@ -127,7 +149,7 @@ export class PracticeCall {
           settled = true;
           clearTimeout(timer);
           signal?.removeEventListener('abort', abort);
-          resolve(new PracticeCall(socket, ev.call_id, handlers));
+          resolve(new PracticeCall(socket, ev.call_id, ev.task_id ?? null, handlers));
         }
       };
       socket.onerror = () => undefined; // onclose follows with the code

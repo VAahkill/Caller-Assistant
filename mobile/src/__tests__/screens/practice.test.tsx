@@ -11,12 +11,15 @@ const mockNavigation = {
   }),
   dispatch: jest.fn(),
 };
+// Route params: Call for me opens practice with the call to practise.
+let mockParams: Record<string, string> = {};
 jest.mock('expo-router', () => {
   const { Fragment, createElement } = require('react');
   return {
     ...jest.requireActual('expo-router'),
     router: { push: jest.fn(), replace: jest.fn(), back: jest.fn() },
     useNavigation: () => mockNavigation,
+    useLocalSearchParams: () => mockParams,
     Stack: {
       Screen: ({ options }: { options?: { headerRight?: (p: object) => unknown } }) =>
         createElement(Fragment, null, options?.headerRight ? options.headerRight({}) : null),
@@ -80,6 +83,7 @@ const lineOf = (speaker: TranscriptLine['speaker'], text: string, lang: string, 
 let mockServer: MockServer;
 beforeEach(async () => {
   opened = [];
+  mockParams = {};
   mockServer = await useMockServer();
   const real = getTransport();
   setTransport({
@@ -315,4 +319,63 @@ test('a call the server will not take explains why and stays on the intro', asyn
   expect(await screen.findByText("Couldn't start the practice call")).toBeTruthy();
   expect(screen.getByText("The assistant wouldn't take this call: that number is blocked")).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Start practice call' })).toBeTruthy();
+});
+
+describe('practising Call for me', () => {
+  const GOAL = 'Book a table for 2 tonight at 8 PM under my name.';
+  const HELLO = 'Hello, Paradise Biryani. How can I help you?';
+  beforeEach(() => {
+    mockParams = { goal: GOAL, kind: 'book', target: 'Paradise Biryani', number: '040 2345 6789' };
+  });
+
+  test('you play the place: the call to make goes to the server, and the place speaks first', async () => {
+    await renderScreen(<Practice />);
+    expect(await screen.findByText('You play Paradise Biryani')).toBeTruthy();
+    expect(screen.queryByText('Try Ava, no phone line needed')).toBeNull();
+    expect(within(screen.getByTestId('practice-goal')).getByText(GOAL)).toBeTruthy();
+    expect(screen.getByText("Answer with the place's name")).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Start practice call' }));
+    await waitFor(() => expect(opened.some((u) => u.includes('/ws/simulate'))).toBe(true));
+    const url = new URL(opened.find((u) => u.includes('/ws/simulate'))!);
+    expect(url.searchParams.get('goal')).toBe(GOAL);
+    expect(url.searchParams.get('kind')).toBe('book');
+    expect(url.searchParams.get('target_name')).toBe('Paradise Biryani');
+    expect(url.searchParams.get('number')).toBe('040 2345 6789');
+    await server({ event: 'started', call_id: CALL, task_id: 'task-practice-1' });
+
+    expect(screen.getByRole('tab', { name: 'As the place' })).toBeTruthy();
+    expect(screen.getByText('Place speaks')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: HELLO }));
+    expect(sock.sent.at(-1)).toEqual({ text: HELLO });
+    await server({ event: 'ack', kind: 'text' });
+    await server({ event: 'transcript', ...base, line: lineOf('caller', HELLO, 'en') });
+    expect(screen.getByText('You (Paradise Biryani)')).toBeTruthy();
+    // Answering the phone was for the start; the rest stay.
+    expect(screen.queryByRole('button', { name: HELLO })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Sorry, that time is full. We have 9 PM, would that work?' })).toBeTruthy();
+    await server({ event: 'transcript', ...base, line: lineOf('assistant', `Hello, this is Ava, calling for Arjun. ${GOAL}`, 'en') });
+
+    await fireEvent.press(screen.getByRole('button', { name: 'Hang up' }));
+    await server({ event: 'call_ended', ...base, call: { id: CALL, number: '040 2345 6789', status: 'ended', started_at: 1, ended_at: 2, transcript: [], holds: [] } });
+    await act(async () => sock.close(1000, ''));
+    expect(within(screen.getByTestId('practice-ended')).getByText('What Ava found out is in Call for me, marked Practice.')).toBeTruthy();
+  });
+
+  test('the starters follow the language the place speaks', async () => {
+    await renderScreen(<Practice />);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Telugu' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Start practice call' }));
+    await waitFor(() => expect(opened.some((u) => u.includes('/ws/simulate'))).toBe(true));
+    await server({ event: 'started', call_id: CALL, task_id: 'task-practice-1' });
+    expect(screen.getByRole('button', { name: 'నమస్కారం, Paradise Biryani. చెప్పండి, ఏం కావాలి?' })).toBeTruthy();
+  });
+
+  test('without a goal it is the usual practice call', async () => {
+    mockParams = { kind: 'book', target: 'Paradise Biryani' };
+    await startCall();
+    const url = new URL(opened.find((u) => u.includes('/ws/simulate'))!);
+    expect(url.searchParams.has('goal')).toBe(false);
+    expect(url.searchParams.has('target_name')).toBe(false);
+    expect(screen.getByRole('tab', { name: 'As the caller' })).toBeTruthy();
+  });
 });

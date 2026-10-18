@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, View, type TextInput } from 'react-native';
 
 import { ContactPicker } from '../../components/domain/ContactPicker';
 import { HoldQuestionCard } from '../../components/domain/HoldQuestionCard';
+import { OutdatedServerBanner, openGuide } from '../../components/domain/ServerNotices';
 import { TaskTimeline } from '../../components/domain/TaskTimeline';
 import { AsyncContent } from '../../components/ui/AsyncContent';
 import { Banner } from '../../components/ui/Banner';
@@ -30,11 +31,14 @@ import { haptic } from '../../lib/haptics';
 import { TASK_STATUS } from '../../lib/labels';
 import { useLive } from '../../lib/live';
 import { normalizeNumber } from '../../lib/phone';
-import { TASK_KINDS, TASK_TEMPLATES, isTaskActive, taskTimeline, type TaskTemplate } from '../../lib/tasks';
+import { PRACTICE_NUMBER, isPracticeNumber } from '../../lib/practiceCalls';
+import { PHONE_LINE_GUIDE_URL, canCallOut, phoneLineDetail, serverOutdated } from '../../lib/serverStatus';
+import { TASK_KINDS, TASK_TEMPLATES, isTaskActive, taskResultText, taskTimeline, type TaskTemplate } from '../../lib/tasks';
 import type { Task, TaskKind } from '../../lib/types';
 
 /** "Call for me": pick what to do, give a number, and the assistant calls,
- *  gets it done and reports back, step by step.
+ *  gets it done and reports back, step by step. Without a phone line on the
+ *  server it can still be practised: the owner plays the place, in the app.
  *  Deep link: opencall://tasks?number=...&goal=...&name=... */
 export default function CallForMe() {
   const t = useTokens();
@@ -92,7 +96,11 @@ export default function CallForMe() {
 
   const submit = async () => {
     const task = await start.run({ number: number.trim(), goal: goal.trim(), kind, name: name.trim() });
-    if (!task) return;
+    // Turned down (no phone line, say): read the line again so the screen offers practice.
+    if (!task) {
+      void health.reload();
+      return;
+    }
     setGoal('');
     setNumber('');
     setName('');
@@ -107,7 +115,16 @@ export default function CallForMe() {
   const tryAgain = async (failed: Task) => {
     const task = await retry.run(failed);
     if (task) tasks.mutate((list) => [task, ...(list ?? [])]);
+    else void health.reload();
   };
+
+  /** The owner plays the place and the assistant calls them in the app, exactly as it would call for real. */
+  const practise = (input: { goal: string; kind: TaskKind; target: string; number: string }) =>
+    router.push({
+      pathname: '/practice',
+      params: { goal: input.goal, kind: input.kind, target: input.target, number: input.number || PRACTICE_NUMBER },
+    });
+  const practiseForm = () => practise({ goal: goal.trim(), kind, target: name.trim(), number: number.trim() });
 
   const list = useMemo(() => {
     const merged = (tasks.data ?? []).map((x) => liveTasks[x.id] ?? x);
@@ -122,7 +139,7 @@ export default function CallForMe() {
   const numberOk = digits >= 6;
   const p = profile.data;
   const assistant = p?.assistant_name || 'Your assistant';
-  const noDialer = health.data?.dialer === 'none';
+  const callable = canCallOut(health.data);
   const kindInfo = TASK_KINDS.find((k) => k.value === kind);
 
   const card = (task: Task) => {
@@ -148,8 +165,17 @@ export default function CallForMe() {
           ) : null
         }
         onOpenCall={callOpen ? () => router.push(`/call/${task.call_id}`) : undefined}
-        onRetry={task.status === 'failed' ? () => void tryAgain(task) : undefined}
-        retrying={retry.busy}
+        onRetry={
+          task.practice
+            ? task.status === 'done' || task.status === 'failed'
+              ? () => practise({ goal: task.goal, kind: task.kind, target: task.target_name, number: task.number })
+              : undefined
+            : task.status === 'failed'
+              ? () => void tryAgain(task)
+              : undefined
+        }
+        retryLabel={task.practice ? 'Practise again' : undefined}
+        retrying={!task.practice && retry.busy}
       />
     );
   };
@@ -158,13 +184,15 @@ export default function CallForMe() {
     <Screen topInset refreshing={tasks.refreshing} onRefresh={() => void Promise.all([tasks.refresh(), health.reload()])} testID="tasks">
       <LargeHeader title="Call for me" subtitle={`${assistant} calls a place for you, gets it done and tells you how it went.`} />
 
-      {noDialer ? (
+      {serverOutdated(health.data) ? <OutdatedServerBanner /> : null}
+      {!callable ? (
         <Banner
           tone="warning"
           icon="call-outline"
-          title="Outbound calling isn't set up"
-          message="Your server can't place calls yet. Connect a phone to the computer by Bluetooth or set up Asterisk, as described in docs/TELEPHONY.md."
-          testID="no-dialer"
+          title="No phone line yet"
+          message={`${phoneLineDetail(health.data)} You can still practise: you play the place, and ${assistant} calls you here in the app.`}
+          action={{ label: 'How to connect a phone line', onPress: () => openGuide(PHONE_LINE_GUIDE_URL) }}
+          testID="no-line"
         />
       ) : null}
 
@@ -248,16 +276,42 @@ export default function CallForMe() {
             </Text>
           </View>
         ) : null}
-        <Button
-          title={name.trim() ? `Call ${name.trim()}` : 'Start the call'}
-          icon="call"
-          size="lg"
-          fullWidth
-          loading={start.busy}
-          disabled={!numberOk || !goal.trim()}
-          onPress={() => void submit()}
-          testID="start-task"
-        />
+        {callable ? (
+          <>
+            <Button
+              title={name.trim() ? `Call ${name.trim()}` : 'Start the call'}
+              icon="call"
+              size="lg"
+              fullWidth
+              loading={start.busy}
+              disabled={!numberOk || !goal.trim()}
+              onPress={() => void submit()}
+              testID="start-task"
+            />
+            <Button
+              title="Practise first"
+              icon="headset-outline"
+              variant="ghost"
+              size="sm"
+              disabled={!goal.trim()}
+              onPress={practiseForm}
+              accessibilityHint={`You play the place and ${assistant} calls you in the app`}
+              testID="practise-first"
+            />
+          </>
+        ) : (
+          <Button
+            title="Practise this call"
+            icon="headset"
+            size="lg"
+            fullWidth
+            // The number is optional here: without one the practice number stands in.
+            disabled={!goal.trim() || (digits > 0 && !numberOk)}
+            onPress={practiseForm}
+            accessibilityHint={`You play the place and ${assistant} calls you in the app`}
+            testID="start-task"
+          />
+        )}
       </Card>
 
       {active.length ? (
@@ -312,14 +366,17 @@ interface TaskCardProps {
   decision?: ReactNode;
   onOpenCall?: () => void;
   onRetry?: () => void;
+  /** "Try again" unless said otherwise. */
+  retryLabel?: string;
   retrying?: boolean;
 }
 
-function TaskCard({ task, steps, decision, onOpenCall, onRetry, retrying }: TaskCardProps) {
+function TaskCard({ task, steps, decision, onOpenCall, onRetry, retryLabel = 'Try again', retrying }: TaskCardProps) {
   const t = useTokens();
   const s = TASK_STATUS[task.status];
   const active = isTaskActive(task);
-  const who = task.target_name || prettyNumber(task.number);
+  const who = task.target_name || (task.practice && isPracticeNumber(task.number) ? 'The place' : prettyNumber(task.number));
+  const result = taskResultText(task);
   return (
     <Card testID={`task-${task.id}`}>
       <View style={styles.taskHead}>
@@ -331,17 +388,27 @@ function TaskCard({ task, steps, decision, onOpenCall, onRetry, retrying }: Task
             {who}
           </Text>
           <Text variant="footnote" color="text2" numberOfLines={1}>
-            {[task.target_name ? prettyNumber(task.number) : null, timeAgo(task.updated_at || task.created_at)].filter(Boolean).join(' · ')}
+            {[task.target_name && !isPracticeNumber(task.number) ? prettyNumber(task.number) : null, timeAgo(task.updated_at || task.created_at)]
+              .filter(Boolean)
+              .join(' · ')}
           </Text>
         </View>
         <StatusPill label={s.label} tone={s.tone} dot={active} pulse={task.status === 'in_call' || task.status === 'dialing'} />
       </View>
+      {task.practice ? (
+        <View style={styles.practice}>
+          <StatusPill label="Practice" tone="neutral" icon="headset-outline" testID={`practice-${task.id}`} />
+          <Text variant="footnote" color="text2" style={styles.flex}>
+            In the app only: nothing is really booked or arranged.
+          </Text>
+        </View>
+      ) : null}
       <Text variant="subhead" color="text2">
         {task.goal}
       </Text>
       {active ? <TaskTimeline items={taskTimeline(task, steps)} testID={`timeline-${task.id}`} /> : null}
       {decision}
-      {task.result ? (
+      {result ? (
         <View style={[styles.result, { backgroundColor: task.status === 'failed' ? t.color.dangerContainer : t.color.surface2, borderRadius: t.radius.md }]}>
           <Icon
             name={task.status === 'failed' ? 'alert-circle-outline' : 'chatbox-ellipses-outline'}
@@ -349,7 +416,7 @@ function TaskCard({ task, steps, decision, onOpenCall, onRetry, retrying }: Task
             color={task.status === 'failed' ? t.color.onDangerContainer : t.color.text2}
           />
           <Text variant="callout" color={task.status === 'failed' ? 'onDangerContainer' : 'text'} style={styles.flex}>
-            {task.result}
+            {result}
           </Text>
         </View>
       ) : null}
@@ -358,7 +425,7 @@ function TaskCard({ task, steps, decision, onOpenCall, onRetry, retrying }: Task
           {onOpenCall ? (
             <Button title={active ? 'Listen in' : 'See the call'} variant="tonal" size="sm" icon={active ? 'ear-outline' : 'document-text-outline'} onPress={onOpenCall} />
           ) : null}
-          {onRetry ? <Button title="Try again" variant="tonal" size="sm" icon="refresh" loading={retrying} onPress={onRetry} /> : null}
+          {onRetry ? <Button title={retryLabel} variant="tonal" size="sm" icon="refresh" loading={retrying} onPress={onRetry} /> : null}
         </View>
       ) : null}
     </Card>
@@ -378,4 +445,5 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   result: { padding: 12, flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   actions: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  practice: { flexDirection: 'row', alignItems: 'center', gap: 8 },
 });

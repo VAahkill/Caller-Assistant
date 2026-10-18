@@ -62,7 +62,8 @@ export function liveNotice(ev: ServerEvent): LiveNotice | null {
     case 'message_taken':
       return { title: `Message from ${ev.who}`, body: clip(ev.message.text), data: { message_id: ev.message.id }, kind: 'normal' };
     case 'task_update':
-      return ev.task.status === 'done' || ev.task.status === 'failed'
+      // A practice task is the owner's own test, played in the app: nothing to announce.
+      return !ev.task.practice && (ev.task.status === 'done' || ev.task.status === 'failed')
         ? { title: 'Call task finished', body: ev.title, data: { task_id: ev.task.id }, kind: 'normal' }
         : null;
     default:

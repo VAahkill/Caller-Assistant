@@ -44,7 +44,8 @@ export type ServerEvent =
 
 /** Only /ws/simulate sends these. */
 export type SimulateEvent =
-  | { event: 'started'; call_id: string }
+  /** task_id: the practice task, when practising Call for me. */
+  | { event: 'started'; call_id: string; task_id?: string | null }
   | { event: 'rejected'; reason: string }
   | { event: 'ack'; kind: 'text' | 'audio' | 'say' | 'say_audio' | 'answer'; seconds?: number };
 
@@ -137,6 +138,7 @@ export function parseEvent(data: unknown): ParseResult {
     ev.detail = s(ev.detail);
   }
   if (name === 'rejected') ev.reason = s(ev.reason);
+  if (name === 'started') ev.task_id = s(ev.task_id) || null;
   if (name === 'task_update') {
     ev.task = normalizeTask(ev.task);
     ev.title = s(ev.title);

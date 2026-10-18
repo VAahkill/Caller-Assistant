@@ -86,6 +86,7 @@ export const expoAudioMock = {
   useAudioPlayerStatus: jest.fn(() => useSyncExternalStore(playerStatus.subscribe, playerStatus.get)),
   createAudioPlayer: jest.fn(() => mockPlayer()),
   preload: jest.fn(() => Promise.resolve()),
+  clearPreloadedSource: jest.fn(() => Promise.resolve()),
   clearAllPreloadedSources: jest.fn(() => Promise.resolve()),
   AudioModule: { requestRecordingPermissionsAsync: jest.fn(() => Promise.resolve({ granted: true })) },
 };

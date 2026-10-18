@@ -36,7 +36,7 @@ const healthChecks = () => server.log.filter((r) => r.method === 'GET' && r.path
 async function open() {
   await renderScreen(<Settings />);
   await screen.findByText('Connected');
-  await screen.findByText('Bluetooth phone');
+  await screen.findByText('Bluetooth phone · connected');
 }
 
 // expo-notifications is mocked in jest.setup.ts, so its PermissionStatus enum
@@ -66,9 +66,9 @@ describe('connection health', () => {
     await open();
     const before = healthChecks();
     expect(screen.getByText(/^Last checked /)).toBeTruthy();
-    server.state.health = { ...server.state.health, dialer: 'asterisk' };
+    server.state.health = { ...server.state.health, dialer: 'asterisk', phone_line: { kind: 'gsm', ok: false, inbound: false, outbound: false, detail: '' } };
     await fireEvent.press(screen.getByTestId('check-again'));
-    expect(await screen.findByText('Asterisk (SIP)')).toBeTruthy();
+    expect(await screen.findByText('USB SIM modem · not connected')).toBeTruthy();
     expect(healthChecks()).toBe(before + 1);
   });
 
@@ -81,7 +81,7 @@ describe('connection health', () => {
     expect(within(screen.getByTestId('connection')).getAllByText('–').length).toBeGreaterThan(0);
     down.mockRestore();
     await fireEvent.press(screen.getByTestId('check-again'));
-    expect(await screen.findByText('Bluetooth phone')).toBeTruthy();
+    expect(await screen.findByText('Bluetooth phone · connected')).toBeTruthy();
     expect(screen.queryByTestId('health-error')).toBeNull();
   });
 
@@ -164,10 +164,11 @@ describe('appearance', () => {
 
 describe('about and diagnostics', () => {
   test('shows the app and server versions and the language model', async () => {
+    server.state.health = { ...server.state.health, version: '2.1.3' };
     await open();
     const about = within(screen.getByTestId('about'));
     expect(about.getByText('App version')).toBeTruthy();
-    expect(about.getByText('2.0.0')).toBeTruthy();
+    expect(about.getByText('2.1.3')).toBeTruthy();
     expect(about.getByText('qwen2.5-3b-instruct-q4_k_m')).toBeTruthy();
   });
 
@@ -187,6 +188,17 @@ describe('about and diagnostics', () => {
     expect(report).toContain('Live updates: connected');
     expect(report).toContain('Outbound calling: Bluetooth phone');
     expect(report).not.toContain(MOCK_TOKEN);
+  });
+
+  test('a server of the first version says so, with where the update steps are', async () => {
+    const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+    server.state.health = { ok: true, dialer: 'asterisk', active_calls: 0 } as unknown as typeof server.state.health;
+    await renderScreen(<Settings />);
+    const banner = within(await screen.findByTestId('server-outdated'));
+    expect(banner.getByText('Your server needs updating')).toBeTruthy();
+    expect(within(screen.getByTestId('about')).getByText('First version')).toBeTruthy();
+    await fireEvent.press(banner.getByRole('button', { name: 'Open the setup guide' }));
+    expect(openURL).toHaveBeenCalledWith(expect.stringMatching(/TRY_IT\.md#updating-from-the-first-version$/));
   });
 
   test('first-time setup can be run again', async () => {

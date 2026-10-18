@@ -2,6 +2,7 @@
 // voice answers each language, the demo player's states, checks on a fresh
 // recording, and the status changes worth telling the owner about.
 
+import type { MediaProbe } from './api';
 import { languageName } from './languages';
 import { voiceSamplePath } from './normalize';
 import type { Profile, ProfilePatch, VoiceInfo, VoiceStatus } from './types';
@@ -57,6 +58,11 @@ export function samplePathFor(v: Pick<VoiceInfo, 'id' | 'sample_url'>, lang: str
   return `${url}${url.includes('?') ? '&' : '?'}lang=${encodeURIComponent(lang)}`;
 }
 
+/** Demos worth fetching ahead of a tap. /assistant/speak is made on demand
+ *  (servers without cached demos), so fetching every one ahead would keep the
+ *  server busy speaking demos nobody asked for. */
+export const preloadable = (path: string): boolean => !!path && !path.startsWith('/assistant/speak');
+
 /** "My voice", or "My voice 2" when that name is taken. */
 export function suggestName(existing: string[], base = 'My voice'): string {
   const taken = new Set(existing.map((n) => n.trim().toLowerCase()));
@@ -82,37 +88,53 @@ export interface DemoState {
   key: string | null;
   phase: DemoPhase;
   error: string | null;
+  /** It failed or didn't start, and the app is asking the server why. Still shown as loading. */
+  checking: boolean;
+  /** Played again once, after the server said the demo was ready. */
+  retried: boolean;
 }
 
-export const DEMO_IDLE: DemoState = { key: null, phase: 'idle', error: null };
+export const DEMO_IDLE: DemoState = { key: null, phase: 'idle', error: null, checking: false, retried: false };
 
 export type DemoEvent =
   | { type: 'tap'; key: string }
   | { type: 'status'; playing: boolean; isBuffering: boolean; didJustFinish: boolean; error: string | null }
   | { type: 'timeout'; key: string }
+  /** What asking the server found: play it again, or why it can't play. */
+  | { type: 'checked'; key: string; retry: true }
+  | { type: 'checked'; key: string; retry: false; error: string }
   | { type: 'fail'; key: string; error: string }
   | { type: 'stop' };
 
 export const DEMO_TIMEOUT_MS = 10_000;
 
+const DEMO_UNPLAYABLE = "Your server sent the demo, but this phone couldn't play it. Try again in a moment.";
+const DEMO_OUTDATED =
+  'Your server is still the first version, which can\'t play voice demos properly. Update it with the steps under "Updating from the first version" in the setup guide.';
+
 /** One player for every demo: tap to play, tap the same one again to stop,
- *  tap another to switch. Loading that never starts becomes an error. */
+ *  tap another to switch. A demo that fails or doesn't start in time is
+ *  checked with the server (still loading), then played again or explained. */
 export function demoReducer(s: DemoState, e: DemoEvent): DemoState {
   switch (e.type) {
     case 'tap':
       if (s.key === e.key && (s.phase === 'loading' || s.phase === 'playing')) return DEMO_IDLE;
-      return { key: e.key, phase: 'loading', error: null };
+      return { ...DEMO_IDLE, key: e.key, phase: 'loading' };
     case 'stop':
       return DEMO_IDLE;
     case 'timeout':
-      return s.key === e.key && s.phase === 'loading'
-        ? { ...s, phase: 'error', error: "The demo didn't start. Check that your server is reachable." }
-        : s;
+      return s.key === e.key && s.phase === 'loading' && !s.checking ? { ...s, checking: true } : s;
+    case 'checked':
+      if (s.key !== e.key || !s.checking) return s;
+      if (e.retry && !s.retried) return { ...s, checking: false, retried: true };
+      return { ...s, phase: 'error', checking: false, error: e.retry ? DEMO_UNPLAYABLE : e.error };
     case 'fail':
-      return s.key === e.key ? { ...s, phase: 'error', error: e.error } : s;
+      return s.key === e.key ? { ...s, phase: 'error', checking: false, error: e.error } : s;
     case 'status':
       if (!s.key || s.phase === 'idle' || s.phase === 'error') return s;
-      if (e.error) return { ...s, phase: 'error', error: e.error };
+      // While checking, only a late start counts; the check says why it failed.
+      if (s.checking) return e.playing ? { ...s, phase: 'playing', checking: false } : s;
+      if (e.error) return { ...s, phase: 'loading', checking: true };
       if (s.phase === 'loading') {
         if (e.playing) return { ...s, phase: 'playing' };
         return e.didJustFinish ? DEMO_IDLE : s;
@@ -120,6 +142,42 @@ export function demoReducer(s: DemoState, e: DemoEvent): DemoState {
       // Playing: it ends when the clip finishes or the player stops (not while buffering).
       return e.didJustFinish || (!e.playing && !e.isBuffering) ? DEMO_IDLE : s;
   }
+}
+
+export interface DemoCheckContext {
+  /** The server's address, to name it when it can't be reached. */
+  server: string;
+  /** The server is the first version (serverOutdated). */
+  outdated: boolean;
+  /** The demo was already played again once. */
+  retried: boolean;
+}
+
+/**
+ * Turns what asking the server for a demo found into what to do: play it again
+ * (once: the server has it ready now), or a message saying why it can't play.
+ * null: the check was cancelled (the owner moved on).
+ */
+export function demoProblem(probe: MediaProbe, ctx: DemoCheckContext): { retry: true } | { retry: false; message: string } | null {
+  const fail = (message: string) => ({ retry: false as const, message });
+  switch (probe.kind) {
+    case 'cancelled':
+      return null;
+    case 'unreachable':
+      return fail(`Couldn't reach your server at ${ctx.server}. Check that the phone and the computer are on the same Wi-Fi and that the server is running.`);
+    case 'slow':
+      return fail(ctx.outdated ? DEMO_OUTDATED : 'Your server is taking too long to make this demo. It may be busy; try again in a minute.');
+  }
+  const { status, detail } = probe;
+  if (status < 300 || status === 304) {
+    if (!ctx.retried) return { retry: true };
+    return fail(ctx.outdated ? DEMO_OUTDATED : DEMO_UNPLAYABLE);
+  }
+  if (status === 401 || status === 403) return fail("Your server didn't accept this phone's token. Pair the phone again in Settings.");
+  if (status === 404) return fail(ctx.outdated ? DEMO_OUTDATED : "This voice isn't on your server any more. Pull down to refresh the list.");
+  if (status === 409 || status === 503) return fail(detail || "Your server can't make this demo right now. Try again in a minute.");
+  if (status >= 500) return fail(`Your server had a problem making this demo (error ${status}). Try again in a minute.`);
+  return fail(`Your server turned down this demo (error ${status}).${detail ? ` ${detail}` : ''}`);
 }
 
 // ------------------------------------------------------------ recording

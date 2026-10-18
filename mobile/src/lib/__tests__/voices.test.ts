@@ -4,9 +4,11 @@ import {
   DEMO_IDLE,
   choosePatch,
   chosenVoiceId,
+  demoProblem,
   demoReducer,
   levelFromMetering,
   loudness,
+  preloadable,
   recordingHint,
   samplePathFor,
   statusChanges,
@@ -99,8 +101,10 @@ describe('demo player', () => {
     ...over,
   });
 
+  const loading = (key: string): DemoState => ({ ...DEMO_IDLE, key, phase: 'loading' });
+
   test('tap loads, playing shows playing, and the end goes back to idle', () => {
-    expect(run({ type: 'tap', key: 'a' })).toEqual({ key: 'a', phase: 'loading', error: null });
+    expect(run({ type: 'tap', key: 'a' })).toEqual(loading('a'));
     expect(run({ type: 'tap', key: 'a' }, status({ playing: true }))).toMatchObject({ key: 'a', phase: 'playing' });
     expect(run({ type: 'tap', key: 'a' }, status({ playing: true }), status({ didJustFinish: true }))).toEqual(DEMO_IDLE);
   });
@@ -108,7 +112,7 @@ describe('demo player', () => {
   test('tapping the same demo again stops it; another one switches', () => {
     expect(run({ type: 'tap', key: 'a' }, status({ playing: true }), { type: 'tap', key: 'a' })).toEqual(DEMO_IDLE);
     expect(run({ type: 'tap', key: 'a' }, { type: 'tap', key: 'a' })).toEqual(DEMO_IDLE);
-    expect(run({ type: 'tap', key: 'a' }, status({ playing: true }), { type: 'tap', key: 'b' })).toEqual({ key: 'b', phase: 'loading', error: null });
+    expect(run({ type: 'tap', key: 'a' }, status({ playing: true }), { type: 'tap', key: 'b' })).toEqual(loading('b'));
   });
 
   test('buffering while playing is not the end', () => {
@@ -116,14 +120,82 @@ describe('demo player', () => {
     expect(run({ type: 'tap', key: 'a' }, status({ playing: true }), status())).toEqual(DEMO_IDLE);
   });
 
-  test('a demo that never starts, or fails, says so; a later tap retries', () => {
+  test('a demo that never starts, or fails, is checked while it still shows loading', () => {
     const timedOut = run({ type: 'tap', key: 'a' }, { type: 'timeout', key: 'a' });
-    expect(timedOut).toMatchObject({ key: 'a', phase: 'error' });
-    expect(timedOut.error).toMatch(/didn't start/);
+    expect(timedOut).toEqual({ ...loading('a'), checking: true });
     // A timeout for a demo you already left changes nothing.
-    expect(run({ type: 'tap', key: 'a' }, { type: 'tap', key: 'b' }, { type: 'timeout', key: 'a' })).toMatchObject({ key: 'b', phase: 'loading' });
-    expect(run({ type: 'tap', key: 'a' }, status({ error: 'HTTP 409' }))).toEqual({ key: 'a', phase: 'error', error: 'HTTP 409' });
-    expect(run({ type: 'tap', key: 'a' }, status({ error: 'x' }), { type: 'tap', key: 'a' })).toEqual({ key: 'a', phase: 'loading', error: null });
+    expect(run({ type: 'tap', key: 'a' }, { type: 'tap', key: 'b' }, { type: 'timeout', key: 'a' })).toEqual(loading('b'));
+    // The player's own error says nothing useful ("Response code: 409"): it is checked too.
+    expect(run({ type: 'tap', key: 'a' }, status({ error: 'Response code: 409' }))).toEqual({ ...loading('a'), checking: true });
+    expect(run({ type: 'tap', key: 'a' }, status({ playing: true }), status({ error: 'x' }))).toEqual({ ...loading('a'), checking: true });
+  });
+
+  test('the check says why, or plays it again once; a late start still plays', () => {
+    const checking: DemoEvent[] = [{ type: 'tap', key: 'a' }, { type: 'timeout', key: 'a' }];
+    expect(run(...checking, { type: 'checked', key: 'a', retry: false, error: 'Busy.' })).toEqual({ ...loading('a'), phase: 'error', error: 'Busy.' });
+    const again = run(...checking, { type: 'checked', key: 'a', retry: true });
+    expect(again).toEqual({ ...loading('a'), retried: true });
+    expect(demoReducer(again, status({ playing: true }))).toMatchObject({ phase: 'playing' });
+    // Ready on the server but it failed again: the phone couldn't play it.
+    const twice = run(...checking, { type: 'checked', key: 'a', retry: true }, { type: 'timeout', key: 'a' }, { type: 'checked', key: 'a', retry: true });
+    expect(twice).toMatchObject({ phase: 'error', error: expect.stringMatching(/this phone couldn't play it/) });
+    // While checking, other player news waits; playing after all wins.
+    expect(run(...checking, status({ error: 'again' }))).toEqual({ ...loading('a'), checking: true });
+    expect(run(...checking, status({ playing: true }))).toMatchObject({ phase: 'playing', checking: false });
+    // A check for a demo you left, or tapped to stop, changes nothing.
+    expect(run(...checking, { type: 'tap', key: 'a' }, { type: 'checked', key: 'a', retry: false, error: 'x' })).toEqual(DEMO_IDLE);
+    expect(run(...checking, { type: 'tap', key: 'b' }, { type: 'checked', key: 'a', retry: true })).toEqual(loading('b'));
+    // After an error, a tap tries again from the start.
+    expect(run(...checking, { type: 'checked', key: 'a', retry: false, error: 'x' }, { type: 'tap', key: 'a' })).toEqual(loading('a'));
+  });
+});
+
+describe('why a demo did not play', () => {
+  const ctx = { server: 'http://192.168.1.7:8000', outdated: false, retried: false };
+  const answered = (status: number, detail = '') => ({ kind: 'answered' as const, status, detail });
+  const message = (r: ReturnType<typeof demoProblem>) => (r && !r.retry ? r.message : null);
+
+  test('no answer: the address, and the same Wi-Fi', () => {
+    expect(message(demoProblem({ kind: 'unreachable' }, ctx))).toBe(
+      "Couldn't reach your server at http://192.168.1.7:8000. Check that the phone and the computer are on the same Wi-Fi and that the server is running.",
+    );
+    expect(message(demoProblem({ kind: 'slow' }, ctx))).toMatch(/^Your server is taking too long to make this demo/);
+    expect(demoProblem({ kind: 'cancelled' }, ctx)).toBeNull();
+  });
+
+  test('the server answered: token, gone, busy, broken', () => {
+    expect(message(demoProblem(answered(401), ctx))).toBe("Your server didn't accept this phone's token. Pair the phone again in Settings.");
+    expect(message(demoProblem(answered(404, 'No such voice.'), ctx))).toBe("This voice isn't on your server any more. Pull down to refresh the list.");
+    expect(message(demoProblem(answered(409, 'This voice is still being prepared.'), ctx))).toBe('This voice is still being prepared.');
+    expect(message(demoProblem(answered(503, "Couldn't make this voice's demo (RuntimeError: no audio)"), ctx))).toBe(
+      "Couldn't make this voice's demo (RuntimeError: no audio)",
+    );
+    expect(message(demoProblem(answered(503), ctx))).toBe("Your server can't make this demo right now. Try again in a minute.");
+    expect(message(demoProblem(answered(500), ctx))).toBe('Your server had a problem making this demo (error 500). Try again in a minute.');
+    expect(message(demoProblem(answered(422, 'Unknown language.'), ctx))).toBe('Your server turned down this demo (error 422). Unknown language.');
+  });
+
+  test('the demo is ready now: play it again once, then say the phone could not', () => {
+    expect(demoProblem(answered(200), ctx)).toEqual({ retry: true });
+    expect(message(demoProblem(answered(200), { ...ctx, retried: true }))).toBe(
+      "Your server sent the demo, but this phone couldn't play it. Try again in a moment.",
+    );
+  });
+
+  test('a first-version server is named as the reason', () => {
+    const old = { ...ctx, outdated: true };
+    for (const r of [demoProblem(answered(404), old), demoProblem({ kind: 'slow' }, old), demoProblem(answered(200), { ...old, retried: true })]) {
+      expect(message(r)).toMatch(/^Your server is still the first version/);
+      expect(message(r)).toContain('"Updating from the first version"');
+    }
+    // A token problem is still a token problem.
+    expect(message(demoProblem(answered(401), old))).toMatch(/token/);
+  });
+
+  test('demos made on demand are not fetched ahead', () => {
+    expect(preloadable('/voices/kokoro%3Aaf_heart/sample.wav?lang=en&v=3f2a1c')).toBe(true);
+    expect(preloadable('/assistant/speak?voice=kokoro%3Aaf_heart&lang=en&text=Hello')).toBe(false);
+    expect(preloadable('')).toBe(false);
   });
 });
 

@@ -86,6 +86,9 @@ export class MockServer {
    *  before it turns ready (null: it stays preparing). */
   readyAfterPolls: number | null = 2;
   private polls = new Map<string, number>();
+  /** What GET of a voice's audio (demo or recording) answers, by voice id;
+   *  the rest answer 200. Tests set a 409, 404 or 503 here. */
+  readonly audioReplies = new Map<string, MockReply>();
 
   constructor({ latencyMs = 0, state, checkToken = false }: MockOptions = {}) {
     this.state = state ?? createFixtures();
@@ -258,6 +261,17 @@ export class MockServer {
         if (!m) return notFound();
         if (route.endsWith('/read') && m.status === 'new') m.status = 'read';
         if (route.endsWith('/reply')) {
+          // Like the server: a call back needs a line, and someone real to call.
+          if (body.call_back) {
+            const call = s.calls.find((c) => c.id === m.call_id);
+            if (call?.practice) {
+              return { status: 409, body: { detail: "This message came from a practice call, so there's no one to call back." } };
+            }
+            const line = s.health.phone_line;
+            if (line ? !line.outbound : s.health.dialer === 'none') {
+              return { status: 409, body: { detail: line?.detail || "Your server can't place calls yet." } };
+            }
+          }
           m.status = 'replied';
           m.reply = String(body.text ?? '');
         }
@@ -266,6 +280,11 @@ export class MockServer {
       case 'GET /tasks':
         return ok(s.tasks);
       case 'POST /tasks': {
+        // Like the server: no task without a line that can place the call.
+        const line = s.health.phone_line;
+        if (line ? !line.outbound : s.health.dialer === 'none') {
+          return { status: 409, body: { detail: line?.detail || "Your server can't place calls yet." } };
+        }
         const at = nowS();
         const task: Task = {
           id: newId('task'),
@@ -280,6 +299,7 @@ export class MockServer {
           call_id: null,
           created_at: at,
           updated_at: at,
+          practice: false,
         };
         if (!task.number || !task.goal) return unprocessable('A number and a goal are needed.');
         s.tasks = [task, ...s.tasks];
@@ -293,6 +313,11 @@ export class MockServer {
       }
       case 'POST /assistant/voice':
         return ok({ heard: 'Who called while I was in the meeting?', ...chatReply('who called', s) });
+      case 'GET /voices/:id/sample.wav':
+      case 'GET /voices/:id/recording':
+      case 'GET /assistant/speak':
+        // The audio itself isn't needed: the app asks only when a demo failed, to learn why.
+        return this.audioReplies.get(seg[0] === 'voices' ? id : String(req.query.get('voice') ?? '')) ?? ok({});
       case 'GET /voices':
         this.advanceVoices();
         return ok([...s.voices.filter((v) => v.kind === 'clone'), ...s.voices.filter((v) => v.kind !== 'clone')]);
@@ -334,6 +359,28 @@ export class MockServer {
       status === 'dialing' ? `Calling ${who}...` : status === 'in_call' ? `Connected to ${who}` : `${who}: ${task.result || status}`;
     this.liveSockets.forEach((sk) => sk.push({ event: 'task_update', task, task_id: id, title }, 0));
     return task;
+  }
+
+  /** /ws/simulate with a goal: a practice task, already on its call (the app plays the place). */
+  startPracticeTask(input: { number: string; goal: string; kind: string; target_name: string }, callId: string): Task {
+    const at = nowS();
+    const kinds: Task['kind'][] = ['enquire', 'book', 'callback', 'custom'];
+    const task: Task = {
+      id: newId('task'),
+      kind: kinds.includes(input.kind as Task['kind']) ? (input.kind as Task['kind']) : 'enquire',
+      number: input.number,
+      goal: input.goal,
+      target_name: input.target_name,
+      status: 'queued',
+      outcome: '',
+      result: '',
+      call_id: null,
+      created_at: at,
+      updated_at: at,
+      practice: true,
+    };
+    this.state.tasks = [task, ...this.state.tasks];
+    return this.advanceTask(task.id, 'in_call', { call_id: callId }) ?? task;
   }
 
   /** Mock mode: a new task dials, talks and reports back over a few seconds. */
@@ -404,6 +451,7 @@ const STATIC_ROUTES = new Set([
   'POST /push/register',
   'POST /assistant/chat',
   'POST /assistant/voice',
+  'GET /assistant/speak',
 ]);
 
 function isParam(root: string, index: number): boolean {
@@ -433,6 +481,7 @@ function chatReply(text: string, s: MockState): { reply: string; actions: Record
       call_id: null,
       created_at: at,
       updated_at: at,
+      practice: false,
     };
     s.tasks = [task, ...s.tasks];
     return { reply: `Calling ${task.target_name || 'them'} now. I'll tell you how it goes.`, actions: [{ type: 'task_created', task }] };

@@ -43,3 +43,9 @@ test('a hold question carries the reply box; ordinary events do not', () => {
   expect(liveNotice(ev({ event: 'message_taken', message: fx.messages[0], call_id: 'x', who: 'Amma' }))?.kind).toBe('normal');
   expect(liveNotice(ev({ event: 'assistant_status', call_id: 'c1', who: 'x', state: 'thinking' }))).toBeNull();
 });
+
+test('a finished Call for me task is announced, but not one the owner only practised', () => {
+  const done = { ...fx.tasks[0], status: 'done' };
+  expect(liveNotice(ev({ event: 'task_update', task: done, title: 'Booked for 2 at 8 PM.' }))).toMatchObject({ title: 'Call task finished', kind: 'normal' });
+  expect(liveNotice(ev({ event: 'task_update', task: { ...done, practice: true }, title: 'Booked for 2 at 8 PM.' }))).toBeNull();
+});

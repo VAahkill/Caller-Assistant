@@ -5,6 +5,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { HoldQuestionCard } from '../../components/domain/HoldQuestionCard';
 import { LiveCallCard } from '../../components/domain/LiveCallCard';
 import { ReadinessSheet } from '../../components/domain/ReadinessSheet';
+import { OutdatedServerBanner, PhoneLineCard } from '../../components/domain/ServerNotices';
 import { StatusHero } from '../../components/domain/StatusHero';
 import { Avatar, Banner, Button, EmptyState, IconButton, LargeHeader, Screen, Section, Skeleton, Text, useToast } from '../../components/ui';
 import { errorMessage } from '../../hooks/useAsyncAction';
@@ -17,6 +18,7 @@ import { useTokens } from '../../lib/design/theme';
 import { greeting, isToday, prettyNumber, timeAgo } from '../../lib/format';
 import { useLive, type SecurityAlert } from '../../lib/live';
 import { isPracticeCall, isPracticeNumber } from '../../lib/practiceCalls';
+import { noLineForCalls, serverOutdated } from '../../lib/serverStatus';
 import type { CallerMessage } from '../../lib/types';
 
 const QUICK_ACTIONS: { icon: IconName; label: string; href: Href }[] = [
@@ -77,6 +79,7 @@ export default function Today() {
   const unread = realMessages.filter((m) => m.status === 'new').length;
   const p = profile.data;
   const assistant = p?.assistant_name ?? 'Your assistant';
+  const h = health.data ?? null;
 
   if (server.loaded && !configured) {
     return (
@@ -147,7 +150,7 @@ export default function Today() {
           away={awayActive(p.away) ? p.away : null}
           onAwayPress={() => router.push('/away')}
           connected={live.connected}
-          health={health.data ?? null}
+          health={h}
           liveCalls={liveCalls.length}
           onReadinessPress={() => setReadinessOpen(true)}
           available={p.available}
@@ -157,6 +160,9 @@ export default function Today() {
       ) : (
         <Skeleton height={148} radius={t.radius.xl} />
       )}
+
+      {serverOutdated(h) ? <OutdatedServerBanner /> : null}
+      {h && noLineForCalls(h) ? <PhoneLineCard assistantName={p?.assistant_name || 'your assistant'} health={h} /> : null}
 
       {needsYou ? (
         <Section title={`Needs you · ${needsYou}`} grouped={false} testID="needs-you">
@@ -250,7 +256,7 @@ export default function Today() {
         visible={readinessOpen}
         onClose={() => setReadinessOpen(false)}
         connected={live.connected}
-        health={health.data ?? null}
+        health={h}
         error={health.error}
         refreshing={health.refreshing}
         onRefresh={() => void health.refresh()}

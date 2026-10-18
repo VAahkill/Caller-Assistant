@@ -47,12 +47,12 @@ describe('Settings', () => {
     server = await useMockServer({ checkToken: true });
   });
 
-  test('shows the saved server and connects with a toast naming the dialer', async () => {
+  test('shows the saved server and connects with a toast naming the phone line', async () => {
     await renderScreen(<Settings />);
     await waitFor(() => expect(screen.getByLabelText('Server address').props.value).toBe(TEST_URL));
     expect(await screen.findByText('Connected')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Connect' }));
-    expect(await screen.findByText(/^Connected\. Outbound calling:/)).toBeTruthy();
+    expect(await screen.findByText(/^Connected\. Phone line:/)).toBeTruthy();
   });
 
   test('a malformed address is explained before anything is sent', async () => {
@@ -79,7 +79,7 @@ describe('Settings', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Get a code' }));
     await fireEvent.changeText(await screen.findByLabelText('Pairing code'), '48-29-13');
     await fireEvent.press(screen.getByRole('button', { name: 'Pair' }));
-    expect(await screen.findByText(/^Connected\. Outbound calling:/)).toBeTruthy();
+    expect(await screen.findByText(/^Connected\. Phone line:/)).toBeTruthy();
     expect(requests('POST', '/pair/finish')[0].body).toEqual({ code: '482913' });
   });
 });

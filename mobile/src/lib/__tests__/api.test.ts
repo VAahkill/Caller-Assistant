@@ -11,11 +11,13 @@ import {
   NOT_SET_UP,
   OFFLINE,
   onConfigChange,
+  probeMedia,
   saveConfig,
   unreachableMessage,
   wsUrl,
 } from '../api';
-import { createFixtures } from '../mock/fixtures';
+import { createFixtures, NO_LINE } from '../mock/fixtures';
+import { normalizeHealth } from '../normalize';
 import { MOCK_TOKEN } from '../mock/server';
 import { setTransport, type Transport } from '../transport';
 import { resetApi, TEST_URL, useMockServer } from '../../test/mockApi';
@@ -167,14 +169,20 @@ describe('connect', () => {
     expect(r).toEqual({ ok: false, url: TEST_URL, message: BAD_TOKEN });
   });
 
-  test('success saves the address, normalised, and reports the dialer', async () => {
+  test('success saves the address, normalised, and reports the phone line', async () => {
     const server = await useMockServer({ checkToken: true });
     const r = await connect('192.168.1.7:8000/', MOCK_TOKEN);
     expect(r.ok).toBe(true);
-    expect(r.message).toBe('Connected. Outbound calling: Bluetooth phone.');
+    expect(r.message).toBe('Connected. Phone line: Bluetooth phone · connected.');
     expect(currentConfig()?.url).toBe(TEST_URL);
-    server.state.health.dialer = 'none';
+    server.state.health.phone_line = { ...NO_LINE };
+    expect((await connect(TEST_URL, MOCK_TOKEN)).message).toBe('Connected. Phone line: Not connected yet.');
+    // Servers that don't report a line: how they place calls.
+    server.state.health = { ...server.state.health, phone_line: null, dialer: 'none' };
     expect((await connect(TEST_URL, MOCK_TOKEN)).message).toBe('Connected. Outbound calling: not set up.');
+    // The first version has no version in its health: it needs updating.
+    server.state.health = { ...server.state.health, version: '' };
+    expect((await connect(TEST_URL, MOCK_TOKEN)).message).toMatch(/^Connected\. Your server is still the first version/);
   });
 });
 
@@ -335,6 +343,54 @@ describe('older servers', () => {
     const [v] = await api.voices();
     expect(v).toMatchObject({ engine: 'kokoro', status: 'ready', recording_url: '', seconds: null });
     expect(v.sample_url).toMatch(/^\/assistant\/speak\?voice=kokoro%3Aaf_heart&lang=en&text=/);
-    expect(await api.health()).toEqual({ ok: true, version: '', dialer: 'none', active_calls: 0, ready: null, llm_model: '' });
+    expect(await api.health()).toEqual({ ok: true, version: '', dialer: 'none', active_calls: 0, ready: null, llm_model: '', phone_line: null });
+  });
+});
+
+describe('phone line and first-version servers (contract 2.1)', () => {
+  test('health: phone_line is read when sent, null when not, and odd values are made safe', () => {
+    const line = { kind: 'bluetooth', ok: true, inbound: true, outbound: false, detail: ' Paired with Pixel 7. ' };
+    expect(normalizeHealth({ ok: true, version: '2.1.0', phone_line: line }).phone_line).toEqual({ ...line, detail: 'Paired with Pixel 7.' });
+    expect(normalizeHealth({ ok: true, version: '2.0.0' }).phone_line).toBeNull();
+    expect(normalizeHealth({ ok: true, phone_line: { kind: 'sip', ok: 'yes', inbound: 1 } }).phone_line).toEqual({
+      kind: 'none',
+      ok: false,
+      inbound: false,
+      outbound: false,
+      detail: '',
+    });
+  });
+
+  test("a call the line can't place: 409 says the server's reason as it is, and no task is made", async () => {
+    const server = await useMockServer();
+    server.state.health.phone_line = { ...NO_LINE };
+    const before = server.state.tasks.length;
+    const failed = api.createTask('+914023456789', 'Book a table', 'book');
+    await expect(failed).rejects.toThrow(NO_LINE.detail);
+    await expect(failed).rejects.toMatchObject({ status: 409, message: NO_LINE.detail });
+    expect(server.state.tasks).toHaveLength(before);
+  });
+
+  test('probeMedia: the status and reason of the audio, or why there was no answer', async () => {
+    const source = { uri: `${TEST_URL}/voices/kokoro%3Aaf_heart/sample.wav?lang=en`, headers: { Authorization: 'Bearer t' } };
+    setTransport(fixedTransport(409, '{"detail":"This voice is still being prepared."}'));
+    expect(await probeMedia(source)).toEqual({ kind: 'answered', status: 409, detail: 'This voice is still being prepared.' });
+    setTransport(fixedTransport(200, 'RIFF....'));
+    expect(await probeMedia(source)).toEqual({ kind: 'answered', status: 200, detail: '' });
+    setTransport({ ...fixedTransport(200, ''), fetch: async () => Promise.reject(new TypeError('Network request failed')) });
+    expect(await probeMedia(source)).toEqual({ kind: 'unreachable' });
+
+    // A server that never answers: slow after the time allowed; stopping is cancelled.
+    const hanging: Transport = {
+      ...fixedTransport(200, ''),
+      fetch: (_url, init) =>
+        new Promise((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(new Error('Aborted')))),
+    };
+    setTransport(hanging);
+    expect(await probeMedia(source, undefined, 20)).toEqual({ kind: 'slow' });
+    const stop = new AbortController();
+    const cancelled = probeMedia(source, stop.signal, 10_000);
+    stop.abort();
+    expect(await cancelled).toEqual({ kind: 'cancelled' });
   });
 });

@@ -35,6 +35,43 @@ test('practiceUrl asks for WAV sentences and passes the language hint', async ()
   expect(practiceUrl()).toBe('ws://192.168.1.7:8000/ws/simulate?number=%2B919800000000&wav=1&token=tok');
 });
 
+test('practiceUrl for practising Call for me adds the call to make', async () => {
+  await saveConfig({ url: 'http://192.168.1.7:8000', token: 'tok' });
+  expect(practiceUrl({ number: '+914023456789', task: { goal: ' Book a table for 2. ', kind: 'book', target_name: 'Paradise Biryani' } })).toBe(
+    'ws://192.168.1.7:8000/ws/simulate?number=%2B914023456789&wav=1&goal=Book%20a%20table%20for%202.&kind=book&target_name=Paradise%20Biryani&token=tok',
+  );
+  // Without a place, and without a kind, it is a question.
+  expect(practiceUrl({ task: { goal: 'Ask if they are open on Sunday.', target_name: ' ' } })).toBe(
+    'ws://192.168.1.7:8000/ws/simulate?number=%2B919800000000&wav=1&goal=Ask%20if%20they%20are%20open%20on%20Sunday.&kind=enquire&token=tok',
+  );
+  // An empty goal is the usual practice call.
+  expect(practiceUrl({ task: { goal: '  ' } })).toBe('ws://192.168.1.7:8000/ws/simulate?number=%2B919800000000&wav=1&token=tok');
+});
+
+test('practising Call for me: a practice task, the place speaks first, and the result lands on the task', async () => {
+  const server = await useMockServer();
+  const r = recorder();
+  const call = await PracticeCall.start(
+    { lang: '', number: '+914023456789', task: { goal: 'Book a table for 2 tonight at 8 PM.', kind: 'book', target_name: 'Paradise Biryani' } },
+    r.handlers,
+  );
+  const task = server.state.tasks[0];
+  expect(task).toMatchObject({ practice: true, kind: 'book', target_name: 'Paradise Biryani', number: '+914023456789', status: 'in_call', call_id: call.callId });
+  expect(call.taskId).toBe(task.id);
+  expect(server.state.calls[0]).toMatchObject({ id: call.callId, direction: 'outbound', contact_name: 'Paradise Biryani', practice: true, task_id: task.id });
+
+  await expect(call.sendText('Hello, Paradise Biryani.')).resolves.toEqual({ kind: 'text' });
+  await until(() => r.events.some((e) => e.event === 'transcript' && e.line.speaker === 'assistant'), 'the reason for the call');
+  const said = r.events.flatMap((e) => (e.event === 'transcript' ? [e.line] : []));
+  expect(said[0]).toMatchObject({ speaker: 'caller', text: 'Hello, Paradise Biryani.' });
+  expect(said[1].text).toBe('Hello, this is Ava, calling for Arjun. Book a table for 2 tonight at 8 PM.');
+
+  await expect(call.sendText('Yes, 8 PM is booked.')).resolves.toEqual({ kind: 'text' });
+  call.hangup();
+  await until(() => r.closes.length > 0, 'the close');
+  expect(server.state.tasks[0]).toMatchObject({ id: task.id, status: 'done', outcome: 'conveyed', result: 'They said: "Yes, 8 PM is booked."' });
+});
+
 test('a full practice call: greeting, typed Telugu line, translation, reply, owner interjection, hang-up', async () => {
   await useMockServer();
   const r = recorder();
