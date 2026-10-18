@@ -442,6 +442,9 @@ If you already ran the first version, you keep your calls, contacts and settings
    docker compose exec ollama ollama rm llama3.1:8b
    ```
 
+   If the last command says the service isn't running or the model isn't found (for
+   example after Docker was reset), that's fine: there's nothing to free, so go on.
+
 2. Open `.env` with `notepad .env` and change `OPENCALL_LLM_MODEL=llama3.1:8b` to
    `OPENCALL_LLM_MODEL=qwen3:4b-instruct`. (If you use Groq, change its lines as in
    step 4.4 instead.) Then put a `#` at the start of each line that begins with
