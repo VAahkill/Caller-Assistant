@@ -23,6 +23,12 @@ class _HideToken(logging.Filter):
         return True
 
 
+def hide_token_in_logs() -> None:
+    # Logger filters survive uvicorn's own logging setup.
+    for name in ("uvicorn.error", "uvicorn.access"):
+        logging.getLogger(name).addFilter(_HideToken())
+
+
 def main() -> None:
     import uvicorn
 
@@ -32,9 +38,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     # One line per model file download otherwise; keep the log readable.
     logging.getLogger("httpx").setLevel(logging.WARNING)
-    # Logger filters survive uvicorn's own logging setup.
-    for name in ("uvicorn.error", "uvicorn.access"):
-        logging.getLogger(name).addFilter(_HideToken())
+    hide_token_in_logs()
     settings = Settings()
     if settings.api_token == "change-me":
         logging.warning("OPENCALL_API_TOKEN is the default. Set a long random value before exposing the server.")

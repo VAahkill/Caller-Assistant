@@ -493,8 +493,10 @@ factory defaults**). Then they're gone, and step 5 says what to set again.
    If Docker's storage was emptied, your settings went with it, and Today greets you
    without your name. Set them again: on the **Assistant** tab, open **Name and
    greeting** and type your name and your assistant's, then pick **Voices**, pin your
-   **Delivery location**, add your **Instructions**, and in **Who gets through** tap
-   **Sync contacts**. The **Finish setting up** card on that tab lists what's left.
+   **Delivery location**, add your **Instructions**, add your notes under **What
+   callers may know** (the first version kept them on the Instructions screen), and
+   in **Who gets through** tap **Sync contacts**. The **Finish setting up** card on
+   that tab shows which of the main ones are still missing; it doesn't track notes.
 
 ## If voice demos, Call for me or real calls don't work
 
@@ -542,7 +544,7 @@ Both phone lines are new and haven't been tried with a real phone or modem yet.
 | The app's pairing says the code didn't match or ran out | Tap **Ask for a new code** and run the `Select-String` command from step 7 again; use the last code it shows. |
 | The log says `Couldn't pull qwen3:4b-instruct` | Check the internet connection and run `docker compose restart ollama`. |
 | Replies take very long | Close other big programs, check Docker has 12 GB (step 2.5), or use Groq (step 4.4). |
-| Anything else | Run `docker compose logs --tail 100 opencall \| ForEach-Object { $_ -replace 'token=[^&" ]+','token=***' }` and send the output in the project thread. Older servers write the app's token in the log after `token=`; this command hides it. |
+| Anything else | Run `(docker compose logs --tail 100 opencall) -replace 'token=[^&" ]+','token=***'` and send the output in the project thread. Older servers write the app's token in the log after `token=`; this command hides it. |
 
 Notifications arrive while the app is open or recently used. Getting them while it's
 fully closed needs free Expo and Firebase accounts and a rebuilt app.

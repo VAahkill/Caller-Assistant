@@ -43,3 +43,26 @@ def test_lines_without_a_token_are_unchanged():
     log, out = _logger("test.plain", logging.Formatter("%(message)s"))
     log.info("Speech models loaded, %s", "ready for calls.")
     assert out.getvalue().strip() == "Speech models loaded, ready for calls."
+
+
+def test_the_server_hides_the_token_after_uvicorn_sets_up_its_logging(capsys):
+    import copy
+    import logging.config
+
+    from uvicorn.config import LOGGING_CONFIG
+
+    from opencall.__main__ import hide_token_in_logs
+
+    loggers = [logging.getLogger("uvicorn.error"), logging.getLogger("uvicorn.access")]
+    hide_token_in_logs()
+    try:
+        logging.config.dictConfig(copy.deepcopy(LOGGING_CONFIG))  # what uvicorn.run does
+        loggers[0].info('%s - "WebSocket %s" [accepted]', "127.0.0.1:1", "/ws/events?token=s3cret")
+        loggers[1].info('%s - "%s %s HTTP/%s" %d', "127.0.0.1:1", "GET", "/health?token=s3cret", "1.1", 200)
+        out, err = capsys.readouterr()
+        assert "s3cret" not in out + err
+        assert '"WebSocket /ws/events?token=***" [accepted]' in err
+        assert '"GET /health?token=*** HTTP/1.1" 200' in out
+    finally:
+        for log in loggers:
+            log.filters = [f for f in log.filters if not isinstance(f, _HideToken)]
